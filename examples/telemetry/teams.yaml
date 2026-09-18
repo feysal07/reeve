@@ -1,0 +1,22 @@
+# Who belongs to which team.
+#
+# Attribution is resolved here rather than taken from the agents. An agent runs on a
+# developer's machine, so any team attribute it sends is asserted by that machine. For
+# a number that leads to a chargeback, or an audit trail that leads to a conversation,
+# attribution has to come from somewhere the developer cannot edit.
+#
+# Resolved most specific first: subject, then email, then domain, then the default.
+
+# Spend that matches nothing lands here rather than disappearing.
+default: unattributed
+
+domains:
+  example.com: platform
+
+emails:
+  contractor@partner.io: integrations
+
+# An identity provider subject survives someone changing their email address, so
+# prefer it where you have one.
+subjects:
+  "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b": platform

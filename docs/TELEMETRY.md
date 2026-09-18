@@ -1,0 +1,128 @@
+# Telemetry and reporting
+
+`reeve collect` receives what agents report. `reeve report` answers the questions that
+follow: what is this costing, per team and per repository, across every agent at once,
+and what did the policy actually stop.
+
+## Why not just point an off-the-shelf collector at the agents
+
+You can, and you will get three incompatible datasets.
+
+Every agent names the same measurement differently. Claude Code emits
+`claude_code.token.usage` with a `type` attribute; Copilot emits
+`gen_ai.client.token.usage` with `gen_ai.token.type`; Codex emits its own event stream.
+Summing them requires knowing all three.
+
+They also disagree about cost. Two of the three report none at all. The one that does
+calls it an estimate at published list price, which is wrong for any organisation with
+negotiated rates. So Reeve computes cost centrally from token counts, using a price
+table you supply, and keeps the vendor's own figure in a separate column so the two can
+be compared rather than conflated.
+
+And none of them can report a refusal. An agent's telemetry describes what it did. An
+action the guard stopped never happened as far as the agent is concerned, so it appears
+nowhere in vendor telemetry and nowhere in any vendor's audit API. The guard's decision
+log is the only record, and joining the two is the only way to get a trail covering
+both what was done and what was prevented.
+
+## Running the collector
+
+```
+reeve collect \
+  --addr 0.0.0.0:4318 \
+  --store /var/lib/reeve/events.jsonl \
+  --teams /etc/reeve/teams.yaml \
+  --prices /etc/reeve/prices.yaml
+```
+
+Agents need no plugin. Each already knows how to export OpenTelemetry, and
+`reeve policy compile` writes the destination into their managed settings for you.
+
+Endpoints: `/v1/metrics`, `/v1/logs`, `/v1/traces`, plus `/healthz` and `/stats`.
+Traces are accepted and discarded, because an agent whose trace export fails may log
+errors or back off its other exports, and traces add little the event stream does not
+already carry.
+
+**Encoding.** This version reads OTLP over HTTP with **JSON** encoding. All three
+supported agents can be configured to emit it. A protobuf payload is rejected with a
+message saying so, rather than accepted and silently recorded as nothing, which would
+look exactly like an agent that is not reporting. Protobuf support should follow.
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.internal:4318
+OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+```
+
+## Attribution is resolved, not trusted
+
+An agent runs on a developer's machine, so every attribute it sends is asserted by that
+machine. A developer who wanted their spend attributed to another team could simply say
+so in an environment variable.
+
+Team is therefore resolved by the collector from a mapping you control
+([examples/telemetry/teams.yaml](../examples/telemetry/teams.yaml)), never from a
+client-supplied attribute. Identities are marked `asserted` in the stored event, so a
+consumer knows how much weight to give them. Spend that matches nothing lands in an
+`unattributed` bucket rather than disappearing.
+
+For attribution that is proven rather than asserted, put an authenticating proxy in
+front of the collector and derive identity from the token. That is the right answer and
+is not built yet.
+
+## Pricing
+
+Supply your own table ([examples/telemetry/prices.yaml](../examples/telemetry/prices.yaml)).
+The built-in one is at published list rates, is incomplete, and will go out of date; the
+collector warns when it is being used.
+
+A model with no entry is reported as **unpriced** rather than costed at zero. Zero is
+indistinguishable from free, and a report that quietly treats an unpriced model as
+costing nothing understates the total while looking complete. The report says how many
+requests it could not price.
+
+`multiplier` scales every computed cost, for an organisation that recharges at a rate
+other than the one it pays.
+
+## What is stored
+
+One JSON object per line, append-only. A line-delimited file survives a crash mid-write
+without corrupting what came before, can be read by anything, and can be shipped to a
+real store later without the format changing.
+
+**Prompt and response content is never stored**, even when an agent is configured to
+send it. A store that sometimes contains secrets has to be treated as though it always
+does, which would change how it must be encrypted, retained and access-controlled. The
+decoder drops content regardless of what arrives, and a test fails if that ever stops
+being true.
+
+What is kept: who, when, which agent, which model, token counts, computed cost,
+repository, tool name, duration, and the guard's decision with its rule id.
+
+## Reporting
+
+```
+reeve report --store /var/lib/reeve/events.jsonl \
+             --decisions /var/log/reeve/decisions.jsonl \
+             --since 168h
+```
+
+Gives cost and usage by team, agent, user, repository and model, plus which policy
+rules fired and how often they blocked something. `--json` emits the same aggregation
+for a dashboard to consume.
+
+A gap between the computed cost and the vendor's own figure is shown rather than
+reconciled. It usually means a model is unpriced locally, or the agent is reporting
+list price where you pay something else. Both are worth knowing.
+
+Note that a dry-run deny counts as a decision but not as a block, because the action
+went ahead. Counting it as blocked would overstate what the deployment prevented.
+
+## Deploying
+
+Run one collector per environment, behind your own ingress. Nothing here authenticates
+the caller, so it must not be exposed to a network you do not control. Put it behind a
+proxy that terminates TLS and checks a token.
+
+Retention is your responsibility: rotate the store file the way you rotate any other
+log. Events carry who did what and when, which is personal data even without prompt
+content, so the store is created mode 0600 and should be treated accordingly.

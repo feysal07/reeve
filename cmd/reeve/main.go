@@ -45,6 +45,10 @@ func run(args []string) error {
 		return runGuard(args[1:])
 	case "policy":
 		return runPolicy(args[1:])
+	case "collect":
+		return runCollect(args[1:])
+	case "report":
+		return runReport(args[1:])
 	case "version", "--version", "-v":
 		fmt.Println("reeve", version)
 		return nil
@@ -64,6 +68,8 @@ Usage:
   reeve scan [flags]     Discover installed agents and report on their configuration
   reeve policy <cmd>     Work with policy files (check, test, compile)
   reeve guard [flags]    Hook handler: decide whether one action may proceed
+  reeve collect [flags]  Receive agent telemetry and normalise it
+  reeve report [flags]   Cost, usage and policy decisions across every agent
   reeve version          Print the version
   reeve help             Show this message
 
@@ -86,6 +92,18 @@ Guard flags (reeve guard is invoked by an agent, not usually by hand):
   --policy <file>        Policy to enforce (default: the first one found)
   --log <file>           Append decisions as JSON lines
   --dry-run              Evaluate and log, but always allow
+
+Collect flags:
+  --addr <host:port>     Listen address (default 127.0.0.1:4318)
+  --store <file>         Required: where normalised events are appended
+  --teams <file>         Team mapping, so attribution is not client-asserted
+  --prices <file>        Price table, for cost at your rates rather than list
+
+Report flags:
+  --store <file>         Event store written by reeve collect
+  --decisions <file>     Guard decision log, to include what was refused
+  --since <duration>     Only events newer than this, for example 168h
+  --json, --top <n>
 
 Scanning is read-only and never contacts the network.
 `)

@@ -1,0 +1,32 @@
+# What a model costs, in US dollars per million tokens.
+#
+# Cost is computed centrally rather than taken from the agents. Two of the three
+# supported agents report no cost at all, and the one that does reports list price,
+# which is wrong for any organisation with negotiated rates. A number that means
+# something different depending on which agent produced it cannot be summed.
+#
+# Keys match on the longest prefix, so a family can be priced once and one member
+# overridden. A model with no entry is reported as unpriced rather than costed at
+# zero, because zero is indistinguishable from free.
+
+currency: USD
+
+# Scale every computed cost, for an organisation that recharges at a rate other than
+# the one it pays. 1 means charge what it costs.
+multiplier: 1
+
+models:
+  claude-opus:
+    input: 15
+    output: 75
+    cacheRead: 1.50
+    cacheCreation: 18.75
+  claude-sonnet:
+    input: 3
+    output: 15
+    cacheRead: 0.30
+    cacheCreation: 3.75
+  gpt-5:
+    input: 1.25
+    output: 10
+    cacheRead: 0.125

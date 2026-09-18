@@ -30,9 +30,9 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 
 | Agent | Discovery | Policy | Enforcement | Telemetry |
 |---|---|---|---|---|
-| Claude Code | **working** | **working** | **working** | planned |
-| GitHub Copilot CLI | **working** | **working** | **working** | planned |
-| OpenAI Codex CLI | **working** | **working** | **working** | planned |
+| Claude Code | **working** | **working** | **working** | **working** |
+| GitHub Copilot CLI | **working** | **working** | **working** | **working** |
+| OpenAI Codex CLI | **working** | **working** | **working** | **working** |
 | Google Gemini CLI | planned | planned | planned | planned |
 | Cursor | planned | planned | planned | planned |
 | OpenCode, Amp, Kiro | community adapters | | | |
@@ -83,7 +83,22 @@ administrator-owned configuration, so enforcement survives the guard being absen
 reports which rules an agent can enforce natively and which need the guard, rather
 than silently dropping what it cannot express.
 
-The telemetry pipeline is not built yet.
+`reeve collect` receives what agents report over OpenTelemetry, normalises the three
+vendors' incompatible metric names into one model, computes cost centrally from tokens
+at your rates, and resolves team attribution from a mapping you control rather than
+from an attribute the client asserts. `reeve report` turns that into cost and usage by
+team, agent, user, repository and model, joined with the guard's decision log:
+
+```
+reeve collect --store ./events.jsonl --teams ./teams.yaml
+reeve report  --store ./events.jsonl --decisions ./decisions.jsonl --since 168h
+```
+
+The decision log is the half of the record no vendor can supply. An agent reports what
+it did; an action the guard refused never happened as far as the agent is concerned.
+
+See [docs/TELEMETRY.md](docs/TELEMETRY.md). Prompt and response content is never
+stored, whatever an agent is configured to send.
 
 ## Licence
 

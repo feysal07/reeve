@@ -29,8 +29,10 @@ settings:
   sandbox: required
 
   telemetry:
-    endpoint: https://otel.example.internal:4317
-    protocol: grpc
+    endpoint: https://otel.example.internal:4318
+    # `reeve collect` reads OTLP over HTTP with JSON encoding. Point this at any
+    # OTLP endpoint you like; use http/json if that endpoint is the Reeve collector.
+    protocol: http/json
     # Prompts and tool arguments routinely contain credentials and customer data.
     captureContent: false
 
