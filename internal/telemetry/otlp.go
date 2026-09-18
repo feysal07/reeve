@@ -10,12 +10,9 @@ import (
 	"github.com/feysal07/reeve/internal/model"
 )
 
-// This file decodes OTLP over HTTP with JSON encoding.
-//
-// JSON rather than protobuf is a deliberate v0 choice. All three supported agents can
-// be configured to emit it, the compiler writes that setting for them, and it keeps
-// the binary small and the decoding auditable. Protobuf is the more common default and
-// should follow; until it does, the limitation is documented rather than hidden.
+// This file decodes OTLP over HTTP with JSON encoding, and defines the intermediate
+// types both encodings decode into. Protobuf decoding lives in protobuf.go and
+// produces these same types, so normalisation is written once.
 
 // otlpMetricsRequest is the subset of an OTLP metrics payload Reeve reads.
 type otlpMetricsRequest struct {
@@ -220,6 +217,13 @@ func (d *Decoder) DecodeMetrics(body []byte) ([]Event, error) {
 		return nil, fmt.Errorf("decode otlp metrics: %w", err)
 	}
 
+	return d.eventsFromMetrics(req), nil
+}
+
+// eventsFromMetrics is the single normalisation path for metrics, whatever encoding
+// they arrived in. Two encodings must never mean two mapping paths: the second one
+// always drifts, and the drift is invisible until a number is wrong.
+func (d *Decoder) eventsFromMetrics(req otlpMetricsRequest) []Event {
 	var out []Event
 	for _, rm := range req.ResourceMetrics {
 		res := attrs(rm.Resource.Attributes)
@@ -233,7 +237,7 @@ func (d *Decoder) DecodeMetrics(body []byte) ([]Event, error) {
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // tokenMetricNames maps each vendor's token metric onto the neutral one.
@@ -371,6 +375,12 @@ func (d *Decoder) DecodeLogs(body []byte) ([]Event, error) {
 		return nil, fmt.Errorf("decode otlp logs: %w", err)
 	}
 
+	return d.eventsFromLogs(req), nil
+}
+
+// eventsFromLogs is the single normalisation path for log records, shared by both
+// encodings for the same reason as eventsFromMetrics.
+func (d *Decoder) eventsFromLogs(req otlpLogsRequest) []Event {
 	var out []Event
 	for _, rl := range req.ResourceLogs {
 		res := attrs(rl.Resource.Attributes)
@@ -387,7 +397,7 @@ func (d *Decoder) DecodeLogs(body []byte) ([]Event, error) {
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 func (d *Decoder) logEvent(rec otlpLogRecord, agent model.AgentID, id Identity, repo string) (Event, bool) {

@@ -94,7 +94,8 @@ administrator-owned configuration, so enforcement survives the guard being absen
 reports which rules an agent can enforce natively and which need the guard, rather
 than silently dropping what it cannot express.
 
-`reeve collect` receives what agents report over OpenTelemetry, normalises the three
+`reeve collect` receives what agents report over OpenTelemetry, in either wire
+encoding, normalises the three
 vendors' incompatible metric names into one model, computes cost centrally from tokens
 at your rates, and resolves team attribution from a mapping you control rather than
 from an attribute the client asserts. `reeve report` turns that into cost and usage by

@@ -129,9 +129,9 @@ Start the collector:
 reeve collect --store ./events.jsonl --teams examples/telemetry/teams.yaml
 ```
 
-Point an agent at it with `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` and
-`OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, or post a payload by hand to
-`/v1/metrics`. Then:
+Point an agent at it with `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`, or
+post a payload by hand to `/v1/metrics`. Both OTLP over HTTP encodings work, so no
+protocol setting is needed. gRPC is not supported. Then:
 
 ```
 reeve report --store ./events.jsonl --decisions /var/log/reeve/decisions.jsonl --since 168h

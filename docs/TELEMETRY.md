@@ -43,15 +43,24 @@ Traces are accepted and discarded, because an agent whose trace export fails may
 errors or back off its other exports, and traces add little the event stream does not
 already carry.
 
-**Encoding.** This version reads OTLP over HTTP with **JSON** encoding. All three
-supported agents can be configured to emit it. A protobuf payload is rejected with a
-message saying so, rather than accepted and silently recorded as nothing, which would
-look exactly like an agent that is not reporting. Protobuf support should follow.
+**Encoding.** Both OTLP over HTTP encodings are read, protobuf and JSON, chosen by the
+request's Content-Type as the specification requires. Protobuf is what most exporters
+send by default, so nothing needs configuring beyond the endpoint:
 
 ```
 OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.internal:4318
-OTEL_EXPORTER_OTLP_PROTOCOL=http/json
 ```
+
+gRPC is not supported. An exporter set to `grpc` will fail to connect rather than
+appear to work.
+
+The protobuf decoder is written by hand rather than built on the generated
+OpenTelemetry packages, which would add five megabytes to a binary meant to be dropped
+on every developer machine and CI runner. The risk that carries is handled by testing
+rather than by the dependency: the official packages are imported by the tests, used to
+marshal real OTLP messages, and the decoder's output is compared against the JSON
+path's. Test-only imports are not linked into the binary, so the decoder is checked
+against the canonical implementation while the shipped artifact stays small.
 
 ## Attribution is resolved, not trusted
 

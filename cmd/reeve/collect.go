@@ -95,8 +95,8 @@ See docs/TELEMETRY.md`)
 	c := &collector{dec: dec, store: st, verbose: *verbose}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/metrics", c.handle(dec.DecodeMetrics))
-	mux.HandleFunc("/v1/logs", c.handle(dec.DecodeLogs))
+	mux.HandleFunc("/v1/metrics", c.handle(dec.DecodeMetrics, dec.DecodeMetricsProto))
+	mux.HandleFunc("/v1/logs", c.handle(dec.DecodeLogs, dec.DecodeLogsProto))
 	mux.HandleFunc("/v1/traces", c.acceptAndIgnore)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -149,22 +149,15 @@ type collector struct {
 // but an unbounded read is a way to exhaust memory on a shared host.
 const maxBody = 32 << 20
 
-func (c *collector) handle(decode func([]byte) ([]telemetry.Event, error)) http.HandlerFunc {
+// handle serves one OTLP signal in either encoding.
+//
+// The encoding is chosen by Content-Type, which is what the specification says and
+// what every exporter sets. Protobuf is the default for most of them, so guessing
+// wrong here would look to an operator like an agent that had stopped reporting.
+func (c *collector) handle(decodeJSON, decodeProto func([]byte) ([]telemetry.Event, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "use POST", http.StatusMethodNotAllowed)
-			return
-		}
-
-		ct := r.Header.Get("Content-Type")
-		if strings.Contains(ct, "protobuf") {
-			// Saying so plainly is better than accepting the request and silently
-			// recording nothing, which would look like an agent that is not
-			// reporting.
-			c.count(&c.rejected, 1)
-			http.Error(w,
-				"this collector reads OTLP with JSON encoding; set OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
-				http.StatusUnsupportedMediaType)
 			return
 		}
 
@@ -172,6 +165,11 @@ func (c *collector) handle(decode func([]byte) ([]telemetry.Event, error)) http.
 		if err != nil {
 			http.Error(w, "read body", http.StatusBadRequest)
 			return
+		}
+
+		decode := decodeJSON
+		if strings.Contains(r.Header.Get("Content-Type"), "protobuf") {
+			decode = decodeProto
 		}
 
 		events, err := decode(body)
