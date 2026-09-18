@@ -1,0 +1,11 @@
+#!/bin/sh
+# Guard: never commit to this repo with a work identity.
+email=$(git config user.email)
+case "$email" in
+    *mns.mu*|*PLACEHOLDER*|"")
+        echo "BLOCKED: git user.email is '$email'"
+        echo "This repo must use your personal identity."
+        echo "Check ~/.gitconfig-personal and the includeIf in ~/.gitconfig"
+        exit 1
+        ;;
+esac
