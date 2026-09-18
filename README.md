@@ -30,11 +30,11 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 
 | Agent | Discovery | Policy | Enforcement | Telemetry |
 |---|---|---|---|---|
-| Claude Code | **working** | planned v0.1 | planned v0.1 | planned v0.1 |
-| GitHub Copilot CLI | **working** | planned v0.1 | planned v0.1 | planned v0.1 |
-| OpenAI Codex CLI | **working** | planned v0.2 | planned v0.2 | planned v0.2 |
-| Google Gemini CLI | planned v0.3 | planned v0.3 | planned v0.3 | planned v0.3 |
-| Cursor | planned v0.3 | planned v0.3 | planned v0.3 | planned v0.3 |
+| Claude Code | **working** | planned | **working** | planned |
+| GitHub Copilot CLI | **working** | planned | **working** | planned |
+| OpenAI Codex CLI | **working** | planned | **working** | planned |
+| Google Gemini CLI | planned | planned | planned | planned |
+| Cursor | planned | planned | planned | planned |
 | OpenCode, Amp, Kiro | community adapters | | | |
 
 ## Design principles
@@ -65,7 +65,21 @@ what was observed, why it matters and how to fix it. It is read-only and makes n
 network calls. `--json` emits the full report; `--fail-on high` makes it usable as a
 CI gate.
 
-Policy compilation, enforcement and the telemetry pipeline are not built yet.
+Enforcement works for all three. `reeve guard` is the hook handler an agent runs
+before a tool call; it normalises the pending action, evaluates one policy that applies
+to every agent, and answers in the shape that agent understands:
+
+```
+reeve policy check examples/policy/baseline.yaml
+reeve policy test  examples/policy/baseline.yaml --command "rm -rf /var"
+```
+
+See [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) for how to wire it into each agent, and
+for the failure behaviour, which is the part that determines whether enforcement is
+real.
+
+Policy compilation into each vendor's native configuration, and the telemetry
+pipeline, are not built yet.
 
 ## Licence
 

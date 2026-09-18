@@ -1,0 +1,163 @@
+# Reeve baseline policy
+#
+# A starting point, not a finished policy. Every rule here is one an operator would
+# have to justify anyway, and each one states why it exists so a blocked developer
+# can tell whether the rule is wrong or their command is.
+#
+# Validate it:   reeve policy check examples/policy/baseline.yaml
+# Try an action: reeve policy test examples/policy/baseline.yaml --command "rm -rf /"
+#
+# Rules are order-independent. Where several match, the strictest wins, so adding a
+# rule can only ever tighten this policy.
+
+version: 1
+name: baseline
+revision: "2026-09-18"
+
+# Nothing is blocked unless a rule says so. A policy that denied everything it had
+# not anticipated would stop all work on the first day.
+default: allow
+
+rules:
+  # ---------------------------------------------------------------- secrets ----
+
+  - id: read-secrets
+    description: Reading credential files
+    decision: deny
+    reason: >-
+      This file usually holds credentials. An agent that reads it can repeat the
+      contents into a prompt, a commit or a tool call, and you would not see it
+      happen. Read the value yourself and pass only what is needed.
+    match:
+      kind: [read]
+      path:
+        - "**/.env"
+        - "**/.env.*"
+        - "**/.ssh/**"
+        - "**/.aws/credentials"
+        - "**/.kube/config"
+        - "**/id_rsa"
+        - "**/id_ed25519"
+        - "**/*.pem"
+        - "**/*.p12"
+        - "**/*.keystore"
+
+  - id: print-secrets
+    description: Printing credential files through a shell command
+    decision: deny
+    reason: >-
+      Reading a credential file through the shell bypasses a file-read rule while
+      having exactly the same effect.
+    match:
+      kind: [shell]
+      commandContains:
+        - ".env"
+        - "id_rsa"
+        - ".aws/credentials"
+        - ".kube/config"
+
+  # ------------------------------------------------------------ destructive ----
+
+  - id: destructive-delete
+    description: Recursive force delete
+    decision: deny
+    reason: >-
+      A recursive force delete is unrecoverable and, when a path is wrong or a
+      variable is empty, removes far more than intended.
+    match:
+      kind: [shell]
+      commandContains:
+        - "rm -rf"
+        - "rm -fr"
+        - "Remove-Item -Recurse -Force"
+
+  - id: rewrite-history
+    description: Force push or history rewrite
+    decision: ask
+    reason: >-
+      This rewrites history other people may already have pulled. Confirm you are
+      on your own branch and that nobody else is working from it.
+    match:
+      kind: [shell]
+      commandContains:
+        - "push --force"
+        - "push -f"
+        - "reset --hard"
+        - "filter-branch"
+
+  - id: discard-working-tree
+    description: Discarding uncommitted work
+    decision: ask
+    reason: >-
+      This throws away changes that are not committed anywhere, including work you
+      may not have looked at yet.
+    match:
+      kind: [shell]
+      commandContains:
+        - "git checkout -- ."
+        - "git clean -fd"
+        - "git restore ."
+
+  # --------------------------------------------------------------- exposure ----
+
+  - id: pipe-to-shell
+    description: Downloading and executing a script in one step
+    decision: deny
+    reason: >-
+      This runs code from the network without anyone reading it first. Download the
+      script, read it, then run it.
+    match:
+      kind: [shell]
+      commandContains:
+        - "curl | sh"
+        - "curl | bash"
+        - "wget | sh"
+        - "wget -qO- | bash"
+        - "iwr | iex"
+        - "irm | iex"
+
+  - id: publish-package
+    description: Publishing a package to a public registry
+    decision: deny
+    reason: >-
+      Publishing is public and effectively permanent. This should be done by a
+      release pipeline, not from a developer machine during a session.
+    match:
+      kind: [shell]
+      commandContains:
+        - "npm publish"
+        - "twine upload"
+        - "cargo publish"
+        - "mvn deploy"
+        - "gem push"
+
+  # -------------------------------------------------------------- production ----
+
+  - id: production-infrastructure
+    description: Changing production infrastructure
+    decision: ask
+    reason: >-
+      This targets production. Confirm the context is the one you meant and that the
+      change has been reviewed.
+    match:
+      kind: [shell]
+      commandContains:
+        - "kubectl delete"
+        - "kubectl apply"
+        - "terraform apply"
+        - "terraform destroy"
+        - "helm upgrade"
+        - "helm uninstall"
+
+  # -------------------------------------------------------------------- mcp ----
+
+  - id: unknown-mcp-server
+    description: Calling an MCP server that is not on the approved list
+    decision: ask
+    reason: >-
+      This server is not one the organisation has approved. Anything it can reach,
+      the agent can now reach.
+    match:
+      kind: [mcp]
+    # Replace this rule with explicit allow rules per approved server once your
+    # list exists. Left as ask so the policy is usable before that work is done.

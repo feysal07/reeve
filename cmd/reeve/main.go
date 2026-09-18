@@ -41,6 +41,10 @@ func run(args []string) error {
 	switch args[0] {
 	case "scan":
 		return runScan(args[1:])
+	case "guard":
+		return runGuard(args[1:])
+	case "policy":
+		return runPolicy(args[1:])
 	case "version", "--version", "-v":
 		fmt.Println("reeve", version)
 		return nil
@@ -58,6 +62,8 @@ func usage() {
 
 Usage:
   reeve scan [flags]     Discover installed agents and report on their configuration
+  reeve policy <cmd>     Work with policy files (check, test)
+  reeve guard [flags]    Hook handler: decide whether one action may proceed
   reeve version          Print the version
   reeve help             Show this message
 
@@ -67,6 +73,17 @@ Scan flags:
   --include-hostname     Record this machine's name in the report
   --fail-on <severity>   Exit non-zero if any finding is at or above this severity
                          (critical, high, medium, low)
+
+Policy commands:
+  reeve policy check <file>          Validate a policy file
+  reeve policy test <file> [flags]   Evaluate one action against a policy
+    --agent, --kind, --tool, --command, --path, --url, --mcp-server, --mcp-tool
+
+Guard flags (reeve guard is invoked by an agent, not usually by hand):
+  --agent <id>           Required: claude-code, copilot-cli or codex-cli
+  --policy <file>        Policy to enforce (default: the first one found)
+  --log <file>           Append decisions as JSON lines
+  --dry-run              Evaluate and log, but always allow
 
 Scanning is read-only and never contacts the network.
 `)
