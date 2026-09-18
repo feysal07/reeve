@@ -33,7 +33,27 @@ func runCollect(args []string) error {
 		return err
 	}
 	if *store == "" {
-		return fmt.Errorf("--store is required: the collector has nowhere to put events without it")
+		// The store path is deliberately not defaulted. The file records who did
+		// what and when, so creating it somewhere the operator did not choose is
+		// the wrong kind of convenience. The error therefore has to teach.
+		return fmt.Errorf(`--store is required, because the collector has nowhere to put events without it.
+
+It is not defaulted on purpose: the file records who did what and when, and that
+should land where you chose rather than where Reeve guessed.
+
+  reeve collect --store ./events.jsonl
+
+Add a team mapping so attribution does not rely on what the agents claim about
+themselves, and --prices so cost reflects your rates rather than list:
+
+  reeve collect --store ./events.jsonl --teams ./examples/telemetry/teams.yaml
+
+Then point an agent at it:
+
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+
+See docs/TELEMETRY.md`)
 	}
 
 	prices := telemetry.DefaultPrices

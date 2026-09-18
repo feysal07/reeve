@@ -24,7 +24,16 @@ func runReport(args []string) error {
 		return err
 	}
 	if *storePath == "" && *decisionsPath == "" {
-		return fmt.Errorf("give --store, --decisions, or both")
+		return fmt.Errorf(`give --store, --decisions, or both.
+
+  --store      events written by reeve collect: cost, tokens, models, repositories
+  --decisions  the guard's log: what policy refused, which no vendor telemetry has
+
+Together they cover both what the agents did and what they were stopped from doing:
+
+  reeve report --store ./events.jsonl --decisions ./decisions.jsonl --since 168h
+
+See docs/TELEMETRY.md`)
 	}
 
 	var events []telemetry.Event
