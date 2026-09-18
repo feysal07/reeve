@@ -24,6 +24,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/feysal07/reeve/internal/adapter"
+	cfgfile "github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/model"
 )
 
@@ -230,7 +231,7 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 
 func load(path string, scope model.Scope) source {
 	s := source{path: path, scope: scope}
-	b, err := os.ReadFile(path)
+	b, err := cfgfile.ReadFile(path)
 	if err != nil {
 		return s
 	}

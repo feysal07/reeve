@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/feysal07/reeve/internal/adapter"
+	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/model"
 )
 
@@ -152,7 +153,7 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 // normal case for most sources.
 func load(path string, scope model.Scope) source {
 	s := source{path: path, scope: scope}
-	b, err := os.ReadFile(path)
+	b, err := config.ReadFile(path)
 	if err != nil {
 		return s
 	}
@@ -352,7 +353,7 @@ func collectMCPServers(env adapter.Env, sources []source) []model.MCPServer {
 
 	// Project-scoped servers live in .mcp.json and are shared through the repository,
 	// which makes them a supply-chain surface worth reporting separately.
-	if b, err := os.ReadFile(filepath.Join(env.WorkDir, ".mcp.json")); err == nil {
+	if b, err := config.ReadFile(filepath.Join(env.WorkDir, ".mcp.json")); err == nil {
 		var f mcpFile
 		if json.Unmarshal(b, &f) == nil {
 			for name, cfg := range f.MCPServers {

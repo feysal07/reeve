@@ -2,12 +2,13 @@ package policy
 
 import (
 	"fmt"
-	"os"
 
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
+
+	"github.com/feysal07/reeve/internal/config"
 
 	"github.com/feysal07/reeve/internal/model"
 )
@@ -65,7 +66,7 @@ type Match struct {
 
 // Load reads and validates a policy file.
 func Load(path string) (*Policy, error) {
-	b, err := os.ReadFile(path)
+	b, err := config.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +80,7 @@ func Load(path string) (*Policy, error) {
 // guard treats a policy it cannot understand as a reason to deny rather than to
 // carry on.
 func Parse(b []byte) (*Policy, error) {
+	b = config.StripBOM(b)
 	var p Policy
 	dec := yaml.NewDecoder(strings.NewReader(string(b)))
 	dec.KnownFields(true)

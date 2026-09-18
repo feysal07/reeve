@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
@@ -48,6 +49,9 @@ func runGuard(args []string) error {
 	if err != nil {
 		return blockWith(agent, "", "Reeve could not read the hook request.")
 	}
+	// A shell on Windows can prepend a byte order mark when piping, which would
+	// make a perfectly good request unparseable and turn every action into a denial.
+	raw = config.StripBOM(raw)
 
 	act, err := hook.Decode(raw, agent)
 	if err != nil {

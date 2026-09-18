@@ -51,6 +51,16 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 4. **Governance is an enabler.** The goal is not to stop developers using AI agents. It
    is to let security teams say yes, with limits they can prove.
 
+## Try it
+
+```powershell
+.\examples\walkthrough.ps1
+```
+
+Builds the binary, creates a sandbox with three deliberately badly configured agents,
+and runs all four planes end to end. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for
+the manual steps.
+
 ## Status
 
 Pre-alpha. Discovery works for Claude Code, GitHub Copilot CLI and Codex CLI:

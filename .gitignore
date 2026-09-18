@@ -22,3 +22,7 @@ vendor/
 # OS
 Thumbs.db
 .DS_Store
+
+# Local run artifacts
+*.jsonl
+dist/

@@ -2,10 +2,11 @@ package telemetry
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/feysal07/reeve/internal/config"
 )
 
 // Price is what one model costs, in US dollars per million tokens.
@@ -57,7 +58,7 @@ var DefaultPrices = PriceTable{
 
 // LoadPrices reads a price table from a YAML file.
 func LoadPrices(path string) (PriceTable, error) {
-	b, err := os.ReadFile(path)
+	b, err := config.ReadFile(path)
 	if err != nil {
 		return PriceTable{}, err
 	}

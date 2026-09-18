@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/feysal07/reeve/internal/adapter"
+	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/model"
 )
 
@@ -215,7 +216,7 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 
 func load(path string, scope model.Scope) source {
 	s := source{path: path, scope: scope}
-	b, err := os.ReadFile(path)
+	b, err := config.ReadFile(path)
 	if err != nil {
 		return s
 	}
@@ -383,7 +384,7 @@ func collectHooks(env adapter.Env, sources []source) []model.Hook {
 			continue
 		}
 		for _, m := range matches {
-			b, err := os.ReadFile(m)
+			b, err := config.ReadFile(m)
 			if err != nil {
 				continue
 			}
@@ -424,7 +425,7 @@ func hookTarget(h hookEntry) string {
 }
 
 func collectMCPServers(env adapter.Env) []model.MCPServer {
-	b, err := os.ReadFile(filepath.Join(home(env), "mcp-config.json"))
+	b, err := config.ReadFile(filepath.Join(home(env), "mcp-config.json"))
 	if err != nil {
 		return nil
 	}

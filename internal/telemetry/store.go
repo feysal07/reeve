@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/model"
 )
 
@@ -181,7 +182,7 @@ type TeamMap struct {
 
 // LoadTeams reads a team mapping.
 func LoadTeams(path string) (*TeamMap, error) {
-	b, err := os.ReadFile(path)
+	b, err := config.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
