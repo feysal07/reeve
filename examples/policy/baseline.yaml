@@ -18,6 +18,35 @@ revision: "2026-09-18"
 # not anticipated would stop all work on the first day.
 default: allow
 
+# Standing posture, pushed into each agent's own administrator-owned configuration by
+# `reeve policy compile`. These keep holding when the guard is not running, which is
+# why both layers are deployed together.
+settings:
+  # Without this, every rule below is advisory: a developer can start the agent in a
+  # mode that skips all prompting and none of it applies.
+  bypass: disabled
+  approvalMode: prompt
+  sandbox: required
+
+  telemetry:
+    endpoint: https://otel.example.internal:4317
+    protocol: grpc
+    # Prompts and tool arguments routinely contain credentials and customer data.
+    captureContent: false
+
+  mcp:
+    allow:
+      - name: github
+      - name: jira
+
+  guard:
+    enabled: true
+    command: reeve
+    log: /var/log/reeve/decisions.jsonl
+    # Start here. Run for a week, read the log, fix the rules that fire on ordinary
+    # work, and only then set this to false.
+    dryRun: true
+
 rules:
   # ---------------------------------------------------------------- secrets ----
 

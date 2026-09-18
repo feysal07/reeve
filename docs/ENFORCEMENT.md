@@ -194,3 +194,62 @@ contents.
 This is the local half of an audit trail. It records what the agent tried to do on the
 machine, which no vendor's audit API captures, because none of them can see a tool call
 that was refused before it ran.
+
+## Compiling the policy into native configuration
+
+The guard is one layer. It is a process, and a process can be missing, misconfigured
+or skipped by starting an agent differently. `reeve policy compile` renders the same
+policy as each agent's own administrator-owned configuration, which is what remains
+when the guard is not running.
+
+```
+reeve policy compile examples/policy/baseline.yaml --platform linux
+reeve policy compile examples/policy/baseline.yaml --out ./dist --platform linux
+```
+
+It writes managed settings for Claude Code, managed settings plus a policy hook file
+for Copilot CLI, and a requirements file for Codex CLI. The `settings` block of the
+policy supplies the posture: the bypass lock, the sandbox requirement, the telemetry
+destination, the MCP allow list and the guard registration.
+
+### Read the coverage report
+
+Native configuration is strictly less expressive than the guard. Every agent matches a
+command by its leading tokens or a path by a glob. None can match a substring in the
+middle of a command line, and none understands the neutral action kinds.
+
+So the compiler reports what happened to every rule:
+
+| Status | Meaning |
+|---|---|
+| `native` | The agent's own configuration enforces this. It holds with the guard absent. |
+| `partial` | Some of the rule compiled. The guard covers the rest. |
+| `guard-only` | Nothing about this rule can be expressed natively. |
+
+Compiling the shipped baseline against any agent reports one rule enforced natively
+and eight guard-only, because the baseline leans on substring matching. That number is
+not a defect in the compiler. It is the honest measure of how much of a real policy an
+agent can enforce by itself, and it is the reason both layers are deployed together.
+
+A rule is never quietly narrowed to make it fit. A rule written to catch `rm -rf`
+anywhere would become a rule catching it only at the start of a command, which is a
+weaker rule wearing the same name. The compiler refuses that trade and reports the
+rule as guard-only instead.
+
+Allow rules are never emitted. Adding them to an agent's allow list would widen what
+it permits, and a compiled policy may only ever narrow.
+
+Use `--strict` in CI to fail when any rule is not fully covered natively, if your
+organisation needs that guarantee.
+
+### Deploy both layers
+
+```
+reeve policy compile policy.yaml --out ./dist --platform linux
+# distribute ./dist through MDM or configuration management,
+# owned by root, then confirm with:
+reeve scan
+```
+
+`reeve scan` reads the result back and will tell you whether the file you deployed is
+still writable by the developer, which would make it a default rather than a control.

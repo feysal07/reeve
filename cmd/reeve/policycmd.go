@@ -15,15 +15,17 @@ import (
 // whose first feedback is a blocked colleague will be switched off.
 func runPolicy(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: reeve policy <check|test> <file>")
+		return fmt.Errorf("usage: reeve policy <check|test|compile> <file>")
 	}
 	switch args[0] {
 	case "check":
 		return runPolicyCheck(args[1:])
 	case "test":
 		return runPolicyTest(args[1:])
+	case "compile":
+		return runPolicyCompile(args[1:])
 	default:
-		return fmt.Errorf("unknown policy command %q, expected check or test", args[0])
+		return fmt.Errorf("unknown policy command %q, expected check, test or compile", args[0])
 	}
 }
 
@@ -72,14 +74,15 @@ func runPolicyTest(args []string) error {
 	url := fs.String("url", "", "target, for fetch actions")
 	mcpServer := fs.String("mcp-server", "", "MCP server name")
 	mcpTool := fs.String("mcp-tool", "", "MCP tool name")
-	if err := fs.Parse(args); err != nil {
+	file, flags := splitFileAndFlags(args)
+	if err := fs.Parse(flags); err != nil {
 		return err
 	}
-	if fs.NArg() == 0 {
+	if file == "" {
 		return fmt.Errorf("usage: reeve policy test <file> [flags]")
 	}
 
-	p, err := policy.Load(fs.Arg(0))
+	p, err := policy.Load(file)
 	if err != nil {
 		return err
 	}

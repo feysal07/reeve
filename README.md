@@ -30,9 +30,9 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 
 | Agent | Discovery | Policy | Enforcement | Telemetry |
 |---|---|---|---|---|
-| Claude Code | **working** | planned | **working** | planned |
-| GitHub Copilot CLI | **working** | planned | **working** | planned |
-| OpenAI Codex CLI | **working** | planned | **working** | planned |
+| Claude Code | **working** | **working** | **working** | planned |
+| GitHub Copilot CLI | **working** | **working** | **working** | planned |
+| OpenAI Codex CLI | **working** | **working** | **working** | planned |
 | Google Gemini CLI | planned | planned | planned | planned |
 | Cursor | planned | planned | planned | planned |
 | OpenCode, Amp, Kiro | community adapters | | | |
@@ -78,8 +78,12 @@ See [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) for how to wire it into each agen
 for the failure behaviour, which is the part that determines whether enforcement is
 real.
 
-Policy compilation into each vendor's native configuration, and the telemetry
-pipeline, are not built yet.
+`reeve policy compile` renders the same policy as each agent's own
+administrator-owned configuration, so enforcement survives the guard being absent. It
+reports which rules an agent can enforce natively and which need the guard, rather
+than silently dropping what it cannot express.
+
+The telemetry pipeline is not built yet.
 
 ## Licence
 

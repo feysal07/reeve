@@ -22,6 +22,9 @@ type Policy struct {
 	// policy that denies everything it has not thought of stops all work.
 	Default Effect `yaml:"default,omitempty"`
 
+	// Settings is the standing posture pushed into each agent's own configuration.
+	Settings *Settings `yaml:"settings,omitempty"`
+
 	Rules []Rule `yaml:"rules"`
 }
 

@@ -62,7 +62,7 @@ func usage() {
 
 Usage:
   reeve scan [flags]     Discover installed agents and report on their configuration
-  reeve policy <cmd>     Work with policy files (check, test)
+  reeve policy <cmd>     Work with policy files (check, test, compile)
   reeve guard [flags]    Hook handler: decide whether one action may proceed
   reeve version          Print the version
   reeve help             Show this message
@@ -78,6 +78,8 @@ Policy commands:
   reeve policy check <file>          Validate a policy file
   reeve policy test <file> [flags]   Evaluate one action against a policy
     --agent, --kind, --tool, --command, --path, --url, --mcp-server, --mcp-tool
+  reeve policy compile <file> [flags]  Render the policy as each agent's own config
+    --agent, --platform, --out <dir>, --strict, --quiet
 
 Guard flags (reeve guard is invoked by an agent, not usually by hand):
   --agent <id>           Required: claude-code, copilot-cli or codex-cli
