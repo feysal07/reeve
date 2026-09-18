@@ -54,11 +54,12 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 ## Try it
 
 ```powershell
-.\examples\walkthrough.ps1
+powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1
 ```
 
 Builds the binary, creates a sandbox with three deliberately badly configured agents,
-and runs all four planes end to end. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for
+and runs all four planes end to end, asserting the result of each step. It ends with
+`All 30 checks passed.` and exits non-zero if any did not. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for
 the manual steps.
 
 ## Status

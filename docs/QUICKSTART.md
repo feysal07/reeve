@@ -10,13 +10,25 @@ agents honour. Your Claude Code configuration is read, never written.
 
 ## The scripted walkthrough
 
+Windows blocks unsigned scripts by default, so run it like this:
+
 ```powershell
-.\examples\walkthrough.ps1
+powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1
 ```
+
+`-ExecutionPolicy Bypass` applies to that one invocation only and changes nothing on
+your machine. If your policy already allows local scripts, `.\examples\walkthrough.ps1`
+works on its own.
 
 It builds the binary, creates a sandbox with three deliberately badly configured
 agents, and runs all four planes in order: discovery, policy, enforcement, telemetry.
 Add `-KeepSandbox` to keep the artifacts.
+
+It ends with a summary like `All 30 checks passed.` and exits non-zero if any did not,
+so it doubles as a smoke test. Add `-Quiet` for just the checks.
+
+The collector binds to a port the operating system picks, so an existing collector on
+4317 or 4318 does not clash. That matters if you run the claude-code-otel stack.
 
 Expect roughly this:
 
@@ -28,6 +40,9 @@ Expect roughly this:
   store, and a client-asserted team attribute is ignored.
 - **A cost report** showing $1.12 computed from tokens against the agents' own claim of
   $1.42, broken down by team, agent, user, repository and model.
+
+If a check fails, the summary names it and prints why. Send that block along with the
+step it failed in; everything else in the output is context you do not need to read.
 
 ## Manual steps
 
