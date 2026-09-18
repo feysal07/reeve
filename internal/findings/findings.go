@@ -25,6 +25,7 @@ var rules = []Rule{
 	writableManagedConfig,
 	mcpWithCredentials,
 	projectScopedMCP,
+	unrestrictedMCP,
 	noBlockingHooks,
 	unattendedApprovalMode,
 }
@@ -50,7 +51,7 @@ func noManagedSettings(inst model.Installation) []model.Finding {
 		ID:       "policy.no-managed-settings",
 		Severity: model.SeverityHigh,
 		Agent:    inst.Agent,
-		Title:    fmt.Sprintf("%s has no administrator-owned configuration", inst.DisplayName),
+		Title:    "No administrator-owned configuration",
 		Detail: "All of this agent's settings come from files the developer can edit. " +
 			"Any permission rule present is a default, not a control, and can be removed " +
 			"at any time without leaving a trace.",
@@ -67,7 +68,7 @@ func bypassAvailable(inst model.Installation) []model.Finding {
 		ID:       "policy.bypass-available",
 		Severity: model.SeverityHigh,
 		Agent:    inst.Agent,
-		Title:    fmt.Sprintf("%s can be run with all prompting disabled", inst.DisplayName),
+		Title:    "Can be started with all prompting disabled",
 		Detail: "The agent still offers a mode that skips every permission prompt. " +
 			"Any deny rule configured here can be sidestepped by starting the agent " +
 			"differently, so the rules cannot be relied on as a control.",
@@ -83,7 +84,7 @@ func telemetryDisabled(inst model.Installation) []model.Finding {
 		ID:       "audit.no-telemetry",
 		Severity: model.SeverityMedium,
 		Agent:    inst.Agent,
-		Title:    fmt.Sprintf("%s is not exporting telemetry", inst.DisplayName),
+		Title:    "Not exporting telemetry",
 		Detail: "Nothing this agent does on this machine is recorded anywhere you control. " +
 			"Tool calls, file edits and shell commands leave no audit trail, and spend " +
 			"cannot be attributed to a team or repository.",
@@ -100,7 +101,7 @@ func promptContentCaptured(inst model.Installation) []model.Finding {
 		ID:       "privacy.prompt-content-captured",
 		Severity: model.SeverityHigh,
 		Agent:    inst.Agent,
-		Title:    fmt.Sprintf("%s is exporting prompt or tool content", inst.DisplayName),
+		Title:    "Exporting prompt or tool content",
 		Detail: "Prompts and tool arguments routinely contain credentials, customer data " +
 			"and source code. Exporting them turns the telemetry pipeline into a system " +
 			"that inherits the sensitivity of everything the agent touches.",
@@ -120,7 +121,7 @@ func writableManagedConfig(inst model.Installation) []model.Finding {
 			ID:       "policy.managed-config-writable",
 			Severity: model.SeverityCritical,
 			Agent:    inst.Agent,
-			Title:    fmt.Sprintf("%s administrator configuration is editable by this user", inst.DisplayName),
+			Title:    "Administrator configuration is editable by this user",
 			Detail: "A managed settings file exists but the current unprivileged user can " +
 				"write to it. Every rule it contains can be silently removed, so it " +
 				"provides the appearance of control without the substance.",
@@ -133,7 +134,12 @@ func writableManagedConfig(inst model.Installation) []model.Finding {
 
 // credentialHints are environment variable name fragments that suggest a secret is
 // being handed to an MCP server. Only names are examined; values are never read.
-var credentialHints = []string{"TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL", "PAT"}
+var credentialHints = []string{
+	"TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL", "PAT",
+	// Remote MCP servers are usually authenticated with a header rather than an
+	// environment variable, and those names carry no other meaning.
+	"AUTHORIZATION", "BEARER", "APIKEY",
+}
 
 func mcpWithCredentials(inst model.Installation) []model.Finding {
 	var out []model.Finding
@@ -190,6 +196,32 @@ func projectScopedMCP(inst model.Installation) []model.Finding {
 	}}
 }
 
+// unrestrictedMCP fires when an agent uses MCP servers but no administrator has
+// declared which ones are permitted. Without an allow-list, adding a server is a
+// decision any developer, or any repository they open, can make alone.
+func unrestrictedMCP(inst model.Installation) []model.Finding {
+	if len(inst.MCPServers) == 0 {
+		return nil
+	}
+	for _, m := range inst.Permissions.MCPAllow {
+		if m.Scope == model.ScopeManaged {
+			return nil
+		}
+	}
+	return []model.Finding{{
+		ID:       "mcp.no-allowlist",
+		Severity: model.SeverityHigh,
+		Agent:    inst.Agent,
+		Title:    "May connect to any MCP server",
+		Detail: "MCP servers are in use but no administrator-owned allow-list restricts " +
+			"which ones. Every server the agent connects to extends its reach into " +
+			"another system, and right now nothing constrains that list.",
+		Evidence: fmt.Sprintf("%d server(s) configured", len(inst.MCPServers)),
+		Remedy: "Declare an approved MCP server list in administrator-owned configuration " +
+			"and deny everything else.",
+	}}
+}
+
 func noBlockingHooks(inst model.Installation) []model.Finding {
 	for _, h := range inst.Hooks {
 		if h.Blocking {
@@ -200,7 +232,7 @@ func noBlockingHooks(inst model.Installation) []model.Finding {
 		ID:       "policy.no-blocking-hooks",
 		Severity: model.SeverityMedium,
 		Agent:    inst.Agent,
-		Title:    fmt.Sprintf("%s has no hook that can stop an action", inst.DisplayName),
+		Title:    "No hook can stop an action",
 		Detail: "No hook is configured on an event that can deny a tool call. Nothing " +
 			"inspects what the agent is about to do before it does it.",
 		Remedy: "Install a policy hook on the agent's pre-tool event, delivered through " +
@@ -226,7 +258,7 @@ func unattendedApprovalMode(inst model.Installation) []model.Finding {
 		ID:       "policy.unattended-approval-mode",
 		Severity: model.SeverityMedium,
 		Agent:    inst.Agent,
-		Title:    fmt.Sprintf("%s defaults to acting without asking", inst.DisplayName),
+		Title:    "Defaults to acting without asking",
 		Detail: "The configured default lets the agent take actions with no prompt. " +
 			"Combined with an absent deny list this means edits, and in some modes shell " +
 			"commands, proceed unreviewed.",

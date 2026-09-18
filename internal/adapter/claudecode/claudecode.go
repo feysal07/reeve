@@ -212,6 +212,14 @@ func mergePermissions(sources []source) model.Permissions {
 		if len(s.data.AvailableModels) > 0 {
 			p.AllowedModels = s.data.AvailableModels
 		}
+		// Claude Code names MCP servers directly rather than matching on command
+		// or URL, so only the Name field of the normalised matcher is set.
+		for _, name := range s.data.AllowedMCPServers {
+			p.MCPAllow = append(p.MCPAllow, model.MCPMatcher{Name: name, Scope: s.scope})
+		}
+		for _, name := range s.data.DeniedMCPServers {
+			p.MCPDeny = append(p.MCPDeny, model.MCPMatcher{Name: name, Scope: s.scope})
+		}
 	}
 	return p
 }

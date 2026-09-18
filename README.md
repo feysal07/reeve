@@ -30,8 +30,8 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 
 | Agent | Discovery | Policy | Enforcement | Telemetry |
 |---|---|---|---|---|
-| Claude Code | planned v0.1 | planned v0.1 | planned v0.1 | planned v0.1 |
-| GitHub Copilot CLI | planned v0.1 | planned v0.1 | planned v0.1 | planned v0.1 |
+| Claude Code | **working** | planned v0.1 | planned v0.1 | planned v0.1 |
+| GitHub Copilot CLI | **working** | planned v0.1 | planned v0.1 | planned v0.1 |
 | OpenAI Codex CLI | planned v0.2 | planned v0.2 | planned v0.2 | planned v0.2 |
 | Google Gemini CLI | planned v0.3 | planned v0.3 | planned v0.3 | planned v0.3 |
 | Cursor | planned v0.3 | planned v0.3 | planned v0.3 | planned v0.3 |
@@ -53,7 +53,19 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 
 ## Status
 
-Pre-alpha. Nothing works yet. Follow the repository for the first release.
+Pre-alpha. Discovery works for Claude Code and GitHub Copilot CLI:
+
+```
+reeve scan
+```
+
+It reads each agent's configuration, records whether every setting came from an
+administrator-owned file or one the developer can edit, and reports findings that say
+what was observed, why it matters and how to fix it. It is read-only and makes no
+network calls. `--json` emits the full report; `--fail-on high` makes it usable as a
+CI gate.
+
+Policy compilation, enforcement and the telemetry pipeline are not built yet.
 
 ## Licence
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/adapter/claudecode"
+	"github.com/feysal07/reeve/internal/adapter/copilot"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/scan"
 )
@@ -85,6 +86,7 @@ func runScan(args []string) error {
 
 	registry := adapter.NewRegistry(
 		claudecode.New(),
+		copilot.New(),
 	)
 
 	report, err := scan.Run(ctx, registry, scan.Options{
@@ -172,9 +174,20 @@ func renderText(w *os.File, r model.Report) {
 		return severityRank[sorted[i].Severity] > severityRank[sorted[j].Severity]
 	})
 
+	// Findings carry an agent id, not a display name. With several agents installed
+	// the same finding can appear more than once, so it must say which one it is about.
+	names := map[model.AgentID]string{}
+	for _, inst := range r.Installations {
+		names[inst.Agent] = inst.DisplayName
+	}
+
 	fmt.Fprintf(w, "Findings (%d)\n\n", len(sorted))
 	for _, f := range sorted {
-		fmt.Fprintf(w, "  [%s] %s\n", strings.ToUpper(string(f.Severity)), f.Title)
+		label := f.Title
+		if name := names[f.Agent]; name != "" {
+			label = name + ": " + f.Title
+		}
+		fmt.Fprintf(w, "  [%s] %s\n", strings.ToUpper(string(f.Severity)), label)
 		fmt.Fprintf(w, "        %s\n", wrap(f.Detail, 72, "        "))
 		if f.Evidence != "" {
 			fmt.Fprintf(w, "        evidence: %s\n", f.Evidence)

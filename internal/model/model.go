@@ -67,6 +67,22 @@ type Permissions struct {
 	Deny          []Rule   `json:"deny,omitempty"`
 	SandboxMode   string   `json:"sandboxMode,omitempty"`
 	AllowedModels []string `json:"allowedModels,omitempty"`
+
+	// MCPAllow and MCPDeny restrict which MCP servers the agent may use at all,
+	// which is a separate question from what an already-connected server may do.
+	// Vendors express this differently: some match on a server's configured name,
+	// others on its command line or URL, so all three are carried.
+	MCPAllow []MCPMatcher `json:"mcpAllow,omitempty"`
+	MCPDeny  []MCPMatcher `json:"mcpDeny,omitempty"`
+}
+
+// MCPMatcher identifies one or more MCP servers a policy applies to. Exactly one of
+// the fields is normally set. An empty matcher matches nothing.
+type MCPMatcher struct {
+	Name    string   `json:"name,omitempty"`
+	Command []string `json:"command,omitempty"`
+	URL     string   `json:"url,omitempty"`
+	Scope   Scope    `json:"scope"`
 }
 
 // Rule is one permission entry, kept as written plus a parsed form where possible.
