@@ -3,7 +3,7 @@ package policy
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -246,6 +246,21 @@ func anyGlob(patterns []string, v string) bool {
 	return false
 }
 
+// normalizePath rewrites a path so it can be matched the same way everywhere.
+//
+// filepath.ToSlash is not enough: it is a no-op on Unix, so a Windows-style path
+// arriving at a guard running on Linux or WSL would keep its backslashes and slip
+// past every pattern written with forward slashes. That is a silent enforcement
+// failure, which is the worst kind.
+//
+// Treating a backslash as a separator on Unix can technically over-match, since a
+// backslash is a legal character in a Unix filename. That trade is deliberate: an
+// over-matching rule denies something it need not have, which is visible and
+// arguable, while an under-matching rule permits something it was written to stop.
+func normalizePath(p string) string {
+	return strings.ReplaceAll(p, `\`, "/")
+}
+
 // anyPathGlob matches file paths. Paths are compared with forward slashes regardless
 // of platform, so one policy works on Windows and Unix alike, and a bare pattern such
 // as ".env" also matches a file of that name in any directory.
@@ -254,16 +269,20 @@ func anyPathGlob(patterns []string, paths []string) bool {
 		if raw == "" {
 			continue
 		}
-		p := filepath.ToSlash(raw)
+		p := normalizePath(raw)
 		for _, pattern := range patterns {
-			pattern = filepath.ToSlash(pattern)
+			pattern = normalizePath(pattern)
 			if ok, err := doublestar.Match(pattern, p); err == nil && ok {
 				return true
 			}
 			// A pattern with no separator is matched against the base name too,
 			// so ".env" catches a/b/.env without the author writing **/.env.
 			if !strings.Contains(pattern, "/") {
-				if ok, err := doublestar.Match(pattern, filepath.Base(p)); err == nil && ok {
+				base := p
+				if i := strings.LastIndex(p, "/"); i >= 0 {
+					base = p[i+1:]
+				}
+				if ok, err := doublestar.Match(pattern, base); err == nil && ok {
 					return true
 				}
 			}
