@@ -32,7 +32,7 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 |---|---|---|---|---|
 | Claude Code | **working** | planned v0.1 | planned v0.1 | planned v0.1 |
 | GitHub Copilot CLI | **working** | planned v0.1 | planned v0.1 | planned v0.1 |
-| OpenAI Codex CLI | planned v0.2 | planned v0.2 | planned v0.2 | planned v0.2 |
+| OpenAI Codex CLI | **working** | planned v0.2 | planned v0.2 | planned v0.2 |
 | Google Gemini CLI | planned v0.3 | planned v0.3 | planned v0.3 | planned v0.3 |
 | Cursor | planned v0.3 | planned v0.3 | planned v0.3 | planned v0.3 |
 | OpenCode, Amp, Kiro | community adapters | | | |
@@ -53,7 +53,7 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 
 ## Status
 
-Pre-alpha. Discovery works for Claude Code and GitHub Copilot CLI:
+Pre-alpha. Discovery works for Claude Code, GitHub Copilot CLI and Codex CLI:
 
 ```
 reeve scan

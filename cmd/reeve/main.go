@@ -16,6 +16,7 @@ import (
 
 	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/adapter/claudecode"
+	"github.com/feysal07/reeve/internal/adapter/codex"
 	"github.com/feysal07/reeve/internal/adapter/copilot"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/scan"
@@ -87,6 +88,7 @@ func runScan(args []string) error {
 	registry := adapter.NewRegistry(
 		claudecode.New(),
 		copilot.New(),
+		codex.New(),
 	)
 
 	report, err := scan.Run(ctx, registry, scan.Options{

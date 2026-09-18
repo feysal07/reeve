@@ -28,6 +28,7 @@ var rules = []Rule{
 	unrestrictedMCP,
 	noBlockingHooks,
 	unattendedApprovalMode,
+	unsandboxed,
 }
 
 // Evaluate runs every rule against every installation.
@@ -222,6 +223,26 @@ func unrestrictedMCP(inst model.Installation) []model.Finding {
 	}}
 }
 
+// unsandboxed fires when an agent is explicitly configured to run with no
+// filesystem or network isolation at all. This is distinct from having no sandbox
+// configured: it means isolation was available and was deliberately turned off.
+func unsandboxed(inst model.Installation) []model.Finding {
+	if inst.Permissions.SandboxMode != "danger-full-access" {
+		return nil
+	}
+	return []model.Finding{{
+		ID:       "policy.sandbox-disabled",
+		Severity: model.SeverityHigh,
+		Agent:    inst.Agent,
+		Title:    "Running with no sandbox",
+		Detail: "The agent is configured for full access, so its shell commands and " +
+			"file operations run with the developer's own privileges against the whole " +
+			"machine, not a restricted workspace.",
+		Evidence: "sandbox mode: " + inst.Permissions.SandboxMode,
+		Remedy:   "Constrain the permitted sandbox modes in administrator-owned configuration.",
+	}}
+}
+
 func noBlockingHooks(inst model.Installation) []model.Finding {
 	for _, h := range inst.Hooks {
 		if h.Blocking {
@@ -247,6 +268,8 @@ var unattendedModes = map[string]bool{
 	"auto":               true,
 	"dontAsk":            true,
 	"danger-full-access": true,
+	// Codex spells "do not ask for approval" as never.
+	"never": true,
 }
 
 func unattendedApprovalMode(inst model.Installation) []model.Finding {
