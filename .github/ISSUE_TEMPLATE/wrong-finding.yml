@@ -1,0 +1,52 @@
+name: A finding is wrong about my machine
+description: Reeve reported something that is not true, or missed something that is.
+labels: ["finding"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        This is the most useful kind of report. Every finding is meant to be arguable,
+        and a finding that is confidently wrong costs more than one that is missing:
+        someone closes the question and does not look again.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What happened
+      options:
+        - It reported a problem that is not real
+        - It missed a problem that is real
+        - It described the configuration correctly but drew the wrong conclusion
+        - The remedy names something my agent does not have
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Which agent
+      placeholder: Claude Code, Copilot CLI, Codex CLI, Gemini CLI, Cursor
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What Reeve said
+      description: >-
+        The finding, or the relevant part of `reeve scan --json`. Paths and agent names
+        are helpful; please remove anything you would not put in a public issue.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What is actually true, and how you know
+      description: >-
+        The configuration as it really is. Redact values; the key names are what matter.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Output of `reeve version`
+    validations:
+      required: true

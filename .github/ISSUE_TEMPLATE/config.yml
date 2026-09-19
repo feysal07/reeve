@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/feysal07/reeve/security/advisories/new
+    about: >-
+      Not here. Reeve decides whether an action is permitted, so a public report is a
+      working description of how to get past someone's controls before they have a fix.
+      SECURITY.md sets out what counts as one.

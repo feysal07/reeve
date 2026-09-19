@@ -1,11 +1,44 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+# Three ecosystems, because this repository depends on three kinds of thing and
+# forgetting any one of them leaves a blind spot that looks like nothing.
+#
+#   gomod          the libraries linked into the binary
+#   github-actions the code that runs with packages: write and can push an image
+#   docker         the base images, which age silently: a Dockerfile that never
+#                  changes still ships whatever its base picked up last month
+#
+# The UI's starter file leaves package-ecosystem empty, which Dependabot rejects. It
+# reads as configured and updates nothing, so replacing it is the whole point.
 version: 2
+
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: gomod
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # One pull request for the routine drift, so the noticeable ones stay
+      # noticeable. A major version still arrives on its own.
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /deploy/helm/reeve-collector
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "docker"

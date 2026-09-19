@@ -17,16 +17,20 @@ on:
 
 permissions:
   contents: write
+  # id-token and attestations are what the provenance step needs; neither grants
+  # anything else, and nothing here can write to a package.
+  id-token: write
+  attestations: write
 
 jobs:
   binaries:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           check-latest: true
@@ -128,6 +132,18 @@ jobs:
           sha256sum ./*.tar.gz ./*.zip > checksums.txt
           cat checksums.txt
 
+      # Signed provenance: a statement that these exact files were produced by this
+      # workflow, from this commit, on GitHub's runners. Checksums prove a download was
+      # not corrupted in transit; they say nothing about who built it, and a checksums
+      # file published beside the artifacts it describes is only as trustworthy as the
+      # release it sits in. Verify with:
+      #
+      #   gh attestation verify reeve-linux-amd64.tar.gz --repo feysal07/reeve
+      - name: Sign what was built
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: "dist/*.tar.gz, dist/*.zip"
+
       - name: Attach to the release
         if: github.event_name == 'release'
         env:
@@ -138,7 +154,7 @@ jobs:
 
       - name: Keep the build for inspection
         if: github.event_name != 'release'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reeve-binaries
           path: dist/

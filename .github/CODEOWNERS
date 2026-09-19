@@ -1,0 +1,16 @@
+# Every change requests a review from the maintainer.
+#
+# This is not a gate on its own: the branch ruleset is what requires the review. This
+# is what makes sure the request reaches someone rather than sitting unassigned.
+*       @feysal07
+
+# The parts where a mistake is silent rather than loud, called out so they are never
+# reviewed casually: the hook protocol decides whether an action is refused, the
+# compilers decide what an operator is told they are covered by, and the workflows run
+# with permission to publish.
+/internal/hook/             @feysal07
+/internal/compile/          @feysal07
+/internal/findings/         @feysal07
+/.github/workflows/         @feysal07
+/SECURITY.md                @feysal07
+/docs/FREE-FOREVER.md       @feysal07

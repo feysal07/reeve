@@ -32,6 +32,10 @@ a given agent has to leave to the guard rather than dropping them quietly.
 ## Verifying this download
 
     sha256sum -c checksums.txt
+    gh attestation verify reeve-linux-amd64.tar.gz --repo feysal07/reeve
+
+The checksum proves the file arrived intact. The attestation proves which workflow,
+from which commit, produced it.
 
 ## Documentation
 

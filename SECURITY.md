@@ -56,6 +56,25 @@ library. Any of these is a vulnerability, not a bug:
 - Anything requiring an attacker who can already write to the administrator-owned
   configuration or replace the `reeve` binary. At that point the machine is theirs.
 
+## Verifying what you downloaded
+
+Release artifacts carry signed build provenance: a statement, verifiable against
+GitHub's transparency log, that these exact bytes were produced by this repository's
+release workflow from a named commit.
+
+```
+gh attestation verify reeve-linux-amd64.tar.gz --repo feysal07/reeve
+gh attestation verify oci://ghcr.io/feysal07/reeve:0.1.0 --repo feysal07/reeve
+```
+
+`checksums.txt` is still published and still worth checking, but the two answer
+different questions. A checksum proves the download was not corrupted on the way to
+you. It says nothing about who built it, and a checksums file published beside the
+artifacts it describes is only as trustworthy as the release it sits in. Provenance is
+the one that survives that question.
+
+Releases before v0.1.1 predate this and carry checksums only.
+
 ## Supported versions
 
 Pre-alpha: only the current `main` branch is supported. There are no maintained

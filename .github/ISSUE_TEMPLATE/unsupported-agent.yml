@@ -1,0 +1,41 @@
+name: An agent is not supported, or not detected
+description: Reeve does not know about an agent you use, or failed to find one it should.
+labels: ["adapter"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Adapters are the most valuable contribution and the easiest place to start.
+        See CONTRIBUTING.md; what is below is most of what writing one requires.
+  - type: input
+    id: agent
+    attributes:
+      label: Which agent, and which version
+    validations:
+      required: true
+  - type: textarea
+    id: paths
+    attributes:
+      label: Where it keeps its configuration
+      description: >-
+        Every file it reads and the order they take precedence in. The question that
+        matters most is which of them an administrator can own and a developer cannot
+        edit, because that is the difference between a control and a default.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: hooks
+    attributes:
+      label: Whether it can refuse an action, and how
+      description: >-
+        If it has hooks: the event that runs before a tool call, the JSON it sends, the
+        JSON it expects back, and what it does when the hook crashes or times out. That
+        last one decides whether enforcement is real.
+      render: text
+  - type: textarea
+    id: telemetry
+    attributes:
+      label: What it exports, if anything
+      description: OTLP endpoint settings, metric names, and whether prompts are included by default.
+      render: text

@@ -1,0 +1,49 @@
+# Static analysis, as a workflow rather than through the repository's Default setup.
+#
+# Two reasons for the file. The query suite is security-extended rather than the
+# default set, which is a deliberate choice worth recording where it can be reviewed.
+# And a workflow runs on pull requests from forks on the same terms as anything else,
+# so a contributor sees the same result the maintainer does.
+#
+# Do not also enable Default setup in repository settings. The two conflict, and
+# GitHub resolves that by disabling this one.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, because a query added upstream can find something in code that has not
+    # changed. Analysis that only runs on a commit never sees those.
+    - cron: "37 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyse:
+    name: analyse (go)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - uses: github/codeql-action/init@3ea06614dafe36dec890db3446326e0d40ce53d4 # v3
+        with:
+          languages: go
+          queries: security-extended
+
+      - uses: github/codeql-action/autobuild@3ea06614dafe36dec890db3446326e0d40ce53d4 # v3
+
+      - uses: github/codeql-action/analyze@3ea06614dafe36dec890db3446326e0d40ce53d4 # v3
+        with:
+          category: "/language:go"
