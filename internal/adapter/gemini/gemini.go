@@ -165,8 +165,14 @@ func (a *Adapter) Detect(ctx context.Context, env adapter.Env) (bool, error) {
 		filepath.Join(systemDir(env), "settings.json"),
 		filepath.Join(systemDir(env), "system-defaults.json"),
 	}
-	if v := env.Getenv("GEMINI_CLI_SYSTEM_SETTINGS_PATH"); v != "" {
-		candidates = append(candidates, v)
+	// Both overrides, not just the settings one. Inspect honours the defaults path,
+	// so a Detect that ignored it would miss an organisation that had deployed only
+	// that file: the configuration would be read by nothing, because nothing would
+	// report the agent as present.
+	for _, k := range []string{"GEMINI_CLI_SYSTEM_SETTINGS_PATH", "GEMINI_CLI_SYSTEM_DEFAULTS_PATH"} {
+		if v := env.Getenv(k); v != "" {
+			candidates = append(candidates, v)
+		}
 	}
 	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {
@@ -290,20 +296,24 @@ func mergePermissions(sources []source) model.Permissions {
 		}
 
 		// Gemini spells the bypass lock two ways, and either one closes it.
+		//
+		// The value has to move in both directions. Sources are visited weakest
+		// first, so a source that expresses an opinion replaces whatever a weaker
+		// one said, including replacing a lock with the absence of one. Only ever
+		// setting false would mean an administrator default that the developer has
+		// since overridden still read as a closed lock, and this is a file any user
+		// setting replaces: the scan would report bypass as unavailable on a machine
+		// where it is one flag away, and the finding about it would never fire.
 		if sec := d.Security; sec != nil {
-			if sec.DisableYoloMode != nil && *sec.DisableYoloMode {
-				p.BypassAvailable = false
-				if s.scope == model.ScopeManaged {
-					p.ManagedLocked = true
-				}
-			}
 			if sec.ToolSandboxing != nil && *sec.ToolSandboxing && p.SandboxMode == "" {
 				p.SandboxMode = "enabled"
 			}
 		}
-		if ad := d.Admin; ad != nil && ad.SecureModeEnabled != nil && *ad.SecureModeEnabled {
-			p.BypassAvailable = false
-			if s.scope == model.ScopeManaged {
+
+		locked, expressed := bypassLock(d)
+		if expressed {
+			p.BypassAvailable = !locked
+			if locked && s.scope == model.ScopeManaged {
 				p.ManagedLocked = true
 			}
 		}
@@ -387,6 +397,24 @@ func mergeTelemetry(sources []source) model.TelemetryConfig {
 		}
 	}
 	return t
+}
+
+// bypassLock reads one settings file's opinion on whether the agent may be started
+// with every prompt skipped.
+//
+// Two keys say it, and expressed reports whether this file said anything at all,
+// which is what lets a stronger source override a weaker one in either direction
+// without an absent key being mistaken for a decision.
+func bypassLock(d *settings) (locked, expressed bool) {
+	if sec := d.Security; sec != nil && sec.DisableYoloMode != nil {
+		expressed = true
+		locked = locked || *sec.DisableYoloMode
+	}
+	if ad := d.Admin; ad != nil && ad.SecureModeEnabled != nil {
+		expressed = true
+		locked = locked || *ad.SecureModeEnabled
+	}
+	return locked, expressed
 }
 
 // blockingEvents are the hook events that can stop a tool call or abort the turn.

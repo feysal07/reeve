@@ -20,11 +20,15 @@ powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1
 your machine. If your policy already allows local scripts, `.\examples\walkthrough.ps1`
 works on its own.
 
-It builds the binary, creates a sandbox with three deliberately badly configured
+It builds the binary, creates a sandbox with four deliberately badly configured
 agents, and runs all four planes in order: discovery, policy, enforcement, telemetry.
 Add `-KeepSandbox` to keep the artifacts.
 
-It ends with a summary like `All 30 checks passed.` and exits non-zero if any did not,
+The sandbox has a home directory of its own, which it points the agents at for the
+duration. Nothing you have installed is read, and the counts below are the same
+whatever is on the machine running it.
+
+It ends with a summary like `All 41 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `-Quiet` for just the checks.
 
 The collector binds to a port the operating system picks, so an existing collector on
@@ -32,13 +36,17 @@ The collector binds to a port the operating system picks, so an existing collect
 
 Expect roughly this:
 
-- **22 findings** across three agents, including a Codex install running with no
-  sandbox and no prompting, and a Copilot install exporting prompt content.
-- **Four enforcement decisions**: two denials with exit code 2, one `ask`, one allow.
-- **Two failure cases**: an unparseable policy denies, an absent policy allows.
+- **30 findings** across four agents, including a Codex install running with no
+  sandbox and no prompting, a Copilot install exporting prompt content, and a Gemini
+  install whose administrator file the developer has already overridden.
+- **Eight enforcement decisions**, including Gemini, whose hook names its tools,
+  its event and the field in its reply differently from everyone else.
+- **Five failure cases**: an unparseable policy denies, an absent policy allows, an
+  unreadable request denies, and an agent name Reeve does not recognise denies rather
+  than guessing at the shape of a reply.
 - **Two assertions that must pass**: a prompt sent to the collector does not reach the
   store, and a client-asserted team attribute is ignored.
-- **A cost report** showing $1.12 computed from tokens against the agents' own claim of
+- **A cost report** showing $1.31 computed from tokens against the agents' own claim of
   $1.42, broken down by team, agent, user, repository and model.
 
 If a check fails, the summary names it and prints why. Send that block along with the

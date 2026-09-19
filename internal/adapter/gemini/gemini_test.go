@@ -493,3 +493,61 @@ func TestMalformedConfigDoesNotFail(t *testing.T) {
 		t.Error("the malformed file was not reported as existing")
 	}
 }
+
+// TestAnOverriddenBypassLockIsReportedOpen.
+//
+// system-defaults.json is administrator-authored and any user setting replaces it.
+// A merge that only ever closed the lock would keep reporting it closed after the
+// developer reopened it, so the scan would describe a machine that does not exist and
+// the finding about bypass being available would never fire. That is a false negative
+// on the control every other rule depends on.
+func TestAnOverriddenBypassLockIsReportedOpen(t *testing.T) {
+	env, sys := testEnv(t)
+	writeFile(t, filepath.Join(sys, "system-defaults.json"), `{"security":{"disableYoloMode":true}}`)
+	writeFile(t, filepath.Join(env.Home, ".gemini", "settings.json"), `{"security":{"disableYoloMode":false}}`)
+
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inst.Permissions.BypassAvailable {
+		t.Error("the developer reopened bypass and the scan still reports it locked")
+	}
+}
+
+// TestAManagedLockIsNotUndoneByAWeakerFile: the movement must not work upwards. The
+// administrator settings file outranks the developer's, so a lock there stands.
+func TestAManagedLockIsNotUndoneByAWeakerFile(t *testing.T) {
+	env, sys := testEnv(t)
+	writeFile(t, filepath.Join(env.Home, ".gemini", "settings.json"), `{"security":{"disableYoloMode":false}}`)
+	writeFile(t, filepath.Join(sys, "settings.json"), `{"security":{"disableYoloMode":true}}`)
+
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Permissions.BypassAvailable {
+		t.Error("a developer setting overrode the administrator's bypass lock")
+	}
+	if !inst.Permissions.ManagedLocked {
+		t.Error("the administrator lock was not recognised as a control")
+	}
+}
+
+// TestDetectFindsAnAdministratorDefaultOnItsOwn.
+//
+// Inspect honours GEMINI_CLI_SYSTEM_DEFAULTS_PATH, so Detect has to as well. An
+// organisation that deployed only that file would otherwise have configuration no
+// scan ever reads, because nothing would report the agent as installed.
+func TestDetectFindsAnAdministratorDefaultOnItsOwn(t *testing.T) {
+	env, sys := testEnv(t)
+	writeFile(t, filepath.Join(sys, "system-defaults.json"), `{"security":{"disableYoloMode":true}}`)
+
+	found, err := New().Detect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Error("an administrator default was deployed and the agent was reported absent")
+	}
+}
