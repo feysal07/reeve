@@ -1,11 +1,43 @@
 #!/bin/sh
-# Guard: never commit to this repo with a work identity.
+# Guard: never commit to this repository with the wrong identity.
+#
+# The patterns live in local git config rather than in this file. A hook that names
+# the address it is keeping out publishes that address to everyone who clones the
+# repository, which is the opposite of what it was written to do.
+#
+# Set them once per clone, as many as you need:
+#
+#   git config --add reeve.blockedEmail '*@example.com'
+#   git config --add reeve.blockedEmail '*@client.example'
+#
+# With none set the hook still blocks an unset or placeholder address, because a
+# commit nobody can attribute is a commit nobody can correct.
+
 email=$(git config user.email)
+
+if [ -z "$email" ]; then
+    echo "BLOCKED: git user.email is not set for this repository."
+    echo "Set the identity you want on these commits before committing."
+    exit 1
+fi
+
 case "$email" in
-    *mns.mu*|*PLACEHOLDER*|"")
-        echo "BLOCKED: git user.email is '$email'"
-        echo "This repo must use your personal identity."
-        echo "Check ~/.gitconfig-personal and the includeIf in ~/.gitconfig"
+    *PLACEHOLDER*|*placeholder*|*example.com)
+        echo "BLOCKED: git user.email is '$email', which looks like a placeholder."
+        echo "Set a real identity before committing."
         exit 1
         ;;
 esac
+
+# Word splitting is deliberate: these are email globs, which contain no spaces.
+for pattern in $(git config --get-all reeve.blockedEmail 2>/dev/null); do
+    case "$email" in
+        $pattern)
+            echo "BLOCKED: git user.email is '$email', which this clone is configured to refuse."
+            echo "It matches the pattern '$pattern' from reeve.blockedEmail."
+            echo "Check the includeIf in ~/.gitconfig, or list the patterns with:"
+            echo "  git config --get-all reeve.blockedEmail"
+            exit 1
+            ;;
+    esac
+done

@@ -30,6 +30,11 @@ stores its configuration, what its hook protocol looks like, and what telemetry 
 Each adapter implements the interface in `internal/adapter` and ships with a contract
 test pinned to specific agent versions, because vendors change these formats frequently.
 
+## Reporting a security problem
+
+Not through an issue. See [SECURITY.md](SECURITY.md), which also sets out what counts
+as a vulnerability in a tool whose job is to decide whether an action is permitted.
+
 ## Ground rules
 
 - Discovery is read-only. The scan command must never modify an agent's configuration.

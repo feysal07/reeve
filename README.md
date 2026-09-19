@@ -133,3 +133,7 @@ would come up green and produce a quietly wrong audit trail.
 
 Apache-2.0. See [LICENSE](LICENSE), and
 [docs/FREE-FOREVER.md](docs/FREE-FOREVER.md) for what will never move behind a paywall.
+
+To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md); contributions are accepted under
+the DCO, not a CLA. To report a security problem, see [SECURITY.md](SECURITY.md) rather
+than opening an issue.
