@@ -245,6 +245,17 @@ a log that has never been sealed reports as *not verified* rather than as clean.
 See [docs/TELEMETRY.md](docs/TELEMETRY.md). Prompt and response content is never
 stored, whatever an agent is configured to send.
 
+To see it working on one machine, there is a compose stack — collector, Prometheus
+and Grafana, one command:
+
+```
+cd deploy/compose && docker compose up -d
+```
+
+Everything binds to 127.0.0.1, because the collector has no authentication and cannot
+have any: it accepts OTLP from agents that have no credential to present. See
+[deploy/compose](deploy/compose) for what that means before you change a port.
+
 To run the collector in Kubernetes, there is a Helm chart:
 [deploy/helm/reeve-collector](deploy/helm/reeve-collector). It deploys a single
 writer against a persistent volume, and refuses to render four configurations that

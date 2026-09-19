@@ -69,6 +69,56 @@ jobs:
       - name: Walk through every plane against a sandbox
         run: ${{ matrix.run }}
 
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Brought all the way up rather than only validated. The first version of
+      # this file passed `docker compose config` and then crash-looped on every
+      # machine that ran it, because the collector runs as nonroot and Docker
+      # creates named volumes owned by root. A syntax check would not have found
+      # that, and neither would reading it.
+      - name: Bring the stack up and send it an event
+        working-directory: deploy/compose
+        run: |
+          set -eu
+          docker compose config > /dev/null
+
+          # Built from this commit rather than pulled, so the test covers the code
+          # in the pull request and not the last release.
+          docker build -t reeve-under-test:ci ../..
+          sed -i "s#image: ghcr.io/feysal07/reeve:.*#image: reeve-under-test:ci#" docker-compose.yml
+
+          docker compose up -d --wait --wait-timeout 120
+
+          curl -sf -X POST http://127.0.0.1:4318/v1/metrics             -H 'Content-Type: application/json'             -d '{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]},"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"dataPoints":[{"asInt":"1500","attributes":[{"key":"type","value":{"stringValue":"input"}},{"key":"user.email","value":{"stringValue":"someone@example.com"}}],"timeUnixNano":"1789845000000000000"}],"aggregationTemporality":2,"isMonotonic":true}}]}]}]}'             -o /dev/null
+
+          # Prometheus has to have scraped it, or the dashboard shows nothing and
+          # the stack was up without being connected.
+          for i in $(seq 1 20); do
+            if curl -sf 'http://127.0.0.1:9091/api/v1/query?query=reeve_tokens_total'                  | grep -q '"agent":"claude-code"'; then
+              found=yes; break
+            fi
+            sleep 5
+          done
+          [ "${found:-no}" = yes ] || { docker compose logs; exit 1; }
+
+          # No identity in the metrics. The payload above carried an email.
+          if curl -sf 'http://127.0.0.1:9091/api/v1/series?match[]=%7B__name__%3D~%22reeve_.%2A%22%7D'                | grep -q 'example.com'; then
+            echo "an email reached the metrics endpoint"
+            exit 1
+          fi
+
+          # And the dashboard is actually provisioned, rather than the file
+          # sitting in a directory Grafana never read.
+          curl -sf 'http://127.0.0.1:3000/api/search?query=Reeve' | grep -q 'reeve-overview'
+
+      - name: Stop
+        if: always()
+        working-directory: deploy/compose
+        run: docker compose down -v
+
   chart:
     runs-on: ubuntu-latest
     steps:

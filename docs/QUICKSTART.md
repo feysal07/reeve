@@ -178,6 +178,17 @@ Start the collector:
 reeve collect --store ./events.jsonl --teams examples/telemetry/teams.yaml
 ```
 
+For a collector with Prometheus and Grafana already wired to it, there is a compose
+stack in [deploy/compose](../deploy/compose):
+
+```
+cd deploy/compose && docker compose up -d
+```
+
+Everything binds to 127.0.0.1. The collector has no authentication and cannot have
+any, so the only thing keeping it private is that nothing off this machine can reach
+it. Read that directory's README before changing a port.
+
 Point an agent at it with `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`, or
 post a payload by hand to `/v1/metrics`. Both OTLP over HTTP encodings work, so no
 protocol setting is needed. gRPC is not supported. Then:

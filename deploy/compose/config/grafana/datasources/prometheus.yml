@@ -1,0 +1,11 @@
+# Provisioned rather than clicked, so a fresh `docker compose up` gives the same
+# thing every time and nobody has to be talked through a setup screen.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

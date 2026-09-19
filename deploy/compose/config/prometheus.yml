@@ -1,0 +1,9 @@
+# Scrapes the collector's metrics listener, which is a different port from the one
+# agents write to. Nothing here reaches outside the compose network.
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: reeve
+    static_configs:
+      - targets: ["collector:9090"]
