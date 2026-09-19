@@ -51,6 +51,8 @@ func run(args []string) error {
 		return runCollect(args[1:])
 	case "report":
 		return runReport(args[1:])
+	case "posture":
+		return runPosture(args[1:])
 	case "trial":
 		return runTrial(args[1:])
 	case "version", "--version", "-v":
@@ -74,6 +76,7 @@ Usage:
   reeve guard [flags]    Hook handler: decide whether one action may proceed
   reeve collect [flags]  Receive agent telemetry and normalise it
   reeve report [flags]   Cost, usage and policy decisions across every agent
+  reeve posture <dir>    Aggregate many scan reports into one view of a fleet
   reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
   reeve version          Print the version
   reeve help             Show this message
@@ -112,6 +115,15 @@ Report flags:
   --decisions <file>     Guard decision log, to include what was refused
   --since <duration>     Only events newer than this, for example 168h
   --json, --top <n>
+
+Posture flags:
+  <dir>                  A directory of 'reeve scan --json' output, one file per
+                         machine; subdirectories are walked
+  --json, --top <n>
+  --fail-on <severity>   Exit non-zero at or above this severity. Unreadable files
+                         fail the gate on their own: a verdict that skipped part of
+                         the fleet is not a verdict on the fleet
+  --stale-after <dur>    Report a scan older than this as stale (default 720h)
 
 Trial commands (for field testing, dry run by default so nothing is blocked):
   reeve trial install     Add the guard to your own Claude Code settings

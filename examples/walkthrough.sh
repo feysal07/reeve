@@ -303,6 +303,16 @@ export GEMINI_CLI_SYSTEM_SETTINGS_PATH="$GEMINI_SYSTEM/settings.json"
 export GEMINI_CLI_SYSTEM_DEFAULTS_PATH="$GEMINI_SYSTEM/system-defaults.json"
 export HOME="$SANDBOX_HOME"
 
+# Go resolves the home directory from USERPROFILE on Windows and from HOME
+# everywhere else, so HOME alone sandboxes this script on macOS and Linux and not
+# under Git Bash, where it would read the real ~/.claude and ~/.gemini and report on
+# them. There is a PowerShell walkthrough for Windows, but a script that says it
+# touches nothing has to be true wherever it runs, and the failure is silent: the
+# findings simply describe the tester's own machine. Both are set; each is ignored
+# where it means nothing.
+export USERPROFILE="$SANDBOX_HOME"
+export ProgramData="$SANDBOX/ProgramData"
+
 note "sandbox at $SANDBOX"
 note "home redirected to $SANDBOX_HOME for the duration"
 
@@ -747,6 +757,69 @@ if [ -f "$EVENTS" ]; then
         *) check "refusals appear, which no vendor telemetry can report" 0 ;;
     esac
 fi
+
+# ------------------------------------------------------------- posture ----
+
+step 9 "Fleet posture: the same question asked about every machine at once"
+note "Reads files. No listener, no agent, no machine reporting on its own behalf."
+echo
+
+FLEET="$SANDBOX/fleet"
+mkdir -p "$FLEET/eu-west" "$FLEET/us-east"
+
+# Three scans of this machine, which carry its hostname, plus one that does not.
+# Two machines, from four reports.
+"$REEVE" scan --dir "$PROJECT" --json --include-hostname > "$FLEET/eu-west/monday.json" 2>/dev/null
+cp "$FLEET/eu-west/monday.json" "$FLEET/eu-west/tuesday.json"
+cp "$FLEET/eu-west/monday.json" "$FLEET/us-east/wednesday.json"
+cp "$SCAN_JSON" "$FLEET/us-east/anonymous.json"
+
+# An upload that was cut off partway. The machine it came from is exactly the kind
+# most likely to be in a state nobody has looked at.
+printf '{"schemaVersion":' > "$FLEET/us-east/interrupted.json"
+
+POSTURE=$("$REEVE" posture "$FLEET" --top 4 2>&1)
+show "$POSTURE"
+
+case "$POSTURE" in
+    *"machines          : 2"*)
+        check "three scans of one machine count as one machine" 1 ;;
+    *)  check "three scans of one machine count as one machine" 0             "a fleet that rescans nightly would report every number several times over" ;;
+esac
+
+case "$POSTURE" in
+    *"could not be read"*)
+        check "the report that arrived truncated is named, not quietly dropped" 1 ;;
+    *)  check "the report that arrived truncated is named, not quietly dropped" 0             "the machines whose scans fail are not a random sample of the fleet" ;;
+esac
+
+case "$POSTURE" in
+    *"carry no hostname"*)
+        check "the count says so when it cannot tell two machines apart" 1 ;;
+    *)  check "the count says so when it cannot tell two machines apart" 0 ;;
+esac
+
+# Percentages are of the machines running that agent. Of the fleet, a total failure
+# confined to one uncommon agent reads as a rounding error and never gets looked at.
+case "$POSTURE" in
+    *"of 2 machines with"*)
+        check "a finding is measured against the machines that run that agent" 1 ;;
+    *)  check "a finding is measured against the machines that run that agent" 0 ;;
+esac
+
+"$REEVE" posture "$FLEET" --fail-on high >/dev/null 2>&1
+[ $? = 2 ] &&
+    check "the gate fails while part of the fleet could not be read" 1 ||
+    check "the gate fails while part of the fleet could not be read" 0         "passing on the machines that did report is a verdict on the wrong population"
+
+# Any JSON object decodes into a report with every field empty, and a report with no
+# agents and no findings is what a perfectly governed machine looks like.
+mkdir -p "$SANDBOX/not-reports"
+printf '{"name":"app","version":"1.0.0"}' > "$SANDBOX/not-reports/package.json"
+WRONG=$("$REEVE" posture "$SANDBOX/not-reports" 2>&1)
+[ $? != 0 ] &&
+    check "the wrong directory is an error rather than a clean bill of health" 1 ||
+    check "the wrong directory is an error rather than a clean bill of health" 0         "reported: $WRONG"
 
 # -------------------------------------------------------------- summary ----
 

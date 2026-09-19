@@ -38,7 +38,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 46 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 52 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -161,6 +161,42 @@ reeve report --store ./events.jsonl --decisions /var/log/reeve/decisions.jsonl -
 
 The decision log is the half no vendor can supply. An agent reports what it did; an
 action the guard refused never happened as far as it is concerned.
+
+### 6. Fleet posture
+
+One scan answers for one machine. Collect them however you already collect files from
+developer machines — MDM, a nightly CI job, a shared drive — one file per machine:
+
+```
+reeve scan --json --include-hostname > reports/$(hostname).json
+```
+
+`--include-hostname` is optional and off by default, because a report may be shared.
+Without it every file counts as a machine of its own, so a machine that scans twice
+counts twice; `reeve posture` says so in its output rather than leaving you to guess.
+
+```
+reeve posture ./reports
+reeve posture ./reports --fail-on high     # for CI
+```
+
+It reports how many machines run each agent, how many can still turn off prompting,
+which MCP servers are in use across the fleet, and every finding with the number of
+machines it appears on. A finding on four hundred machines is a policy that was never
+deployed; the same finding on one is a conversation with one person.
+
+Percentages are of the machines running that agent rather than of the fleet. If twelve
+machines out of four hundred run an agent and all twelve are unguarded, that is 100% of
+that agent and 3% of the fleet, and only the first number is worth acting on.
+
+Files it could not read are listed rather than skipped, and `--fail-on` treats them as
+a failure on their own: a verdict reached without part of the fleet is not a verdict on
+the fleet. Pointing it at a directory with no scan reports in it is an error, not a
+clean bill of health.
+
+On Windows, write the files with `Out-File -Encoding utf8`. PowerShell's `>` redirect
+writes UTF-16, which no JSON parser reads; `reeve posture` says so plainly if it finds
+one.
 
 ## Two things to verify yourself
 
