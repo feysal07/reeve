@@ -53,6 +53,8 @@ func run(args []string) error {
 		return runReport(args[1:])
 	case "posture":
 		return runPosture(args[1:])
+	case "audit":
+		return runAudit(args[1:])
 	case "trial":
 		return runTrial(args[1:])
 	case "version", "--version", "-v":
@@ -77,6 +79,7 @@ Usage:
   reeve collect [flags]  Receive agent telemetry and normalise it
   reeve report [flags]   Cost, usage and policy decisions across every agent
   reeve posture <dir>    Aggregate many scan reports into one view of a fleet
+  reeve audit <cmd>      Seal and verify the decision log (seal, verify)
   reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
   reeve version          Print the version
   reeve help             Show this message
@@ -129,6 +132,11 @@ Posture flags:
                          fail the gate on their own: a verdict that skipped part of
                          the fleet is not a verdict on the fleet
   --stale-after <dur>    Report a scan older than this as stale (default 720h)
+
+Audit commands:
+  reeve audit seal <log>     Record what the decision log holds now
+  reeve audit verify <log>   Check it against everything sealed before, exit 2 on a
+                             change. Both take the log path or REEVE_DECISION_LOG
 
 Trial commands (for field testing, dry run by default so nothing is blocked):
   reeve trial install     Add the guard to your own Claude Code settings

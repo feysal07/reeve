@@ -698,9 +698,75 @@ if (Test-Path $events) {
     Check "refusals appear, which no vendor telemetry can report" ($reportText -match "blocked")
 }
 
+# --------------------------------------------------------------- audit ----
+
+Step 9 "The audit trail: proving the decision log has not been edited"
+Note "The only record that an action was refused. As far as the agent is"
+Note "concerned it never happened, so nothing else anywhere has a trace of it."
+Write-Host ""
+
+# Sealed on a copy, because the checks below deliberately corrupt it and the
+# report in step 8 reads the real one.
+$auditLog = Join-Path $Sandbox "audit-decisions.jsonl"
+Copy-Item $decisions $auditLog -Force
+
+# A log with no seal is not evidence, and must not be reported as verified: an
+# empty list of findings is exactly what a clean log looks like too.
+$null = (& $reeve audit verify $auditLog 2>&1)
+Check "a log that was never sealed is not reported as verified" `
+    ($LASTEXITCODE -eq 2) `
+    "nothing to check against is not the same as nothing wrong (exit $LASTEXITCODE)"
+
+$null = (& $reeve audit seal $auditLog 2>&1)
+$sealRc = $LASTEXITCODE
+$null = (& $reeve audit verify $auditLog 2>&1)
+$verifyRc = $LASTEXITCODE
+Check "a sealed log verifies while it is untouched" `
+    (($sealRc -eq 0) -and ($verifyRc -eq 0)) `
+    "seal $sealRc, verify $verifyRc"
+
+# Appending is what the guard does all day and must never look like tampering.
+$null = ($payload | & $reeve guard --agent claude-code --policy $policy --log $auditLog 2>&1)
+$null = (& $reeve audit verify $auditLog 2>&1)
+Check "a new decision appended after the seal is not mistaken for tampering" `
+    ($LASTEXITCODE -eq 0) "exit was $LASTEXITCODE"
+
+# The edit that matters: a refusal rewritten as an allowance, same shape, same
+# line count, nothing else to notice.
+$null = (& $reeve audit seal $auditLog 2>&1)
+(Get-Content $auditLog) -replace '"effect":"deny"', '"effect":"allow"' |
+    Set-Content $auditLog -Encoding utf8
+$auditOut = (& $reeve audit verify $auditLog 2>&1 | Out-String)
+Check "a refusal rewritten as an allowance is caught" `
+    ($LASTEXITCODE -eq 2) $auditOut
+
+# And re-sealing must not quietly bless the new content, which would destroy the
+# only evidence the edit ever happened.
+$null = (& $reeve audit seal $auditLog 2>&1)
+Check "re-sealing an edited log refuses rather than covering it up" `
+    ($LASTEXITCODE -ne 0) "exit was $LASTEXITCODE"
+
+# Truncation is the easiest tampering there is, and a hash chain alone cannot see
+# it: a prefix of a valid chain is a valid chain. The recorded line count is what
+# catches it.
+$truncLog = Join-Path $Sandbox "truncated-decisions.jsonl"
+Copy-Item $decisions $truncLog -Force
+$null = (& $reeve audit seal $truncLog 2>&1)
+# Read it fully before writing: piping Get-Content straight into Set-Content on
+# the same path leaves the file untouched, which would make this check assert
+# that an unmodified log verifies, under a name claiming it caught a deletion.
+$firstLine = @(Get-Content $truncLog -TotalCount 1)
+Set-Content -Path $truncLog -Value $firstLine -Encoding utf8
+if ((@(Get-Content $truncLog)).Count -ne 1) {
+    throw "the truncation step did not truncate; this check would prove nothing"
+}
+$truncOut = (& $reeve audit verify $truncLog 2>&1 | Out-String)
+Check "decisions deleted from the end of the log are caught" `
+    ($truncOut -match "removed from the end") $truncOut
+
 # ------------------------------------------------------------- posture ----
 
-Step 9 "Fleet posture: the same question asked about every machine at once"
+Step 10 "Fleet posture: the same question asked about every machine at once"
 Note "Reads files. No listener, no agent, no machine reporting on its own behalf."
 Write-Host ""
 

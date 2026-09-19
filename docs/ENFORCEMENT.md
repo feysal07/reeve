@@ -432,6 +432,53 @@ This is the local half of an audit trail. It records what the agent tried to do 
 machine, which no vendor's audit API captures, because none of them can see a tool call
 that was refused before it ran.
 
+### Proving it has not been edited
+
+The decision log is the most valuable file this tool writes and the one most worth
+editing, and until you seal it the only answer to "how do you know these were not
+changed afterwards" is to trust the file.
+
+```
+reeve audit seal   /var/log/reeve/decisions.jsonl   # record what it holds now
+reeve audit verify /var/log/reeve/decisions.jsonl   # check it against every seal
+```
+
+`seal` appends one line to `decisions.jsonl.chain`: how many lines the log held and
+what they hashed to. Each seal names the one before it, so the sidecar is itself a
+chain. `verify` recomputes and exits 2 if anything differs, so it works as a gate.
+
+Run `seal` on a schedule — hourly from cron, at the end of a session, or in the job
+that ships the log somewhere else.
+
+**Why sealing and not a hash in every record.** The obvious design is each line linking
+to the one before it. Every guard invocation is a separate short-lived process
+appending with `O_APPEND` and no lock, and agents run tools concurrently, so two
+processes would read the same last line and write two records claiming the same
+predecessor. A verifier cannot tell that fork from an inserted record, and a tamper
+detector that cries tamper on a busy machine is one nobody runs twice. It would also
+put a read of a growing file on the path that has to answer before the agent times
+out. Sealing leaves the guard's hot path untouched and has no concurrency to lose.
+
+**What a seal proves.** Between two seals: that no line was changed, inserted, removed
+or reordered. The running hash covers every byte in order, and the line count is
+recorded separately, which is what catches deletion from the end — a hash chain alone
+cannot, because a prefix of a valid chain is a valid chain. With several seals, a break
+is localised to the interval between two of them rather than only to "somewhere".
+
+Sealing a log whose sealed prefix has changed **refuses**. Otherwise the obvious move
+after an edit is to seal again, which would leave a sidecar that passes and destroy the
+only evidence the edit happened.
+
+**What it does not prove.** Nothing written since the last seal is covered by anything;
+that gap is as wide as your sealing interval. And a sidecar sitting beside the log it
+seals is evidence only against someone who did not think to change both — copy it
+somewhere the machine writing the log cannot reach. That is a property of where you put
+it, not of this code.
+
+A log that has never been sealed is reported as **not verified**, and exits 2. "No
+breaks found" is true of it and means nothing, and that is exactly what a clean log
+looks like too.
+
 ## Compiling the policy into native configuration
 
 The guard is one layer. It is a process, and a process can be missing, misconfigured

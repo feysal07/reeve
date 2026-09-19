@@ -834,9 +834,78 @@ if [ -f "$EVENTS" ]; then
     esac
 fi
 
+# --------------------------------------------------------------- audit ----
+
+step 9 "The audit trail: proving the decision log has not been edited"
+note "The only record that an action was refused. As far as the agent is"
+note "concerned it never happened, so nothing else anywhere has a trace of it."
+echo
+
+# Sealed on a copy, because the checks below deliberately corrupt it and the
+# report in step 8 reads the real one.
+AUDIT_LOG="$SANDBOX/audit-decisions.jsonl"
+cp "$DECISIONS" "$AUDIT_LOG"
+
+# A log with no seal is not evidence, and must not be reported as verified: an
+# empty list of findings is exactly what a clean log looks like too.
+"$REEVE" audit verify "$AUDIT_LOG" >/dev/null 2>&1
+[ $? = 2 ] &&
+    check "a log that was never sealed is not reported as verified" 1 ||
+    check "a log that was never sealed is not reported as verified" 0         "nothing to check against is not the same as nothing wrong"
+
+"$REEVE" audit seal "$AUDIT_LOG" >/dev/null 2>&1
+SEAL_RC=$?
+"$REEVE" audit verify "$AUDIT_LOG" >/dev/null 2>&1
+VERIFY_RC=$?
+if [ "$SEAL_RC" = "0" ] && [ "$VERIFY_RC" = "0" ]; then
+    check "a sealed log verifies while it is untouched" 1
+else
+    check "a sealed log verifies while it is untouched" 0 "seal $SEAL_RC, verify $VERIFY_RC"
+fi
+
+# Appending is what the guard does all day and must never look like tampering.
+printf '%s' "$PAYLOAD" |
+    "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$AUDIT_LOG" >/dev/null 2>&1
+"$REEVE" audit verify "$AUDIT_LOG" >/dev/null 2>&1
+[ $? = 0 ] &&
+    check "a new decision appended after the seal is not mistaken for tampering" 1 ||
+    check "a new decision appended after the seal is not mistaken for tampering" 0
+
+# The edit that matters: a refusal rewritten as an allowance, same shape, same
+# line count, nothing else to notice.
+"$REEVE" audit seal "$AUDIT_LOG" >/dev/null 2>&1
+TAMPER=$(sed 's/"effect":"deny"/"effect":"allow"/' "$AUDIT_LOG")
+printf '%s
+' "$TAMPER" > "$AUDIT_LOG"
+AUDIT_OUT=$("$REEVE" audit verify "$AUDIT_LOG" 2>&1)
+"$REEVE" audit verify "$AUDIT_LOG" >/dev/null 2>&1
+[ $? = 2 ] &&
+    check "a refusal rewritten as an allowance is caught" 1 ||
+    check "a refusal rewritten as an allowance is caught" 0 "$AUDIT_OUT"
+
+# And re-sealing must not quietly bless the new content, which would destroy the
+# only evidence the edit ever happened.
+"$REEVE" audit seal "$AUDIT_LOG" >/dev/null 2>&1
+[ $? != 0 ] &&
+    check "re-sealing an edited log refuses rather than covering it up" 1 ||
+    check "re-sealing an edited log refuses rather than covering it up" 0
+
+# Truncation is the easiest tampering there is, and a hash chain alone cannot see
+# it: a prefix of a valid chain is a valid chain. The recorded line count is what
+# catches it.
+TRUNC_LOG="$SANDBOX/truncated-decisions.jsonl"
+cp "$DECISIONS" "$TRUNC_LOG"
+"$REEVE" audit seal "$TRUNC_LOG" >/dev/null 2>&1
+head -n 1 "$TRUNC_LOG" > "$TRUNC_LOG.tmp" && mv "$TRUNC_LOG.tmp" "$TRUNC_LOG"
+TRUNC_OUT=$("$REEVE" audit verify "$TRUNC_LOG" 2>&1)
+case "$TRUNC_OUT" in
+    *"removed from the end"*) check "decisions deleted from the end of the log are caught" 1 ;;
+    *) check "decisions deleted from the end of the log are caught" 0 "$TRUNC_OUT" ;;
+esac
+
 # ------------------------------------------------------------- posture ----
 
-step 9 "Fleet posture: the same question asked about every machine at once"
+step 10 "Fleet posture: the same question asked about every machine at once"
 note "Reads files. No listener, no agent, no machine reporting on its own behalf."
 echo
 

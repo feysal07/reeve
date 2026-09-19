@@ -73,7 +73,7 @@ Builds for Linux, macOS and Windows on the
 build provenance. One static binary, no runtime, no dependencies.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 58 checks against it. The
+sandbox of four badly configured agents and asserts 64 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 
@@ -201,6 +201,18 @@ reeve report  --store ./events.jsonl --decisions ./decisions.jsonl --since 168h
 
 The decision log is the half of the record no vendor can supply. An agent reports what
 it did; an action the guard refused never happened as far as the agent is concerned.
+
+That makes it the file most worth editing, so it can be sealed and checked:
+
+```
+reeve audit seal   /var/log/reeve/decisions.jsonl
+reeve audit verify /var/log/reeve/decisions.jsonl
+```
+
+A seal records how many lines the log held and what they hashed to; each seal names the
+one before it. `verify` exits non-zero if a line was changed, inserted, reordered or
+deleted, and says which interval. Nothing written since the last seal is covered, and
+a log that has never been sealed reports as *not verified* rather than as clean.
 
 See [docs/TELEMETRY.md](docs/TELEMETRY.md). Prompt and response content is never
 stored, whatever an agent is configured to send.
