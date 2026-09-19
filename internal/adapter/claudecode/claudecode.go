@@ -58,6 +58,11 @@ type hookMatcher struct {
 		Type    string `json:"type"`
 		Command string `json:"command"`
 		URL     string `json:"url"`
+		// Timeout in seconds. Read because a hook with a short one is a hook that
+		// gives up, and on an agent that treats a timeout as permission to
+		// continue, giving up is allowing. Found missing by this release's own
+		// unrecognised-settings check, on the first real settings file it saw.
+		Timeout int `json:"timeout"`
 	} `json:"hooks"`
 }
 
@@ -146,6 +151,9 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 			UnknownKeys: s.doc.Unknown,
 		})
 	}
+
+	inst.Version, inst.VersionSource = detectVersion(env)
+	inst.VerifiedAgainst = verifiedAgainst
 
 	inst.Permissions = mergePermissions(sources)
 	inst.Telemetry = mergeTelemetry(sources)
@@ -429,4 +437,35 @@ func errText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// verifiedAgainst is the newest Claude Code whose settings format this adapter was
+// checked against by hand. Raise it when that check is done again, not when the
+// version on somebody's machine changes.
+const verifiedAgainst = "2.1.276"
+
+// detectVersion reads the version Claude Code last updated to.
+//
+// From a file rather than by running the binary. A security scan that executes
+// whatever it finds on PATH to ask its version has made itself into the thing it is
+// meant to be checking, and it would be slow on a machine with several agents.
+//
+// The number is second-hand: it is what the updater last moved to, which is what is
+// running unless the agent was reinstalled some other way. That is why the source
+// travels with it rather than the version appearing as bare fact.
+func detectVersion(env adapter.Env) (version, source string) {
+	path := filepath.Join(env.Home, ".claude", ".last-update-result.json")
+	var doc struct {
+		VersionTo string `json:"version_to"`
+		Outcome   string `json:"outcome"`
+	}
+	if d := config.ReadJSON(path, &doc); !d.OK() || doc.VersionTo == "" {
+		return "", ""
+	}
+	if doc.Outcome != "" && doc.Outcome != "success" {
+		// The last update did not finish, so the version it was moving to is not
+		// the version running. Better to say nothing than to name the wrong one.
+		return "", ""
+	}
+	return doc.VersionTo, path
 }

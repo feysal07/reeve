@@ -447,6 +447,31 @@ else
     esac
 fi
 
+# The capture is meant to be sent to a stranger, so the one property that
+# matters is that no value from the file survives into it.
+CAPTURE_DIR="$SANDBOX/captured"
+"$REEVE" scan --dir "$PROJECT" --capture "$CAPTURE_DIR" >/dev/null 2>&1
+if [ -d "$CAPTURE_DIR" ] && [ -n "$(ls -A "$CAPTURE_DIR" 2>/dev/null)" ]; then
+    # These strings are in the sandbox configuration. None may appear in a capture.
+    LEAKED=""
+    for secret in "fake-value-for-the-demo" "postgres://reporting@db.internal"                   "https://otel.corp.internal" "danger-full-access"; do
+        if grep -rqF "$secret" "$CAPTURE_DIR" 2>/dev/null; then
+            LEAKED="$LEAKED $secret"
+        fi
+    done
+    [ -z "$LEAKED" ] &&
+        check "a captured configuration sample contains no value from the file" 1 ||
+        check "a captured configuration sample contains no value from the file" 0             "leaked:$LEAKED"
+
+    # And it has to keep the keys, or it is not a sample of anything.
+    grep -rq "mcpServers" "$CAPTURE_DIR" 2>/dev/null &&
+        check "a captured sample keeps the keys, which are the point of it" 1 ||
+        check "a captured sample keeps the keys, which are the point of it" 0
+else
+    check "a captured configuration sample contains no value from the file" 0 "nothing was captured"
+    check "a captured sample keeps the keys, which are the point of it" 0 "nothing was captured"
+fi
+
 # --------------------------------------------------------------- policy ----
 
 step 2 "Policy: validate it, then try it before it blocks anyone"

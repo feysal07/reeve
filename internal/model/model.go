@@ -50,18 +50,37 @@ func (a AgentID) ExportsCostTelemetry() bool {
 
 // Installation is one agent found on one machine.
 type Installation struct {
-	Agent        AgentID           `json:"agent"`
-	DisplayName  string            `json:"displayName"`
-	Version      string            `json:"version,omitempty"`
-	BinaryPath   string            `json:"binaryPath,omitempty"`
-	ConfigFiles  []ConfigFile      `json:"configFiles,omitempty"`
-	Permissions  Permissions       `json:"permissions"`
-	MCPServers   []MCPServer       `json:"mcpServers,omitempty"`
-	Hooks        []Hook            `json:"hooks,omitempty"`
-	Telemetry    TelemetryConfig   `json:"telemetry"`
-	Auth         AuthConfig        `json:"auth"`
-	Capabilities Capabilities      `json:"capabilities"`
-	Extra        map[string]string `json:"extra,omitempty"`
+	Agent       AgentID `json:"agent"`
+	DisplayName string  `json:"displayName"`
+	// Version is the agent's own version, when it can be established by reading a
+	// file. Empty means it could not be, which is not the same as the agent having
+	// no version, and consumers must not present the two the same way.
+	Version string `json:"version,omitempty"`
+	// VersionSource names the file the version came from.
+	//
+	// It exists because these numbers are second-hand. Claude Code records the
+	// version it last updated to, which is the version running now unless it was
+	// reinstalled by some other route. A number whose provenance is unstated gets
+	// trusted more than it has earned, so the provenance travels with it.
+	VersionSource string `json:"versionSource,omitempty"`
+	// VerifiedAgainst is the newest version of this agent whose configuration
+	// format this build was actually checked against.
+	//
+	// An adapter is a model of a vendor file format, and a vendor can change that
+	// format without telling anyone. When they do, the adapter keeps parsing and
+	// quietly starts reporting less than is there. This is what lets a report say
+	// how old its own knowledge is, rather than giving every answer the same
+	// confidence.
+	VerifiedAgainst string            `json:"verifiedAgainst,omitempty"`
+	BinaryPath      string            `json:"binaryPath,omitempty"`
+	ConfigFiles     []ConfigFile      `json:"configFiles,omitempty"`
+	Permissions     Permissions       `json:"permissions"`
+	MCPServers      []MCPServer       `json:"mcpServers,omitempty"`
+	Hooks           []Hook            `json:"hooks,omitempty"`
+	Telemetry       TelemetryConfig   `json:"telemetry"`
+	Auth            AuthConfig        `json:"auth"`
+	Capabilities    Capabilities      `json:"capabilities"`
+	Extra           map[string]string `json:"extra,omitempty"`
 }
 
 // Capabilities describes what a vendor's configuration system can express at all, as

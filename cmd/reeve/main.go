@@ -99,6 +99,9 @@ Scan flags:
   --include-hostname     Record this machine's name in the report
   --fail-on <severity>   Exit non-zero if any finding is at or above this severity
                          (critical, high, medium, low)
+  --capture <dir>        Write the shape of your agents' configuration here, with
+                         every value removed, to report a format this build does
+                         not understand. Keys and structure only, never contents
 
 Policy commands:
   reeve policy check <file>          Validate a policy file
@@ -179,6 +182,7 @@ func runScan(args []string) error {
 	dir := fs.String("dir", "", "project root to scan")
 	includeHostname := fs.Bool("include-hostname", false, "record the machine name")
 	failOn := fs.String("fail-on", "", "exit non-zero at or above this severity")
+	capture := fs.String("capture", "", "write the shape of this machine's agent configuration here, with every value removed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -200,6 +204,10 @@ func runScan(args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if *capture != "" {
+		return captureConfig(*capture, report)
 	}
 
 	if *asJSON {
@@ -254,7 +262,13 @@ func renderText(w *os.File, r model.Report) {
 			}
 		}
 
-		fmt.Fprintf(w, "  %s\n", inst.DisplayName)
+		// The version when it is known. Where it is not, the name alone, rather
+		// than a placeholder that would read as a version nobody recognises.
+		name := inst.DisplayName
+		if inst.Version != "" {
+			name += " " + inst.Version
+		}
+		fmt.Fprintf(w, "  %s\n", name)
 		fmt.Fprintf(w, "    managed config : %s\n", managed)
 		fmt.Fprintf(w, "    approval mode  : %s\n", inst.Permissions.ApprovalMode)
 		fmt.Fprintf(w, "    bypass allowed : %s\n", yesNo(inst.Permissions.BypassAvailable))

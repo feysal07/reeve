@@ -103,6 +103,13 @@ type AgentPosture struct {
 	MCPServers      []Count `json:"mcpServers,omitempty"`
 }
 
+// UnknownVersion is the bucket for machines whose agent version could not be read.
+//
+// Not every agent records its version anywhere this tool can read, so on most fleets
+// this is most of them. It is a fact about what could be determined, not about the
+// machines.
+const UnknownVersion = "unknown"
+
 // Count is one named value and the number of machines it was seen on.
 type Count struct {
 	Name     string `json:"name"`
@@ -376,8 +383,16 @@ func Aggregate(loaded []Loaded, bad []Unreadable, opts Options) (Fleet, error) {
 			if inst.Telemetry.CaptureContent {
 				a.CaptureContent++
 			}
+			// Machines whose version could not be established are counted under
+			// their own name rather than left out. Dropping them made this whole
+			// breakdown print nothing at all for the two releases in which no
+			// adapter populated a version, and a row that is silently absent
+			// reads as a fleet running one version rather than as a fleet nobody
+			// could ask.
 			if inst.Version != "" {
 				versions[inst.Agent][inst.Version]++
+			} else {
+				versions[inst.Agent][UnknownVersion]++
 			}
 			// Deduplicated within the machine: the same server configured at both
 			// user and project scope is one machine that has it, not two.

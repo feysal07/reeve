@@ -8,6 +8,7 @@ package findings
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/feysal07/reeve/internal/model"
@@ -35,6 +36,7 @@ var rules = []Rule{
 	unreadableConfig,
 	unrecognisedConfig,
 	lenientConfig,
+	agentNewerThanVerified,
 }
 
 // Evaluate runs every rule against every installation.
@@ -550,4 +552,68 @@ func lenientConfig(inst model.Installation) []model.Finding {
 		Remedy: "Confirm the agent accepts this file. If it does not, the rules in it are " +
 			"being reported here and enforced nowhere.",
 	}}
+}
+
+// agentNewerThanVerified fires when the installed agent is newer, by major or minor
+// version, than the version this build's adapter was last checked against.
+//
+// An adapter is a model of a vendor's file format held in another codebase that can
+// change without notice. When it does, nothing breaks: the adapter parses what it
+// recognises and reports the rest as absent. This is the only place a report can
+// admit that its own knowledge has an age.
+//
+// Patch versions are ignored deliberately. These agents ship patches most days, and a
+// finding that fires on every one of them is a finding people learn to scroll past —
+// at which point it is no longer there for the release that does change the format.
+func agentNewerThanVerified(inst model.Installation) []model.Finding {
+	if inst.Version == "" || inst.VerifiedAgainst == "" {
+		return nil
+	}
+	if !newerMinor(inst.Version, inst.VerifiedAgainst) {
+		return nil
+	}
+	return []model.Finding{{
+		ID:       "config.agent-newer-than-verified",
+		Severity: model.SeverityLow,
+		Agent:    inst.Agent,
+		Title:    "This agent is newer than the version Reeve was checked against",
+		Detail: "This build of Reeve reads a configuration format it was last verified " +
+			"against on an older release of this agent. If the vendor has renamed or moved " +
+			"a setting since, it is being reported as absent rather than as unreadable, " +
+			"because an adapter that does not recognise a key simply passes over it.",
+		Evidence: fmt.Sprintf("installed %s, verified against %s", inst.Version, inst.VerifiedAgainst),
+		Remedy: "Check for a newer Reeve. Look at any settings reported as unrecognised on " +
+			"this machine, which is where a renamed key shows up first.",
+	}}
+}
+
+// newerMinor reports whether a is a greater major or minor version than b. A version
+// it cannot read returns false: guessing would produce a finding nobody can act on.
+func newerMinor(a, b string) bool {
+	an, aok := majorMinor(a)
+	bn, bok := majorMinor(b)
+	if !aok || !bok {
+		return false
+	}
+	if an[0] != bn[0] {
+		return an[0] > bn[0]
+	}
+	return an[1] > bn[1]
+}
+
+func majorMinor(v string) ([2]int, bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return [2]int{}, false
+	}
+	var out [2]int
+	for i := 0; i < 2; i++ {
+		n, err := strconv.Atoi(parts[i])
+		if err != nil {
+			return [2]int{}, false
+		}
+		out[i] = n
+	}
+	return out, true
 }

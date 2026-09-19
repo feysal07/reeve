@@ -395,6 +395,29 @@ try {
     if ($savedHome2) { $env:HOME = $savedHome2 } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }
 }
 
+# The capture is meant to be sent to a stranger, so the one property that matters
+# is that no value from the file survives into it.
+$captureDir = Join-Path $Sandbox "captured"
+& $reeve scan --dir $project --capture $captureDir > $null 2>&1
+$capturedFiles = @(Get-ChildItem $captureDir -File -ErrorAction SilentlyContinue)
+if ($capturedFiles.Count -gt 0) {
+    $blob = ($capturedFiles | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+    $leaked = @()
+    foreach ($secret in @("fake-value-for-the-demo", "postgres://reporting@db.internal",
+                          "https://otel.corp.internal", "danger-full-access")) {
+        if ($blob.Contains($secret)) { $leaked += $secret }
+    }
+    Check "a captured configuration sample contains no value from the file" `
+        ($leaked.Count -eq 0) "leaked: $($leaked -join ', ')"
+
+    # And it has to keep the keys, or it is not a sample of anything.
+    Check "a captured sample keeps the keys, which are the point of it" `
+        ($blob.Contains("mcpServers")) "no keys survived"
+} else {
+    Check "a captured configuration sample contains no value from the file" $false "nothing was captured"
+    Check "a captured sample keeps the keys, which are the point of it" $false "nothing was captured"
+}
+
 # --------------------------------------------------------------- policy ----
 
 Step 2 "Policy: validate it, then try it before it blocks anyone"
