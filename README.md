@@ -2,9 +2,87 @@
 
 **A vendor-neutral, self-hosted control plane for AI coding agents.**
 
-Reeve discovers which AI coding agents are installed across your organisation, enforces
-one policy across all of them, and gives you a single audit trail and cost view, using
-your own identity provider.
+One command tells you which AI coding agents are on a machine, what each one is
+actually allowed to do, and which of those settings a developer can change. No account,
+no network calls, no agent configuration modified.
+
+```
+$ reeve scan
+
+Agents detected (linux/amd64)
+
+  GitHub Copilot CLI
+    managed config : none
+    approval mode  : manual
+    bypass allowed : yes
+    permission rules: 0 allow, 0 ask, 1 deny
+    mcp servers    : 1
+    hooks          : 0 (0 can block)
+    telemetry      : https://otel.corp.internal (capturing prompt content)
+    auth           : subscription via github
+
+  Codex CLI
+    managed config : none
+    approval mode  : never
+    bypass allowed : yes
+    permission rules: 0 allow, 0 ask, 0 deny
+    mcp servers    : 1
+    hooks          : 0 (0 can block)
+    telemetry      : off
+    auth           : unknown
+
+  ... and Claude Code and Gemini CLI
+
+Findings (30)
+
+  [HIGH] GitHub Copilot CLI: Exporting prompt or tool content
+        Prompts and tool arguments routinely contain credentials, customer data
+        and source code. Exporting them turns the telemetry pipeline into a
+        system that inherits the sensitivity of everything the agent touches.
+        evidence: https://otel.corp.internal
+
+  [HIGH] Codex CLI: Running with no sandbox
+        The agent is configured for full access, so its shell commands and file
+        operations run with the developer's own privileges against the whole
+        machine, not a restricted workspace.
+        evidence: sandbox mode: danger-full-access
+
+  [HIGH] Gemini CLI: Administrator configuration exists but can be overridden
+        The only administrator-authored configuration here is a file that any
+        user setting overrides. That is more dangerous than having none, because
+        someone wrote a policy and believes it is deployed, so nobody checks
+        again, while every developer can ignore it.
+```
+
+*Real output, abridged. It comes from the sandbox the walkthrough builds, not from
+anyone's laptop; run `./examples/walkthrough.sh` to reproduce it exactly.*
+
+Every finding says what was observed, why it matters and what to do about it. There is
+no score: a security team has to be able to argue with each one individually.
+
+## Try it
+
+```
+curl -LO https://github.com/feysal07/reeve/releases/latest/download/reeve-linux-amd64.tar.gz
+tar -xzf reeve-linux-amd64.tar.gz
+./reeve-linux-amd64/reeve scan
+```
+
+Builds for Linux, macOS and Windows on the
+[releases page](https://github.com/feysal07/reeve/releases), with checksums and signed
+build provenance. One static binary, no runtime, no dependencies.
+
+To see all four planes end to end, run the walkthrough. It builds a throwaway
+sandbox of four badly configured agents and asserts 41 checks against it. The
+sandbox has a home directory of its own, so it reads nothing you have installed and
+gives the same answer on every machine:
+
+```
+./examples/walkthrough.sh                                              # macOS, Linux
+powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1    # Windows
+```
+
+See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the manual steps.
 
 > A reeve was an official who governed on behalf of others, and answered for what
 > happened on their watch.
@@ -59,23 +137,6 @@ export, so telemetry there means reading their API rather than receiving OTLP.
    a third-party SaaS.
 4. **Governance is an enabler.** The goal is not to stop developers using AI agents. It
    is to let security teams say yes, with limits they can prove.
-
-## Try it
-
-```bash
-./examples/walkthrough.sh
-```
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1
-```
-
-Builds the binary, creates a sandbox with four deliberately badly configured agents,
-and runs all four planes end to end, asserting the result of each step. It ends with
-`All 41 checks passed.` and exits non-zero if any did not. The sandbox includes its own
-home directory, so it reads nothing you have installed and gives the same answer on
-every machine. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for
-the manual steps.
 
 ## Status
 
