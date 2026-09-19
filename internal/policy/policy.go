@@ -62,6 +62,12 @@ type Match struct {
 	// MCPServer and MCPTool match an MCP call.
 	MCPServer []string `yaml:"mcpServer,omitempty"`
 	MCPTool   []string `yaml:"mcpTool,omitempty"`
+
+	// Environment matches the resolved target: which cluster, namespace or
+	// workspace the action will actually reach, rather than what the command
+	// happens to mention. Use "unknown" to catch targets that could not be
+	// resolved, which is the honest way to be cautious.
+	Environment []string `yaml:"environment,omitempty"`
 }
 
 // Load reads and validates a policy file.
@@ -191,6 +197,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if len(m.MCPTool) > 0 && !anyEqualFold(m.MCPTool, a.MCPTool) {
+		return false
+	}
+	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {
 		return false
 	}
 	return true

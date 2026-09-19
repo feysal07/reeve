@@ -1,0 +1,63 @@
+# What each environment actually consists of.
+#
+# This is what lets a policy say "production" and mean it. Without it, a rule can only
+# match the text of a command, which catches the developer who typed `--context prod`
+# and misses the one who ran `kubectl config use-context prod` an hour ago and is now
+# typing `kubectl delete deploy api`. The second is the more dangerous case.
+#
+# Environments are checked in order and the first match wins, so put the strictest
+# first: a name matching both production and development patterns is production.
+#
+# A target matching nothing is reported as "unknown", never assumed safe. A rule that
+# wants to be cautious about those says `environment: [production, unknown]`.
+
+version: 1
+
+environments:
+  - name: production
+    description: Customer-facing systems
+    kubernetes:
+      contexts:
+        - "prod"
+        - "prod-*"
+        - "*-prod"
+        - "*production*"
+        # Full ARNs, which is what a context is called when it comes from eksctl
+        # or aws eks update-kubeconfig.
+        - "arn:aws:eks:*:*:cluster/prod-*"
+      namespaces:
+        - "prod"
+        - "prod-*"
+        - "payments"
+    terraform:
+      workspaces:
+        - "prod"
+        - "production"
+      varFiles:
+        - "prod.tfvars"
+        - "production.tfvars"
+        - "prod.*.tfvars"
+
+  - name: staging
+    description: Pre-production, real data shapes but no customers
+    kubernetes:
+      contexts: ["staging", "staging-*", "*-staging", "preprod*"]
+      namespaces: ["staging", "preprod"]
+    terraform:
+      workspaces: ["staging", "preprod"]
+      varFiles: ["staging.tfvars", "preprod.tfvars"]
+
+  - name: development
+    description: Local and shared development
+    kubernetes:
+      contexts:
+        - "kind-*"
+        - "minikube"
+        - "docker-desktop"
+        - "rancher-desktop"
+        - "dev"
+        - "dev-*"
+      namespaces: ["dev", "default", "local"]
+    terraform:
+      workspaces: ["dev", "default", "local"]
+      varFiles: ["dev.tfvars", "local.tfvars"]

@@ -213,41 +213,40 @@ rules:
   # -------------------------------------------------------------- production ----
 
   - id: production-infrastructure
-    description: Changing infrastructure that is explicitly production
+    description: Changing infrastructure that resolves to production
     decision: ask
     reason: >-
-      This command names a production target. Confirm it is the one you meant and
-      that the change has been reviewed.
-    # Narrowed from "any infrastructure command" to "an infrastructure command that
-    # explicitly names production". The two fields are combined with AND.
+      This reaches production. Confirm it is the target you meant and that the change
+      has been reviewed.
+    # This matches the environment Reeve resolved, not the words in the command.
+    # It therefore also catches the developer who selected a production context
+    # earlier and is now typing a command that mentions no target at all, which the
+    # earlier substring version missed entirely and which is the more dangerous case.
     #
-    # The earlier rule prompted on `kubectl apply --context kind-local` exactly as
-    # hard as on a production cluster, because a command line does not say which
-    # environment it reaches.
-    #
-    # Known gap, and it is a large one: this only fires when the target is named in
-    # the command. Someone who ran `kubectl config use-context prod` earlier and then
-    # types `kubectl delete` is not caught. Closing that properly needs a resource
-    # registry mapping contexts, namespaces and workspaces to environments, resolved
-    # at decision time. Until that exists this rule is a partial control, and is
-    # worth having only because a false negative here costs less than a policy
-    # everyone has muted.
+    # Requires a resource registry; see examples/resources/resources.yaml. Without
+    # one every target resolves to unknown and this rule never fires, which is why
+    # the companion rule below exists.
+    match:
+      kind: [shell]
+      environment: [production]
+
+  - id: infrastructure-unknown-target
+    description: Changing infrastructure whose target could not be determined
+    decision: ask
+    reason: >-
+      Reeve could not work out which environment this reaches. That is not a reason
+      to assume it is safe.
+    # Deliberately separate from the rule above, and deliberately not silent. An
+    # unresolvable target is the case where a control is most likely to be wrong, so
+    # it gets its own rule and its own honest reason rather than being folded into
+    # production or ignored.
     match:
       kind: [shell]
       command:
         - "*kubectl*"
         - "*terraform*"
         - "*helm*"
-        - "*aws *"
-        - "*gcloud*"
-      commandContains:
-        - "--context prod"
-        - "--context production"
-        - "--namespace prod"
-        - "-n prod"
-        - "prod.tfvars"
-        - "production.tfvars"
-        - "workspace select prod"
+      environment: [unknown]
 
   # -------------------------------------------------------------------- mcp ----
 

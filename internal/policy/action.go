@@ -57,6 +57,15 @@ type Action struct {
 	MCPServer string `json:"mcpServer,omitempty"`
 	MCPTool   string `json:"mcpTool,omitempty"`
 
+	// Environment is what the action is about to touch, resolved from the command
+	// and from the tool's own current state rather than guessed from the text. It is
+	// "unknown" when it could not be determined, which is a value a rule can match
+	// on deliberately rather than a silence that resembles safety.
+	Environment string `json:"environment,omitempty"`
+	// EnvironmentDetail explains how the environment was resolved, so a developer
+	// who is stopped learns why their command counted as production.
+	EnvironmentDetail string `json:"environmentDetail,omitempty"`
+
 	// Prompt is the user's message, for events that carry one. It is never logged
 	// or forwarded by the guard; it exists so a rule can inspect it locally.
 	Prompt string `json:"-"`

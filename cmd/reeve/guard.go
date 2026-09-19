@@ -15,6 +15,7 @@ import (
 	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
+	"github.com/feysal07/reeve/internal/resource"
 )
 
 // runGuard is the hook handler. It reads one hook payload on stdin, decides, and
@@ -35,6 +36,7 @@ func runGuard(args []string) error {
 	agentFlag := fs.String("agent", "", "which agent is calling: claude-code, copilot-cli, codex-cli")
 	policyPath := fs.String("policy", "", "path to the policy file (default: the first policy found)")
 	logPath := fs.String("log", "", "append decisions to this file as JSON lines")
+	resourcesPath := fs.String("resources", "", "resource registry, to resolve which environment an action targets")
 	dryRun := fs.Bool("dry-run", false, "evaluate and log, but always allow")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -71,6 +73,14 @@ func runGuard(args []string) error {
 	}
 
 	start := time.Now()
+
+	// Resolve the target before evaluating, so a rule can ask which environment an
+	// action reaches rather than which words the command happens to contain. This
+	// reads local files only, and a failure leaves the environment unknown rather
+	// than aborting: a registry that cannot be read must not stop work, because the
+	// policy still applies without it.
+	resolveEnvironment(&act, *resourcesPath)
+
 	decision := pol.Evaluate(act)
 	elapsed := time.Since(start)
 
@@ -82,6 +92,58 @@ func runGuard(args []string) error {
 
 	logDecision(*logPath, act, decision, source, elapsed, false)
 	writeResponse(hook.Encode(agent, act.Event, decision))
+	return nil
+}
+
+// resolveEnvironment fills in what the action is about to touch.
+//
+// Unlike policy, an absent registry is not a misconfiguration: most machines will not
+// have one, and the rules that do not mention an environment work regardless. So this
+// degrades to "unknown" rather than failing closed. A rule that wants to be careful
+// about unresolvable targets says so by matching on "unknown" explicitly.
+func resolveEnvironment(act *policy.Action, explicit string) {
+	if act.Kind != policy.KindShell || act.Command == "" {
+		return
+	}
+
+	home, _ := os.UserHomeDir()
+	env := resource.Env{
+		Home:    home,
+		WorkDir: act.CWD,
+		Getenv:  os.Getenv,
+	}
+	if env.WorkDir == "" {
+		env.WorkDir, _ = os.Getwd()
+	}
+
+	target := resource.Resolve(act.Command, env)
+	if target.Kind == resource.KindNone {
+		return
+	}
+
+	reg := loadRegistry(explicit, home)
+	reg.Classify(&target)
+
+	act.Environment = target.Environment
+	act.EnvironmentDetail = target.Detail
+}
+
+// loadRegistry finds a registry, returning nil when there is none. A nil registry
+// classifies everything as unknown, which is the correct behaviour for a machine that
+// has not been told what production looks like.
+func loadRegistry(explicit, home string) *resource.Registry {
+	paths := []string{explicit}
+	if explicit == "" {
+		paths = resource.DefaultPaths(runtime.GOOS, os.Getenv("ProgramData"), home)
+	}
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if r, err := resource.Load(p); err == nil {
+			return r
+		}
+	}
 	return nil
 }
 
@@ -165,23 +227,25 @@ func writeResponse(r hook.Response) {
 // decisionRecord is one line of the decision log. It records what was decided and
 // why, and deliberately never records prompt text or file contents.
 type decisionRecord struct {
-	Time       time.Time     `json:"time"`
-	Agent      model.AgentID `json:"agent"`
-	Event      string        `json:"event,omitempty"`
-	SessionID  string        `json:"sessionId,omitempty"`
-	Kind       policy.Kind   `json:"kind"`
-	Tool       string        `json:"tool,omitempty"`
-	Command    string        `json:"command,omitempty"`
-	Paths      []string      `json:"paths,omitempty"`
-	URL        string        `json:"url,omitempty"`
-	MCPServer  string        `json:"mcpServer,omitempty"`
-	MCPTool    string        `json:"mcpTool,omitempty"`
-	Effect     policy.Effect `json:"effect"`
-	RuleID     string        `json:"ruleId,omitempty"`
-	Reason     string        `json:"reason,omitempty"`
-	PolicyFile string        `json:"policyFile,omitempty"`
-	ElapsedUS  int64         `json:"elapsedMicros"`
-	DryRun     bool          `json:"dryRun,omitempty"`
+	Time        time.Time     `json:"time"`
+	Agent       model.AgentID `json:"agent"`
+	Event       string        `json:"event,omitempty"`
+	SessionID   string        `json:"sessionId,omitempty"`
+	Kind        policy.Kind   `json:"kind"`
+	Tool        string        `json:"tool,omitempty"`
+	Command     string        `json:"command,omitempty"`
+	Paths       []string      `json:"paths,omitempty"`
+	URL         string        `json:"url,omitempty"`
+	MCPServer   string        `json:"mcpServer,omitempty"`
+	MCPTool     string        `json:"mcpTool,omitempty"`
+	Environment string        `json:"environment,omitempty"`
+	EnvDetail   string        `json:"environmentDetail,omitempty"`
+	Effect      policy.Effect `json:"effect"`
+	RuleID      string        `json:"ruleId,omitempty"`
+	Reason      string        `json:"reason,omitempty"`
+	PolicyFile  string        `json:"policyFile,omitempty"`
+	ElapsedUS   int64         `json:"elapsedMicros"`
+	DryRun      bool          `json:"dryRun,omitempty"`
 }
 
 // logDecision appends one record. A logging failure never changes the decision: the
@@ -195,23 +259,25 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 		return
 	}
 	rec := decisionRecord{
-		Time:       time.Now().UTC(),
-		Agent:      a.Agent,
-		Event:      a.Event,
-		SessionID:  a.SessionID,
-		Kind:       a.Kind,
-		Tool:       a.ToolName,
-		Command:    a.Command,
-		Paths:      a.Paths,
-		URL:        a.URL,
-		MCPServer:  a.MCPServer,
-		MCPTool:    a.MCPTool,
-		Effect:     d.Effect,
-		RuleID:     d.RuleID,
-		Reason:     d.Reason,
-		PolicyFile: source,
-		ElapsedUS:  elapsed.Microseconds(),
-		DryRun:     dryRun,
+		Time:        time.Now().UTC(),
+		Agent:       a.Agent,
+		Event:       a.Event,
+		SessionID:   a.SessionID,
+		Kind:        a.Kind,
+		Tool:        a.ToolName,
+		Command:     a.Command,
+		Paths:       a.Paths,
+		URL:         a.URL,
+		MCPServer:   a.MCPServer,
+		MCPTool:     a.MCPTool,
+		Environment: a.Environment,
+		EnvDetail:   a.EnvironmentDetail,
+		Effect:      d.Effect,
+		RuleID:      d.RuleID,
+		Reason:      d.Reason,
+		PolicyFile:  source,
+		ElapsedUS:   elapsed.Microseconds(),
+		DryRun:      dryRun,
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {

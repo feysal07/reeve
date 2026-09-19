@@ -179,6 +179,53 @@ allowed_approval_policies = ["on-request"]
 allowed_sandbox_modes = ["read-only", "workspace-write"]
 ```
 
+## Knowing what an action actually targets
+
+A rule can only be as good as what it can see. Matching the text "--context prod"
+catches the developer who was explicit and misses the one who ran
+`kubectl config use-context prod` an hour ago and now types `kubectl delete deploy api`.
+The second is the more dangerous case, and no amount of care with substrings will find
+it.
+
+So the guard resolves the target before evaluating. It reads the command first, because
+an explicit flag is what the developer actually asked for, and falls back to the tool's
+own current state, which is what will happen if they said nothing:
+
+| Tool | From the command | From ambient state |
+|---|---|---|
+| kubectl | `--context`, `-n`, `--namespace` | current-context and its namespace in the kubeconfig, honouring `KUBECONFIG` |
+| helm | `--kube-context`, `--namespace` | the same |
+| terraform | `-var-file`, `workspace select X` | the workspace selected in `.terraform/environment` |
+
+A registry you control maps those identifiers to environments:
+
+```
+reeve guard --agent claude-code --resources /etc/reeve/resources.yaml
+```
+
+See [examples/resources/resources.yaml](../examples/resources/resources.yaml). A rule
+then matches the environment rather than the words:
+
+```yaml
+match:
+  kind: [shell]
+  environment: [production]
+```
+
+Two properties worth knowing.
+
+**Unknown is a value, not a silence.** A target that cannot be resolved is reported as
+`unknown`, and a rule can match on it deliberately. The baseline does exactly that, with
+its own rule and its own reason, because an unresolvable target is where a control is
+most likely to be wrong and the honest thing is to say so rather than let it pass.
+
+**An absent registry does not fail closed.** Unlike policy, most machines will not have
+one, and every rule that does not mention an environment still works. So a missing or
+unreadable registry leaves everything `unknown` rather than stopping work.
+
+Resolution reads local files only and costs roughly a millisecond, which stays well
+inside every agent's hook timeout.
+
 ## The decision log
 
 Each decision appends one JSON line: what was attempted, what was decided, which rule

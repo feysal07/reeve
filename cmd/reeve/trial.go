@@ -112,6 +112,7 @@ func isReeveHook(command string) bool {
 func runTrialInstall(args []string) error {
 	fs := flag.NewFlagSet("trial install", flag.ContinueOnError)
 	policySrc := fs.String("policy", "", "policy to evaluate (default: the built-in baseline)")
+	resources := fs.String("resources", "", "resource registry, so rules can match the environment an action reaches")
 	enforce := fs.Bool("enforce", false, "actually block, instead of only recording what would have been blocked")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -167,6 +168,13 @@ func runTrialInstall(args []string) error {
 	// wrapping is sufficient here.
 	cmd := fmt.Sprintf(`"%s" guard --agent claude-code --policy "%s" --log "%s"`,
 		self, policyPath, logPath)
+	if *resources != "" {
+		abs, err := filepath.Abs(*resources)
+		if err != nil {
+			return fmt.Errorf("resolve resources path: %w", err)
+		}
+		cmd += fmt.Sprintf(` --resources "%s"`, abs)
+	}
 	if !*enforce {
 		cmd += " --dry-run"
 	}
