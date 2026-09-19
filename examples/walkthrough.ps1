@@ -637,6 +637,63 @@ if (Test-Path $events) {
     Check "refusals appear, which no vendor telemetry can report" ($reportText -match "blocked")
 }
 
+# ------------------------------------------------------------- posture ----
+
+Step 9 "Fleet posture: the same question asked about every machine at once"
+Note "Reads files. No listener, no agent, no machine reporting on its own behalf."
+Write-Host ""
+
+$fleet = Join-Path $Sandbox "fleet"
+New-Item -ItemType Directory -Force -Path (Join-Path $fleet "eu-west") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $fleet "us-east") | Out-Null
+
+# Three scans of this machine, which carry its hostname, plus one that does not.
+# Two machines, from four reports.
+& $reeve scan --dir $project --json --include-hostname 2>$null |
+    Out-File -Encoding utf8 (Join-Path $fleet "eu-west\monday.json")
+Copy-Item (Join-Path $fleet "eu-west\monday.json") (Join-Path $fleet "eu-west\tuesday.json")
+Copy-Item (Join-Path $fleet "eu-west\monday.json") (Join-Path $fleet "us-east\wednesday.json")
+& $reeve scan --dir $project --json 2>$null |
+    Out-File -Encoding utf8 (Join-Path $fleet "us-east\anonymous.json")
+
+# An upload that was cut off partway. The machine it came from is exactly the kind
+# most likely to be in a state nobody has looked at.
+Set-Content -Path (Join-Path $fleet "us-east\interrupted.json") -Value '{"schemaVersion":' -Encoding utf8 -NoNewline
+
+$postureText = (& $reeve posture $fleet --top 4 2>&1 | Out-String)
+Show $postureText
+
+Check "three scans of one machine count as one machine" `
+    ($postureText -match "machines\s+: 2") `
+    "a fleet that rescans nightly would report every number several times over"
+
+Check "the report that arrived truncated is named, not quietly dropped" `
+    ($postureText -match "could not be read") `
+    "the machines whose scans fail are not a random sample of the fleet"
+
+Check "the count says so when it cannot tell two machines apart" `
+    ($postureText -match "carry no hostname")
+
+# Percentages are of the machines running that agent. Of the fleet, a total failure
+# confined to one uncommon agent reads as a rounding error and never gets looked at.
+Check "a finding is measured against the machines that run that agent" `
+    ($postureText -match "of 2 machines with")
+
+& $reeve posture $fleet --fail-on high > $null 2>&1
+Check "the gate fails while part of the fleet could not be read" `
+    ($LASTEXITCODE -eq 2) `
+    "exit was $LASTEXITCODE; passing on the machines that did report is a verdict on the wrong population"
+
+# Any JSON object decodes into a report with every field empty, and a report with no
+# agents and no findings is what a perfectly governed machine looks like.
+$notReports = Join-Path $Sandbox "not-reports"
+New-Item -ItemType Directory -Force -Path $notReports | Out-Null
+Set-Content -Path (Join-Path $notReports "package.json") -Value '{"name":"app","version":"1.0.0"}' -Encoding utf8
+$wrongText = (& $reeve posture $notReports 2>&1 | Out-String)
+Check "the wrong directory is an error rather than a clean bill of health" `
+    ($LASTEXITCODE -ne 0) `
+    "reported: $wrongText"
+
 # -------------------------------------------------------------- summary ----
 
 $passed = @($script:checks | Where-Object { $_.Ok }).Count

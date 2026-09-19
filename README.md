@@ -73,7 +73,7 @@ Builds for Linux, macOS and Windows on the
 build provenance. One static binary, no runtime, no dependencies.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 46 checks against it. The
+sandbox of four badly configured agents and asserts 52 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 
@@ -171,6 +171,21 @@ real.
 administrator-owned configuration, so enforcement survives the guard being absent. It
 reports which rules an agent can enforce natively and which need the guard, rather
 than silently dropping what it cannot express.
+
+`reeve posture` answers the same questions about a fleet. It reads a directory of
+`reeve scan --json` output, one file per machine, and reports how many machines run
+each agent, how many can still turn off prompting, and which findings are everywhere
+rather than on one laptop:
+
+```
+reeve posture ./reports --fail-on high
+```
+
+It reads files rather than listening on a port: whatever already collects from your
+machines has an owner and an audit trail, and a service whose job is to accept claims
+about security state from the machines being judged would need both built again. Every
+file is accounted for, including the ones it could not read, and a percentage always
+names the population it is a percentage of.
 
 `reeve collect` receives what agents report over OpenTelemetry, in either wire
 encoding, normalises the three
