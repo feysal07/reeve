@@ -273,9 +273,12 @@ func (c *collector) handle(signal string, decodeJSON, decodeProto func([]byte) (
 			c.metrics.RecordEvents(events)
 		}
 		if c.verbose {
-			safePath := strings.ReplaceAll(r.URL.Path, "\n", "")
-			safePath = strings.ReplaceAll(safePath, "\r", "")
-			fmt.Printf("%s %s -> %d events\n", time.Now().Format(time.RFC3339), safePath, len(events))
+			// The signal name rather than the request path. The two name the same
+			// thing, because the mux only reaches this handler on its own literal
+			// route, but one of them arrived with the request and the other did not.
+			// Logging the constant keeps request-controlled text out of the line
+			// instead of trusting the routing to have kept it clean.
+			fmt.Printf("%s %s -> %d events\n", time.Now().Format(time.RFC3339), signal, len(events))
 		}
 
 		// OTLP expects a JSON object in reply; an empty one means everything was
