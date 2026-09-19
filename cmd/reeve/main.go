@@ -49,6 +49,8 @@ func run(args []string) error {
 		return runCollect(args[1:])
 	case "report":
 		return runReport(args[1:])
+	case "trial":
+		return runTrial(args[1:])
 	case "version", "--version", "-v":
 		fmt.Println("reeve", version)
 		return nil
@@ -70,6 +72,7 @@ Usage:
   reeve guard [flags]    Hook handler: decide whether one action may proceed
   reeve collect [flags]  Receive agent telemetry and normalise it
   reeve report [flags]   Cost, usage and policy decisions across every agent
+  reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
   reeve version          Print the version
   reeve help             Show this message
 
@@ -104,6 +107,12 @@ Report flags:
   --decisions <file>     Guard decision log, to include what was refused
   --since <duration>     Only events newer than this, for example 168h
   --json, --top <n>
+
+Trial commands (for field testing, dry run by default so nothing is blocked):
+  reeve trial install     Add the guard to your own Claude Code settings
+  reeve trial status      Show whether it is installed and what it has recorded
+  reeve trial report      Summarise what it would have blocked, and what to send back
+  reeve trial uninstall   Remove it and leave your settings as they were
 
 Scanning is read-only and never contacts the network.
 `)
