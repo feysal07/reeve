@@ -39,11 +39,39 @@ type Request struct {
 	ToolName    string `json:"tool_name"`
 	ToolNameAlt string `json:"toolName"`
 
-	ToolInput    map[string]any `json:"tool_input"`
-	ToolInputAlt map[string]any `json:"toolInput"`
+	// Raw, not a map, because Cursor sends beforeMCPExecution's parameters as a
+	// string containing JSON rather than as an object. Decoding straight into a map
+	// fails on that, and a failure here denies, so every MCP call through Cursor
+	// would have been refused with a message about an unreadable request.
+	ToolInput    json.RawMessage `json:"tool_input"`
+	ToolInputAlt json.RawMessage `json:"toolInput"`
 
 	Prompt    string `json:"prompt"`
 	PromptAlt string `json:"user_prompt"`
+
+	// Cursor puts the subject of the action at the top level and says what kind of
+	// action it is in the event name, rather than nesting arguments under a tool.
+	// Everything below is only read when the nested input did not supply it.
+	Command        string   `json:"command"`
+	FilePath       string   `json:"file_path"`
+	MCPServerName  string   `json:"mcp_server_name"`
+	MCPServerURL   string   `json:"mcp_server_url"`
+	URL            string   `json:"url"`
+	WorkspaceRoots []string `json:"workspace_roots"`
+}
+
+// cursorEventKinds maps Cursor's events onto the neutral kinds.
+//
+// Cursor is the only supported agent where the kind comes from the event rather than
+// from a tool name: beforeShellExecution carries a command, beforeReadFile carries a
+// path, and neither names a tool at all. Deriving the kind from an absent tool name
+// would classify both as "other", and every rule written against a kind would stop
+// applying without anything failing.
+var cursorEventKinds = map[string]policy.Kind{
+	"beforeShellExecution": policy.KindShell,
+	"beforeReadFile":       policy.KindRead,
+	"beforeMCPExecution":   policy.KindMCP,
+	"beforeSubmitPrompt":   policy.KindOther,
 }
 
 // Decode reads a hook payload and converts it into an Action.
@@ -65,14 +93,76 @@ func Decode(raw []byte, agent model.AgentID) (policy.Action, error) {
 		Prompt:    first(r.Prompt, r.PromptAlt),
 	}
 
-	input := r.ToolInput
-	if input == nil {
-		input = r.ToolInputAlt
+	// Not "raw": that is the whole payload, and shadowing it here would be a quiet
+	// way to decode the wrong thing.
+	rawInput := r.ToolInput
+	if len(rawInput) == 0 {
+		rawInput = r.ToolInputAlt
 	}
+	input := decodeToolInput(rawInput)
 
 	a.Kind = classify(a.ToolName)
+	if k, ok := cursorEventKinds[a.Event]; ok {
+		// The event is authoritative where it exists, because it describes the
+		// action rather than the tool that happens to be performing it.
+		a.Kind = k
+	}
 	populate(&a, input)
+	populateTopLevel(&a, r)
 	return a, nil
+}
+
+// decodeToolInput reads a tool's arguments, which arrive as an object from most agents
+// and as a string containing an object from Cursor's MCP event.
+func decodeToolInput(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var obj map[string]any
+	if json.Unmarshal(raw, &obj) == nil {
+		return obj
+	}
+	var encoded string
+	if json.Unmarshal(raw, &encoded) != nil {
+		return nil
+	}
+	if json.Unmarshal([]byte(encoded), &obj) != nil {
+		return nil
+	}
+	return obj
+}
+
+// populateTopLevel fills anything the nested arguments did not, from the fields Cursor
+// puts beside them.
+//
+// What is deliberately not read here is everything else in Cursor's envelope. It also
+// sends the developer's email address, a path to the conversation transcript, and, for
+// a file read, the entire contents of the file. None of that is needed to decide
+// whether an action is permitted, and the guard writes a decision log, so reading it
+// into the action is how it would end up on disk.
+func populateTopLevel(a *policy.Action, r Request) {
+	if a.Command == "" {
+		a.Command = r.Command
+	}
+	if len(a.Paths) == 0 && r.FilePath != "" {
+		a.Paths = append(a.Paths, r.FilePath)
+	}
+	if len(a.URLs) == 0 {
+		if u := first(r.MCPServerURL, r.URL); u != "" {
+			a.URLs = append(a.URLs, u)
+		}
+	}
+	if a.MCPServer == "" {
+		a.MCPServer = r.MCPServerName
+	}
+	if a.MCPTool == "" && a.Kind == policy.KindMCP {
+		// Cursor names the tool plainly rather than namespacing it with the server,
+		// so tool_name is the tool and nothing needs splitting off it.
+		a.MCPTool = a.ToolName
+	}
+	if a.CWD == "" && len(r.WorkspaceRoots) > 0 {
+		a.CWD = r.WorkspaceRoots[0]
+	}
 }
 
 func first(values ...string) string {

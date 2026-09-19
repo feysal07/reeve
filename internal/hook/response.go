@@ -47,6 +47,9 @@ func Encode(agent model.AgentID, event string, d policy.Decision) Response {
 	if agent == model.AgentGeminiCLI {
 		return encodeGemini(d, reason)
 	}
+	if agent == model.AgentCursor {
+		return encodeCursor(d, reason)
+	}
 
 	var body []byte
 	switch agent {
@@ -167,6 +170,43 @@ func encodeGemini(d policy.Decision, reason string) Response {
 	return r
 }
 
+// cursorResponse is what a Cursor permission hook writes.
+//
+// The field is `permission`, a third spelling of the same idea, and the messages are
+// split in two: user_message is shown to the developer, agent_message is handed back
+// to the model. Sending the same reason to both is deliberate. A model told only that
+// something was refused will try a different route to the same place; a model told
+// which rule refused it, and why, usually stops.
+type cursorResponse struct {
+	Permission   string `json:"permission"`
+	UserMessage  string `json:"user_message,omitempty"`
+	AgentMessage string `json:"agent_message,omitempty"`
+}
+
+// encodeCursor renders a decision for Cursor.
+//
+// Unlike Gemini, Cursor can ask, so all three decisions survive the translation. What
+// does not survive is a hook that fails: crashes, timeouts and unrecognised exit codes
+// are treated as permission to continue unless the hook entry sets failClosed, which
+// is why `reeve policy compile` always writes it and `reeve scan` reports a hook that
+// does not.
+func encodeCursor(d policy.Decision, reason string) Response {
+	b, _ := json.Marshal(cursorResponse{
+		Permission:   string(d.Effect),
+		UserMessage:  reason,
+		AgentMessage: reason,
+	})
+
+	r := Response{Body: b, Exit: ExitAllow}
+	if d.Effect == policy.EffectDeny {
+		// Exit 2 as well as the document. Cursor reads either as a refusal, and a
+		// reply it cannot parse is only treated as one for permission hooks.
+		r.Exit = ExitBlock
+		r.Stderr = reason
+	}
+	return r
+}
+
 // supportedAgents are the agents whose hook protocol this package can speak.
 //
 // It is a list rather than a default because getting this wrong fails in the most
@@ -179,6 +219,7 @@ var supportedAgents = []model.AgentID{
 	model.AgentCopilotCLI,
 	model.AgentCodexCLI,
 	model.AgentGeminiCLI,
+	model.AgentCursor,
 }
 
 // Supported reports whether a decision can be encoded for this agent.

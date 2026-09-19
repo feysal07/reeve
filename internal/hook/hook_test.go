@@ -348,14 +348,179 @@ rules:
 // dangerous direction, so an agent this package does not know is refused rather than
 // approximated.
 func TestUnsupportedAgentIsNotGuessedAt(t *testing.T) {
-	for _, a := range []model.AgentID{model.AgentClaudeCode, model.AgentCopilotCLI, model.AgentCodexCLI, model.AgentGeminiCLI} {
+	for _, a := range []model.AgentID{model.AgentClaudeCode, model.AgentCopilotCLI, model.AgentCodexCLI, model.AgentGeminiCLI, model.AgentCursor} {
 		if !Supported(a) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []model.AgentID{"gemini", "", "cursor", "claude"} {
+	// Near-misses for real agent names, which is how this fails in practice.
+	for _, a := range []model.AgentID{"gemini", "", "cursor-cli", "claude", "Cursor"} {
 		if Supported(a) {
 			t.Errorf("%q should not be reported as supported", a)
 		}
+	}
+}
+
+// TestCursorTakesItsKindFromTheEvent.
+//
+// Cursor is the only supported agent that does not name a tool for the actions that
+// matter. beforeShellExecution carries a command and beforeReadFile carries a path,
+// and neither says what tool is running. Classifying by tool name would file both as
+// "other", and every rule written against a kind would stop applying to Cursor with
+// nothing failing and nothing logged.
+func TestCursorTakesItsKindFromTheEvent(t *testing.T) {
+	cases := []struct {
+		event   string
+		payload string
+		want    policy.Kind
+		check   func(t *testing.T, a policy.Action)
+	}{
+		{
+			event:   "beforeShellExecution",
+			payload: `{"hook_event_name":"beforeShellExecution","command":"cd /tmp && rm -rf build","cwd":"/repo","sandbox":false}`,
+			want:    policy.KindShell,
+			check: func(t *testing.T, a policy.Action) {
+				if a.Command != "cd /tmp && rm -rf build" {
+					t.Errorf("command = %q", a.Command)
+				}
+				if a.CWD != "/repo" {
+					t.Errorf("cwd = %q", a.CWD)
+				}
+			},
+		},
+		{
+			event:   "beforeReadFile",
+			payload: `{"hook_event_name":"beforeReadFile","file_path":"/repo/.env","content":"x","workspace_roots":["/repo"]}`,
+			want:    policy.KindRead,
+			check: func(t *testing.T, a policy.Action) {
+				if len(a.Paths) != 1 || a.Paths[0] != "/repo/.env" {
+					t.Errorf("paths = %v", a.Paths)
+				}
+				// beforeReadFile carries no cwd, so the workspace stands in for it.
+				if a.CWD != "/repo" {
+					t.Errorf("cwd = %q, want the workspace root", a.CWD)
+				}
+			},
+		},
+		{
+			event: "beforeMCPExecution",
+			// tool_input is a string containing JSON here, not an object. Decoding
+			// straight into a map fails, and a failure denies, so every MCP call
+			// through Cursor would have been refused as unreadable.
+			payload: `{"hook_event_name":"beforeMCPExecution","tool_name":"create_issue","mcp_server_name":"github","tool_input":"{\"title\":\"x\"}"}`,
+			want:    policy.KindMCP,
+			check: func(t *testing.T, a policy.Action) {
+				if a.MCPServer != "github" || a.MCPTool != "create_issue" {
+					t.Errorf("mcp = %q/%q", a.MCPServer, a.MCPTool)
+				}
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.event, func(t *testing.T) {
+			a, err := Decode([]byte(c.payload), model.AgentCursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a.Kind != c.want {
+				t.Errorf("kind = %q, want %q", a.Kind, c.want)
+			}
+			c.check(t, a)
+		})
+	}
+}
+
+// TestCursorEnvelopeIsNotRead.
+//
+// Cursor hands every hook the developer's email address, a path to the conversation
+// transcript and, for a file read, the entire contents of the file. The guard writes a
+// decision log, so anything the action carries is written to disk on a developer's
+// machine. None of it is needed to decide whether an action is permitted.
+//
+// This asserts against the whole serialised action rather than named fields, because
+// the failure it guards against is someone adding a field, not someone changing one.
+func TestCursorEnvelopeIsNotRead(t *testing.T) {
+	payload := `{
+      "hook_event_name": "beforeReadFile",
+      "conversation_id": "c1",
+      "user_email": "someone@example.com",
+      "transcript_path": "/home/dev/.cursor/transcripts/c1.md",
+      "model": "claude-sonnet-5",
+      "file_path": "/repo/backend/.env",
+      "content": "AWS_SECRET_ACCESS_KEY=SHOULD-NEVER-BE-LOGGED",
+      "attachments": [{"type": "file", "file_path": "/repo/other.env"}]
+    }`
+
+	a, err := Decode([]byte(payload), model.AgentCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialised, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, secret := range []string{
+		"SHOULD-NEVER-BE-LOGGED",
+		"AWS_SECRET_ACCESS_KEY",
+		"someone@example.com",
+		"transcripts/c1.md",
+	} {
+		if strings.Contains(string(serialised), secret) {
+			t.Errorf("the action carries %q, which reaches the decision log:\n%s", secret, serialised)
+		}
+	}
+
+	// The path itself is the thing a rule matches on, so it has to survive.
+	if len(a.Paths) != 1 || a.Paths[0] != "/repo/backend/.env" {
+		t.Errorf("paths = %v, want the file being read", a.Paths)
+	}
+}
+
+// TestEncodeCursorShape: a third spelling of the same idea. Cursor reads `permission`,
+// and ignores both `decision` and `permissionDecision`.
+func TestEncodeCursorShape(t *testing.T) {
+	r := Encode(model.AgentCursor, "beforeShellExecution", policy.Decision{
+		Effect: policy.EffectDeny,
+		RuleID: "destructive-delete",
+		Reason: "A recursive force delete is unrecoverable.",
+	})
+
+	var got map[string]any
+	if err := json.Unmarshal(r.Body, &got); err != nil {
+		t.Fatalf("reply is not JSON: %v", err)
+	}
+	if got["permission"] != "deny" {
+		t.Errorf("permission = %v, want deny", got["permission"])
+	}
+	for _, wrong := range []string{"decision", "permissionDecision"} {
+		if _, present := got[wrong]; present {
+			t.Errorf("the reply uses %q, which Cursor ignores", wrong)
+		}
+	}
+	// The model is told why, not just that it was refused. One told only "no" tries
+	// another route to the same place.
+	if got["agent_message"] == nil || got["agent_message"] == "" {
+		t.Error("the model was refused with no reason, so it will try again differently")
+	}
+	if r.Exit != ExitBlock {
+		t.Errorf("exit = %d, want %d", r.Exit, ExitBlock)
+	}
+}
+
+// TestCursorCanAsk: unlike Gemini, Cursor's permission hooks have a third answer, so
+// an ask survives the translation instead of being refused.
+func TestCursorCanAsk(t *testing.T) {
+	r := Encode(model.AgentCursor, "beforeShellExecution", policy.Decision{Effect: policy.EffectAsk})
+	var got map[string]any
+	if err := json.Unmarshal(r.Body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["permission"] != "ask" {
+		t.Errorf("permission = %v, want ask", got["permission"])
+	}
+	if r.Exit != ExitAllow {
+		t.Errorf("exit = %d: an ask must not block", r.Exit)
 	}
 }
