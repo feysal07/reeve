@@ -344,6 +344,57 @@ $geminiRules = @($geminiInst.permissions.ask).Count + @($geminiInst.permissions.
 Check "Gemini's second configuration system was read as well as its first" `
     ($geminiRules -ge 2) "found $geminiRules rules from the policy engine"
 
+
+# A file that cannot be read must never read as a file with nothing in it.
+#
+# Its own sandbox home, because these checks deliberately break a settings file and
+# every other check in this script depends on the main one being intact.
+$readHome = Join-Path $Sandbox "readability"
+New-Item -ItemType Directory -Force -Path (Join-Path $readHome ".claude") | Out-Null
+$readSettings = Join-Path $readHome ".claude\settings.json"
+
+# Comments are routine in these files: several of these agents come from editor
+# lineages where configuration is JSONC, and whoever writes a deny rule is the same
+# person who writes a line above it saying why.
+Write-Text $readSettings @'
+{
+  // Block the obvious foot-guns. Reviewed 2026-09-01.
+  "permissions": {
+    "deny": ["Read(**/.env)", "Bash(rm -rf:*)"],
+    "allowRules": ["a key this build has never heard of"]
+  }
+}
+'@
+
+$savedProfile2 = $env:USERPROFILE
+$savedHome2 = $env:HOME
+$env:USERPROFILE = $readHome
+$env:HOME = $readHome
+try {
+    $readScan = (& $reeve scan --dir $readHome --json 2>$null | Out-String) | ConvertFrom-Json
+    $cc = $readScan.installations | Where-Object { $_.agent -eq "claude-code" }
+
+    Check "a comment does not delete every rule in the file" `
+        (@($cc.permissions.deny).Count -eq 2) `
+        "found $(@($cc.permissions.deny).Count) deny rules; a commented file used to read as an empty one"
+
+    $unknown = @($cc.configFiles | ForEach-Object { $_.unknownKeys } | Where-Object { $_ })
+    Check "settings this build does not understand are reported" `
+        ($unknown.Count -ge 1) `
+        "found $($unknown.Count); a renamed vendor key would go unnoticed"
+
+    # Now break it outright. An unparseable file and an empty one produce the same
+    # empty result, and only one of them means the machine has no rules.
+    Set-Content -Path $readSettings -Value '{"permissions": {"deny": ["Read(**/.env)"' -Encoding utf8
+    $brokenOut = (& $reeve scan --dir $readHome 2>&1 | Out-String)
+    Check "a file that cannot be read is not reported as a file with nothing in it" `
+        ($brokenOut -match "could not be read") `
+        "the scan reported a clean machine"
+} finally {
+    $env:USERPROFILE = $savedProfile2
+    if ($savedHome2) { $env:HOME = $savedHome2 } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }
+}
+
 # --------------------------------------------------------------- policy ----
 
 Step 2 "Policy: validate it, then try it before it blocks anyone"

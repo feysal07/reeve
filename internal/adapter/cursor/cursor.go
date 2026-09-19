@@ -21,7 +21,6 @@ package cursor
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -196,38 +195,47 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 		if !keep[i] {
 			continue
 		}
-		raw, err := cfgfile.ReadFile(r.path)
-		found := err == nil
+		// Each kind is decoded into its own schema, so the read happens inside the
+		// switch and every branch reports the same way. Cursor comes from an editor
+		// lineage where configuration is routinely JSONC, which makes a file read
+		// as empty the likeliest failure of all here.
+		var doc cfgfile.Document
+		var c cliConfig
+		var mf mcpFile
+		var hf hooksFile
+
+		switch r.kind {
+		case "cli":
+			doc = cfgfile.ReadJSON(r.path, &c)
+		case "mcp":
+			doc = cfgfile.ReadJSON(r.path, &mf)
+		case "hooks":
+			doc = cfgfile.ReadJSON(r.path, &hf)
+		}
 
 		inst.ConfigFiles = append(inst.ConfigFiles, model.ConfigFile{
-			Path:     r.path,
-			Scope:    r.scope,
-			Exists:   found,
-			Writable: found && writableByUser(r.path),
+			Path:        r.path,
+			Scope:       r.scope,
+			Exists:      doc.Found,
+			Writable:    doc.Found && writableByUser(r.path),
+			ParseError:  errText(doc.Err),
+			Lenient:     doc.Lenient,
+			UnknownKeys: doc.Unknown,
 		})
-		if !found {
+		if !doc.OK() {
+			// Exists and unparseable is carried as a failure rather than an
+			// absence: treating it as absent would report every setting in it
+			// as not present.
 			continue
 		}
 
 		switch r.kind {
 		case "cli":
-			var c cliConfig
-			if json.Unmarshal(raw, &c) != nil {
-				continue
-			}
 			mergeCLI(&perms, c, r.scope)
 		case "mcp":
-			var f mcpFile
-			if json.Unmarshal(raw, &f) != nil {
-				continue
-			}
-			inst.MCPServers = append(inst.MCPServers, collectMCP(f, r.scope)...)
+			inst.MCPServers = append(inst.MCPServers, collectMCP(mf, r.scope)...)
 		case "hooks":
-			var f hooksFile
-			if json.Unmarshal(raw, &f) != nil {
-				continue
-			}
-			hooks := collectHooks(f, r.scope)
+			hooks := collectHooks(hf, r.scope)
 			inst.Hooks = append(inst.Hooks, hooks...)
 			// An enterprise hook that can refuse an action is the only thing
 			// Cursor offers that a developer cannot edit, so it is the only
@@ -387,4 +395,12 @@ func sortHooks(v []model.Hook) {
 		}
 		return v[i].Target < v[j].Target
 	})
+}
+
+// errText renders a parse failure for the report, or "" when there was none.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

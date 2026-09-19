@@ -104,6 +104,32 @@ type ConfigFile struct {
 	Scope    Scope  `json:"scope"`
 	Exists   bool   `json:"exists"`
 	Writable bool   `json:"writable"` // writable by the current, unprivileged user
+
+	// ParseError is why the file could not be read, and empty when it was read.
+	//
+	// A file that exists and cannot be parsed is not a file with nothing in it,
+	// and until this field existed the two were indistinguishable: a settings file
+	// holding deny rules was reported as a machine with no deny rules. That is a
+	// confident answer, and it is the reassuring one.
+	ParseError string `json:"parseError,omitempty"`
+
+	// Lenient says the file is not strict JSON and was read only after comments
+	// and trailing commas were removed.
+	//
+	// The values are used, because reading the rules beats discarding them, but a
+	// file that is not strict JSON may be read differently by the vendor's own
+	// parser than by this one, and a difference between what an agent enforces and
+	// what Reeve reports is the thing this tool exists to prevent.
+	Lenient bool `json:"lenient,omitempty"`
+
+	// UnknownKeys lists settings present in the file that this build does not
+	// understand, as dotted paths.
+	//
+	// Adapters ignore fields they do not know so they keep working when a vendor
+	// adds a key. Silence about it is the problem: if a vendor renames
+	// permissions.allow, the adapter reports zero allow rules, which reads exactly
+	// like a machine that has none.
+	UnknownKeys []string `json:"unknownKeys,omitempty"`
 }
 
 // Permissions is the normalised view of what an agent may do without asking.

@@ -397,6 +397,56 @@ else
         check "Gemini's second configuration system was read as well as its first" 0 "found $GRULES rules"
 fi
 
+# A file that cannot be read must never read as a file with nothing in it.
+#
+# Its own sandbox home, because these checks deliberately break a settings file
+# and every other check in this script depends on the main one being intact.
+READ_HOME="$SANDBOX/readability"
+mkdir -p "$READ_HOME/.claude"
+
+# Comments are routine in these files: several of these agents come from editor
+# lineages where configuration is JSONC, and whoever writes a deny rule is the
+# same person who writes a line above it saying why.
+write_text "$READ_HOME/.claude/settings.json" <<'EOF'
+{
+  // Block the obvious foot-guns. Reviewed 2026-09-01.
+  "permissions": {
+    "deny": ["Read(**/.env)", "Bash(rm -rf:*)"],
+    "allowRules": ["a key this build has never heard of"]
+  }
+}
+EOF
+
+READ_ENV="HOME=$READ_HOME USERPROFILE=$READ_HOME"
+READ_JSON="$SANDBOX/readability.json"
+env $READ_ENV "$REEVE" scan --dir "$READ_HOME" --json > "$READ_JSON" 2>/dev/null
+
+if [ "$JSON_TOOL" = none ]; then
+    skip "a comment does not delete every rule in the file" "needs jq or python3"
+    skip "settings this build does not understand are reported" "needs jq or python3"
+    skip "a file that cannot be read is not reported as a file with nothing in it" "needs jq or python3"
+else
+    DENIES=$(json_get "$READ_JSON"         '[.installations[]|select(.agent=="claude-code")][0].permissions.deny|length'         'len([i for i in d["installations"] if i["agent"]=="claude-code"][0]["permissions"].get("deny") or [])')
+    [ "$DENIES" = "2" ] &&
+        check "a comment does not delete every rule in the file" 1 ||
+        check "a comment does not delete every rule in the file" 0             "found $DENIES deny rules; a commented file used to read as an empty one"
+
+    UNKNOWN=$(json_get "$READ_JSON"         '[.installations[]|select(.agent=="claude-code")][0].configFiles|map(.unknownKeys//[])|flatten|length'         'sum(len(c.get("unknownKeys") or []) for c in [i for i in d["installations"] if i["agent"]=="claude-code"][0]["configFiles"])')
+    [ "$UNKNOWN" -ge 1 ] 2>/dev/null &&
+        check "settings this build does not understand are reported" 1 ||
+        check "settings this build does not understand are reported" 0             "found $UNKNOWN; a renamed vendor key would go unnoticed"
+
+    # Now break it outright. An unparseable file and an empty one produce the same
+    # empty result, and only one of them means the machine has no rules.
+    printf '{"permissions": {"deny": ["Read(**/.env)"
+' > "$READ_HOME/.claude/settings.json"
+    BROKEN=$(env $READ_ENV "$REEVE" scan --dir "$READ_HOME" 2>&1)
+    case "$BROKEN" in
+        *"could not be read"*) check "a file that cannot be read is not reported as a file with nothing in it" 1 ;;
+        *) check "a file that cannot be read is not reported as a file with nothing in it" 0             "the scan reported a clean machine" ;;
+    esac
+fi
+
 # --------------------------------------------------------------- policy ----
 
 step 2 "Policy: validate it, then try it before it blocks anyone"

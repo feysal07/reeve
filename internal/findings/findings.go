@@ -32,6 +32,9 @@ var rules = []Rule{
 	noBlockingHooks,
 	unattendedApprovalMode,
 	unsandboxed,
+	unreadableConfig,
+	unrecognisedConfig,
+	lenientConfig,
 }
 
 // Evaluate runs every rule against every installation.
@@ -441,5 +444,110 @@ func unattendedApprovalMode(inst model.Installation) []model.Finding {
 			"commands, proceed unreviewed.",
 		Evidence: "defaultMode: " + mode,
 		Remedy:   "Set a default that prompts, and grant unattended modes per project instead.",
+	}}
+}
+
+// unreadableConfig fires when a configuration file exists and could not be parsed.
+//
+// This is the most important finding in the file, because without it the condition is
+// invisible. An unparseable settings file produces an empty result, and an empty
+// result is indistinguishable from a machine with no rules — so a file holding deny
+// rules was reported as a machine with no deny rules, which is a confident answer and
+// the reassuring one.
+//
+// It is high severity whatever the file contains, because nobody knows what it
+// contains. Both readings are bad: either the agent reads it and Reeve is reporting a
+// machine it cannot see, or the agent fails on it too and the rules in it were never
+// enforced by anything.
+func unreadableConfig(inst model.Installation) []model.Finding {
+	var out []model.Finding
+	for _, f := range inst.ConfigFiles {
+		if f.ParseError == "" {
+			continue
+		}
+		out = append(out, model.Finding{
+			ID:       "config.unreadable",
+			Severity: model.SeverityHigh,
+			Agent:    inst.Agent,
+			Title:    "A configuration file could not be read",
+			Detail: "This file exists and could not be parsed, so every setting in it is " +
+				"invisible to this scan. Nothing else in this report accounts for what it " +
+				"contains: permission rules, hooks and MCP servers defined here are " +
+				"reported as absent because they could not be read, not because they are " +
+				"not there.",
+			Evidence: f.Path + ": " + f.ParseError,
+			Remedy: "Open the file and fix the syntax. If the agent reads it and this tool " +
+				"cannot, this report is describing a machine it cannot see; if the agent " +
+				"cannot read it either, none of the rules in it are being enforced.",
+		})
+	}
+	return out
+}
+
+// unrecognisedConfig fires when a file contains settings this build does not know.
+//
+// Adapters ignore fields they do not recognise on purpose, so they keep working when a
+// vendor adds a key. That is right, and saying nothing about it is not. A vendor who
+// renames permissions.allow leaves this tool reporting zero allow rules, which reads
+// exactly like a machine that has none, and the adapter's own tests keep passing
+// because they check the adapter against this tool's model of the format rather than
+// against the vendor's.
+func unrecognisedConfig(inst model.Installation) []model.Finding {
+	var out []model.Finding
+	for _, f := range inst.ConfigFiles {
+		if len(f.UnknownKeys) == 0 {
+			continue
+		}
+		keys := f.UnknownKeys
+		if len(keys) > 8 {
+			keys = append(append([]string(nil), keys[:8]...),
+				fmt.Sprintf("and %d more", len(f.UnknownKeys)-8))
+		}
+		out = append(out, model.Finding{
+			ID:       "config.unrecognised-settings",
+			Severity: model.SeverityMedium,
+			Agent:    inst.Agent,
+			Title:    "Settings this version of Reeve does not understand",
+			Detail: "This file contains settings this build has no knowledge of. They are " +
+				"ignored, which is how this tool keeps working when a vendor adds a key, " +
+				"but it also means anything they govern is missing from this report. If " +
+				"the vendor has renamed a setting Reeve reads, the old name is now absent " +
+				"and reported as unset, which looks the same as a machine that never had it.",
+			Evidence: f.Path + ": " + strings.Join(keys, ", "),
+			Remedy: "Check whether a newer Reeve understands these, and treat anything in " +
+				"this report that depends on them as unverified until it does.",
+		})
+	}
+	return out
+}
+
+// lenientConfig fires when a file is not strict JSON and was read anyway.
+//
+// Low, because the settings were read and are in this report. It is reported at all
+// because the vendor's parser and this one may not agree about the same file, and a
+// difference between what an agent enforces and what Reeve says it enforces is the
+// thing this tool exists to prevent.
+func lenientConfig(inst model.Installation) []model.Finding {
+	var paths []string
+	for _, f := range inst.ConfigFiles {
+		if f.Lenient {
+			paths = append(paths, f.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	return []model.Finding{{
+		ID:       "config.not-strict-json",
+		Severity: model.SeverityLow,
+		Agent:    inst.Agent,
+		Title:    "A configuration file is not strict JSON",
+		Detail: "This file has comments or trailing commas in it. Reeve read it anyway, " +
+			"and the settings are in this report, because discarding a file over a comment " +
+			"would hide every rule in it. Whether the agent reads it the same way depends " +
+			"on the vendor's own parser.",
+		Evidence: strings.Join(paths, ", "),
+		Remedy: "Confirm the agent accepts this file. If it does not, the rules in it are " +
+			"being reported here and enforced nowhere.",
 	}}
 }

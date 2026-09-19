@@ -17,7 +17,6 @@ package gemini
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,6 +135,7 @@ type source struct {
 	scope model.Scope
 	data  *settings
 	found bool
+	doc   config.Document
 }
 
 // geminiHome returns the user configuration directory.
@@ -218,10 +218,13 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 
 	for _, s := range sources {
 		inst.ConfigFiles = append(inst.ConfigFiles, model.ConfigFile{
-			Path:     s.path,
-			Scope:    s.scope,
-			Exists:   s.found,
-			Writable: s.found && writableByUser(s.path),
+			Path:        s.path,
+			Scope:       s.scope,
+			Exists:      s.found,
+			Writable:    s.found && writableByUser(s.path),
+			ParseError:  errText(s.doc.Err),
+			Lenient:     s.doc.Lenient,
+			UnknownKeys: s.doc.Unknown,
 		})
 	}
 
@@ -242,13 +245,13 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 
 func load(path string, scope model.Scope) source {
 	s := source{path: path, scope: scope}
-	b, err := config.ReadFile(path)
-	if err != nil {
-		return s
-	}
-	s.found = true
 	var parsed settings
-	if err := json.Unmarshal(b, &parsed); err != nil {
+	s.doc = config.ReadJSON(path, &parsed)
+	s.found = s.doc.Found
+	if !s.doc.OK() {
+		// A file that exists and cannot be parsed is carried as a failure rather
+		// than as an absence. Returning no data and saying nothing would report
+		// every setting in it as not present.
 		return s
 	}
 	s.data = &parsed
@@ -687,4 +690,12 @@ func dedupeSources(in []source) []source {
 		}
 	}
 	return out
+}
+
+// errText renders a parse failure for the report, or "" when there was none.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
