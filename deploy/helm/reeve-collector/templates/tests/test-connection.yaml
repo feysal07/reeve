@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}-test
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: {{ .Values.tests.image }}
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      # Reachability and identity, in that order. /healthz proves something is
+      # listening; /stats proves it is the collector, because a misdirected
+      # Service pointing at another workload would answer the first and not the
+      # second.
+      #
+      # It deliberately posts no event. The store is an audit record, and a test
+      # that writes to it makes the record slightly untrue every time it runs.
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          host=http://{{ include "reeve-collector.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+          echo "probing $host"
+          wget -q -T 10 -O - "$host/healthz"
+          wget -q -T 10 -O - "$host/stats" | grep -q eventsWritten
+          echo "collector reachable"

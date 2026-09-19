@@ -1,0 +1,64 @@
+reeve-collector {{ .Chart.Version }} installed as {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+  image  : {{ include "reeve-collector.image" . }}
+  store  : {{ include "reeve-collector.storePath" . }}
+  teams  : {{ if include "reeve-collector.teamsConfigMap" . }}{{ include "reeve-collector.teamsConfigMap" . }}{{ else }}none{{ end }}
+  prices : {{ if include "reeve-collector.pricesConfigMap" . }}{{ include "reeve-collector.pricesConfigMap" . }}{{ else }}built-in list rates{{ end }}
+
+Check it is up:
+
+  kubectl --namespace {{ .Release.Namespace }} rollout status statefulset/{{ include "reeve-collector.fullname" . }}
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+
+Point an agent at it. From inside the cluster:
+
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://{{ include "reeve-collector.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+{{- if .Values.ingress.enabled }}
+
+From a developer machine:
+{{- range .Values.ingress.hosts }}
+
+  OTEL_EXPORTER_OTLP_ENDPOINT=https://{{ .host }}
+{{- end }}
+{{- else }}
+
+Agents run on developer machines, which are outside the cluster. Nothing can reach
+this collector from there yet. Enable the Ingress, or forward the port to try it:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "reeve-collector.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+{{- end }}
+
+Read what it has collected:
+
+  kubectl --namespace {{ .Release.Namespace }} exec {{ include "reeve-collector.fullname" . }}-0 -- \
+    reeve report --store {{ include "reeve-collector.storePath" . }} --since 168h
+
+{{ if not .Values.persistence.enabled -}}
+WARNING: persistence is disabled. The event store is an emptyDir, so the audit
+record is deleted when the pod restarts, is rescheduled, or is upgraded. Fine for
+trying the chart out; not a way to run it.
+
+{{ end -}}
+{{ if not (include "reeve-collector.teamsConfigMap" .) -}}
+WARNING: no team mapping. Every event will land in the unattributed bucket, and
+the cost report will show one team. Set collector.teams.content, or point
+collector.teams.existingConfigMap at a ConfigMap holding a teams.yaml key.
+
+{{ end -}}
+{{ if not (include "reeve-collector.pricesConfigMap" .) -}}
+WARNING: no price table, so costs are computed at published list rates. They will
+be wrong for any negotiated agreement and they go out of date. Supply your own
+before anyone charges a team for them.
+
+{{ end -}}
+{{ if and .Values.ingress.enabled (not .Values.networkPolicy.enabled) -}}
+NOTE: the collector is reachable through the Ingress and has no authentication of
+its own. You confirmed authentication is enforced in front of it. If that stops
+being true, anything that can reach the endpoint can write events under any
+identity, and a forged event is indistinguishable from a real one.
+
+{{ end -}}
+Nothing prunes the event file. Watch it:
+
+  kubectl --namespace {{ .Release.Namespace }} exec {{ include "reeve-collector.fullname" . }}-0 -- \
+    du -h {{ include "reeve-collector.storePath" . }}

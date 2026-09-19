@@ -1,0 +1,185 @@
+# Default values for reeve-collector.
+#
+# The collector receives what AI coding agents export over OTLP, normalises it
+# across vendors, prices it at your rates and attributes it from a mapping you
+# control. It writes one append-only file: an audit record of who did what.
+#
+# Two things about that file shape everything below. It is the record, so the
+# volume it lives on outlives the release. And it is written by one process, so
+# this chart runs exactly one replica; see `replicaCount`.
+
+image:
+  repository: ghcr.io/feysal07/reeve
+  # Empty means the chart's appVersion. No release is tagged yet, so until one
+  # is, use the floating build from main:
+  #
+  #   --set image.tag=main --set image.pullPolicy=Always
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# There is deliberately no way to run more than one.
+#
+# Each replica would open its own file, the Service would spread agents across
+# them, and every report would be computed from whichever fraction of the events
+# it happened to read. Nothing would error. The totals would just be wrong, and
+# wrong quietly, which is the failure this project exists to catch.
+#
+# The template refuses to render if this is set above 1.
+replicaCount: 1
+
+collector:
+  # The port the collector listens on inside the pod. 4318 is the OTLP/HTTP port
+  # every exporter assumes, so changing it means configuring every agent.
+  port: 4318
+
+  # Log a line per batch received. Useful while proving agents are reaching the
+  # collector; noisy afterwards.
+  verbose: false
+
+  # Team attribution. Resolved here rather than taken from the agents, because an
+  # agent runs on a developer's machine and every attribute it sends is asserted
+  # by that machine.
+  #
+  # Leave `content` empty and `existingConfigMap` unset to run without a mapping:
+  # the collector starts, warns, and every event lands unattributed.
+  teams:
+    # Inline YAML, rendered into a ConfigMap. See examples/telemetry/teams.yaml.
+    content: ""
+    # Or the name of a ConfigMap you manage, which must hold a `teams.yaml` key.
+    # This wins over `content` if both are set.
+    existingConfigMap: ""
+
+  # Your rates, in US dollars per million tokens. Without this the collector uses
+  # a built-in table at published list prices, which is wrong for anyone with a
+  # negotiated rate, and says so on startup.
+  prices:
+    content: ""
+    existingConfigMap: ""
+
+  # Extra arguments appended to the command, for a flag this chart does not model.
+  extraArgs: []
+
+persistence:
+  # false replaces the volume with an emptyDir. The audit record is then deleted
+  # with the pod. That is a reasonable way to try the chart out and not a
+  # reasonable way to run it.
+  enabled: true
+
+  # Use a PersistentVolumeClaim you already created, instead of letting the
+  # StatefulSet create one.
+  existingClaim: ""
+
+  # Empty means the cluster's default StorageClass.
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+  # Events are small, but nothing prunes them: the file only grows. Roughly
+  # 300 bytes per event, so a thousand agent-sessions a day is on the order of a
+  # gigabyte a year. Size for the retention you intend to keep, and see the
+  # chart README on what to do when it fills.
+  size: 10Gi
+
+  mountPath: /var/lib/reeve
+  storeFile: events.jsonl
+
+  # Claims created by the StatefulSet are intentionally left behind by
+  # `helm uninstall`. Deleting an audit trail should be a separate, deliberate act.
+
+service:
+  type: ClusterIP
+  port: 4318
+  annotations: {}
+  # Only used when type is NodePort.
+  nodePort: ""
+
+# Agents run on developer machines, outside the cluster, so something has to let
+# them in. An Ingress is the usual answer and it is off by default, because the
+# collector has no authentication of its own: anything that can POST to it can
+# write events, and a forged event is indistinguishable from a real one.
+#
+# To enable it you must supply TLS and confirm that authentication is enforced in
+# front of the collector. The template refuses to render otherwise.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: reeve.internal
+      paths:
+        - path: /
+          pathType: Prefix
+  # Required when enabled. A plain-HTTP endpoint would carry identities and
+  # repository names in the clear.
+  tls: []
+  #  - secretName: reeve-collector-tls
+  #    hosts:
+  #      - reeve.internal
+
+  # Set to true to confirm that requests are authenticated before they reach the
+  # collector, by mutual TLS, an OAuth2 proxy, an ingress auth annotation or a
+  # service mesh. This is an assertion you are making, not something the chart
+  # can check. It exists so that exposing an unauthenticated write endpoint has
+  # to be a decision someone took, rather than a default they inherited.
+  authenticatedByProxy: false
+
+# Restrict which pods may reach the collector. Off by default because a policy
+# with no rules denies everything, which would look like the collector breaking.
+networkPolicy:
+  enabled: false
+  # Namespace and pod selectors permitted to send telemetry. An empty list with
+  # the policy enabled means nothing in the cluster may reach it, which is
+  # correct when agents come in through the Ingress instead.
+  ingressFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: ci
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    # No CPU limit by default: throttling the collector makes agents retry, which
+    # makes it slower still. Memory is capped because a request body is bounded
+    # but concurrency is not.
+    memory: 256Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  # The store is created by the container user; fsGroup makes the mounted volume
+  # writable by it without the image running as root.
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+tests:
+  # `helm test` needs a client to make a request with, and the collector's own
+  # image has no shell to make one from. Point this at your mirror if the
+  # cluster cannot pull from Docker Hub.
+  image: busybox:1.37

@@ -38,3 +38,73 @@ jobs:
         run: go test -race ./...
       - name: Build
         run: go build ./...
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.22.0
+
+      - name: Lint
+        run: helm lint --strict deploy/helm/reeve-collector
+
+      - name: Render every supported shape
+        run: |
+          set -eu
+          chart=deploy/helm/reeve-collector
+          render() {
+            echo "  rendering: $*"
+            helm template t "$chart" "$@" > /dev/null
+          }
+          render
+          render --set persistence.enabled=false
+          render --set persistence.existingClaim=my-claim
+          render --set collector.teams.existingConfigMap=cm --set collector.prices.existingConfigMap=cm
+          render --set-file collector.teams.content=examples/telemetry/teams.yaml \
+                 --set-file collector.prices.content=examples/telemetry/prices.yaml
+          render --set service.type=NodePort --set service.nodePort=31318
+          render --set networkPolicy.enabled=true
+          render --set ingress.enabled=true \
+                 --set ingress.authenticatedByProxy=true \
+                 --set ingress.tls[0].secretName=tls \
+                 --set ingress.tls[0].hosts[0]=reeve.internal
+
+      # The chart refuses four configurations that would deploy cleanly and be
+      # wrong. A refusal that stops refusing is a silent regression, so each one
+      # is asserted rather than assumed.
+      - name: Refuse what would be quietly wrong
+        run: |
+          set -eu
+          chart=deploy/helm/reeve-collector
+          refuses() {
+            desc="$1"; shift
+            if helm template t "$chart" "$@" > /dev/null 2>&1; then
+              echo "REGRESSION: the chart accepted $desc"
+              exit 1
+            fi
+            echo "  refused: $desc"
+          }
+          refuses "more than one replica" --set replicaCount=2
+          refuses "an ingress with no TLS" --set ingress.enabled=true
+          refuses "an ingress with no authentication in front of it" \
+            --set ingress.enabled=true \
+            --set ingress.tls[0].secretName=tls \
+            --set ingress.tls[0].hosts[0]=reeve.internal
+          refuses "a network policy that would deny the ingress controller" \
+            --set ingress.enabled=true \
+            --set ingress.authenticatedByProxy=true \
+            --set ingress.tls[0].secretName=tls \
+            --set ingress.tls[0].hosts[0]=reeve.internal \
+            --set networkPolicy.enabled=true
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Build only. Publishing happens from the release workflow, on a tag.
+      - name: Build the collector image
+        run: docker build --build-arg VERSION=ci -t reeve:ci .
+      - name: The binary in it must run
+        run: docker run --rm reeve:ci version

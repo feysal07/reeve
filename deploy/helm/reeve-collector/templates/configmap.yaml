@@ -1,0 +1,27 @@
+{{- if and .Values.collector.teams.content (not .Values.collector.teams.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}-teams
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+data:
+  # This maps people to teams, so it holds email addresses. It is a ConfigMap,
+  # not a Secret: it is readable by anyone with get on ConfigMaps in this
+  # namespace. If that is not acceptable, manage it yourself and point
+  # collector.teams.existingConfigMap at it.
+  teams.yaml: |
+    {{- .Values.collector.teams.content | nindent 4 }}
+{{- end }}
+{{- if and .Values.collector.prices.content (not .Values.collector.prices.existingConfigMap) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}-prices
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+data:
+  prices.yaml: |
+    {{- .Values.collector.prices.content | nindent 4 }}
+{{- end }}

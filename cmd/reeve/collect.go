@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -125,7 +126,19 @@ See docs/TELEMETRY.md`)
 	go func() {
 		<-stop
 		fmt.Println("\nshutting down")
-		srv.Close()
+		// Drain rather than cut. A batch already written to the store, whose
+		// response is lost because the connection went away, is retried by the
+		// agent, and the same events are recorded a second time. Under a rolling
+		// restart in Kubernetes that stops being rare, and duplicated events
+		// overstate both the audit trail and the bill without anything failing.
+		//
+		// The timeout is shorter than any sensible termination grace period, so
+		// the process exits on its own terms rather than being killed.
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			srv.Close()
+		}
 	}()
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

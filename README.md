@@ -113,6 +113,11 @@ it did; an action the guard refused never happened as far as the agent is concer
 See [docs/TELEMETRY.md](docs/TELEMETRY.md). Prompt and response content is never
 stored, whatever an agent is configured to send.
 
+To run the collector in Kubernetes, there is a Helm chart:
+[deploy/helm/reeve-collector](deploy/helm/reeve-collector). It deploys a single
+writer against a persistent volume, and refuses to render four configurations that
+would come up green and produce a quietly wrong audit trail.
+
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE), and

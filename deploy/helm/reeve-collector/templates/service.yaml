@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: otlp-http
+      port: {{ .Values.service.port }}
+      targetPort: otlp-http
+      protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "reeve-collector.selectorLabels" . | nindent 4 }}
+---
+# The StatefulSet's governing Service. It exists so the pod has a stable DNS
+# name of its own, independent of how the Service above is exposed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}-headless
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  ports:
+    - name: otlp-http
+      port: {{ .Values.service.port }}
+      targetPort: otlp-http
+      protocol: TCP
+  selector:
+    {{- include "reeve-collector.selectorLabels" . | nindent 4 }}

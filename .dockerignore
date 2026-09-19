@@ -1,0 +1,10 @@
+.git
+.github
+.githooks
+.idea
+bin
+dist
+docs
+examples
+deploy
+*.md

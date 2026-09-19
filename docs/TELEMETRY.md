@@ -38,6 +38,12 @@ reeve collect \
 Agents need no plugin. Each already knows how to export OpenTelemetry, and
 `reeve policy compile` writes the destination into their managed settings for you.
 
+In Kubernetes, use the chart at
+[deploy/helm/reeve-collector](../deploy/helm/reeve-collector), which wires the same
+flags and adds the things a cluster needs: a persistent volume for the store, the
+team mapping and price table as ConfigMaps that roll the pod when they change, and a
+refusal to deploy shapes that would silently split or forge the record.
+
 Endpoints: `/v1/metrics`, `/v1/logs`, `/v1/traces`, plus `/healthz` and `/stats`.
 Traces are accepted and discarded, because an agent whose trace export fails may log
 errors or back off its other exports, and traces add little the event stream does not

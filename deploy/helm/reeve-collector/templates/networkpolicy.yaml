@@ -1,0 +1,27 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "reeve-collector.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- if .Values.networkPolicy.ingressFrom }}
+    - from:
+        {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
+      ports:
+        - port: {{ .Values.collector.port }}
+          protocol: TCP
+    {{- else }}
+    # No sources permitted, which denies everything. Only reachable this way if
+    # you enabled the policy without an Ingress, so the only senders would have
+    # been in-cluster ones you have not named yet.
+    []
+    {{- end }}
+{{- end }}
