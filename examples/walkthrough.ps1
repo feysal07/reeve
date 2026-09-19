@@ -764,9 +764,62 @@ $truncOut = (& $reeve audit verify $truncLog 2>&1 | Out-String)
 Check "decisions deleted from the end of the log are caught" `
     ($truncOut -match "removed from the end") $truncOut
 
+# ------------------------------------------------------------------ mcp ----
+
+Step 10 "MCP servers: what is connected, against what was approved"
+Note "Each one extends the agent's reach into another system, with that"
+Note "system's credentials. The list is assembled from the developer's home"
+Note "directory and from whatever repository happens to be open."
+Write-Host ""
+
+$mcpRegistry = Join-Path $repo "examples\mcp\registry.yaml"
+$scanFile = Join-Path $Sandbox "scan.json"
+& $reeve scan --dir $project --json 2>$null | Out-File -Encoding utf8 $scanFile
+
+$mcpOut = (& $reeve mcp check $scanFile --registry $mcpRegistry 2>&1 | Out-String)
+Show $mcpOut
+
+# Matched on the verdict word rather than a sentence. Explanations are wrapped to
+# the terminal width, so any phrase long enough to be worth asserting is also long
+# enough to be split across two lines by a later edit.
+Check "a server that was reviewed and refused is caught in use" `
+    ($mcpOut -match "denied") $mcpOut
+
+Check "a server nobody approved is reported, not ignored" `
+    ($mcpOut -match "unregistered") $mcpOut
+
+& $reeve mcp check $scanFile --registry $mcpRegistry --fail-on high > $null 2>&1
+Check "the registry check is usable as a gate" ($LASTEXITCODE -eq 2) "exit was $LASTEXITCODE"
+
+# The case the whole design turns on. A server's name is a key the developer chose;
+# anything at all can be called github. Matching on the name would report this as
+# approved, which is worse than having no check at all.
+$impostor = Join-Path $Sandbox "impostor.json"
+$before = Get-Content $scanFile -Raw
+$after = $before -replace '@modelcontextprotocol/server-github', '@someone-else/server-github'
+Set-Content -Path $impostor -Value $after -Encoding utf8
+if ($before -eq $after) {
+    Check "a server wearing an approved name is caught" $false `
+        "the test fixture was not modified, so this would prove nothing"
+} else {
+    $impOut = (& $reeve mcp check $impostor --registry $mcpRegistry 2>&1 | Out-String)
+    Check "a server wearing an approved name is caught" ($impOut -match "mismatch") $impOut
+}
+
+# And the genuine server is still approved, or the check above would pass for
+# something that simply disapproves of everything.
+Check "the genuine approved server is not flagged" ($mcpOut -match "approved\s+\d") $mcpOut
+
+# A registry generated from what is running describes the current state rather than
+# recording a decision, so nothing in it may come out pre-approved.
+$skel = (& $reeve mcp list $scanFile --as-registry 2>&1 | Out-String)
+Check "a generated registry never marks anything approved" `
+    (($skel -match "status: trial") -and -not ($skel -match "status: approved")) `
+    "whatever was installed would become policy with nobody having looked"
+
 # ------------------------------------------------------------- posture ----
 
-Step 10 "Fleet posture: the same question asked about every machine at once"
+Step 11 "Fleet posture: the same question asked about every machine at once"
 Note "Reads files. No listener, no agent, no machine reporting on its own behalf."
 Write-Host ""
 

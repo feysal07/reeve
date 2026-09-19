@@ -903,9 +903,73 @@ case "$TRUNC_OUT" in
     *) check "decisions deleted from the end of the log are caught" 0 "$TRUNC_OUT" ;;
 esac
 
+# ------------------------------------------------------------------ mcp ----
+
+step 10 "MCP servers: what is connected, against what was approved"
+note "Each one extends the agent's reach into another system, with that"
+note "system's credentials. The list is assembled from the developer's home"
+note "directory and from whatever repository happens to be open."
+echo
+
+MCP_REGISTRY="$REPO/examples/mcp/registry.yaml"
+
+show "$("$REEVE" mcp check "$SCAN_JSON" --registry "$MCP_REGISTRY" 2>&1)"
+MCP_OUT=$("$REEVE" mcp check "$SCAN_JSON" --registry "$MCP_REGISTRY" 2>&1)
+
+# The sandbox's postgres-prod is the one the registry refused, and it is
+# configured by the repository, which is how it got onto the machine.
+case "$MCP_OUT" in
+    *denied*) check "a server that was reviewed and refused is caught in use" 1 ;;
+    *) check "a server that was reviewed and refused is caught in use" 0 "$MCP_OUT" ;;
+esac
+
+case "$MCP_OUT" in
+    *unregistered*) check "a server nobody approved is reported, not ignored" 1 ;;
+    *) check "a server nobody approved is reported, not ignored" 0 ;;
+esac
+
+"$REEVE" mcp check "$SCAN_JSON" --registry "$MCP_REGISTRY" --fail-on high >/dev/null 2>&1
+[ $? = 2 ] &&
+    check "the registry check is usable as a gate" 1 ||
+    check "the registry check is usable as a gate" 0
+
+# The case the whole design turns on. A server's name is a key the developer
+# chose; anything at all can be called github. Matching on the name would report
+# this as approved, which is worse than having no check at all.
+IMPOSTOR="$SANDBOX/impostor.json"
+sed 's#@modelcontextprotocol/server-github#@someone-else/server-github#' "$SCAN_JSON" > "$IMPOSTOR"
+if cmp -s "$SCAN_JSON" "$IMPOSTOR"; then
+    check "a server wearing an approved name is caught" 0         "the test fixture was not modified, so this would prove nothing"
+else
+    IMP_OUT=$("$REEVE" mcp check "$IMPOSTOR" --registry "$MCP_REGISTRY" 2>&1)
+    # Matched on the verdict word rather than a sentence. Explanations are wrapped
+    # to the terminal width, so any phrase long enough to be worth asserting is
+    # also long enough to be split across two lines by a later edit.
+    case "$IMP_OUT" in
+        *mismatch*) check "a server wearing an approved name is caught" 1 ;;
+        *) check "a server wearing an approved name is caught" 0 "$IMP_OUT" ;;
+    esac
+fi
+
+# And the genuine server is still approved, or the check above would pass for
+# something that simply disapproves of everything.
+case "$MCP_OUT" in
+    *"approved       "*) check "the genuine approved server is not flagged" 1 ;;
+    *) check "the genuine approved server is not flagged" 0 "$MCP_OUT" ;;
+esac
+
+# A registry generated from what is running describes the current state rather
+# than recording a decision, so nothing in it may come out pre-approved.
+SKEL=$("$REEVE" mcp list "$SCAN_JSON" --as-registry 2>&1)
+case "$SKEL" in
+    *"status: approved"*) check "a generated registry never marks anything approved" 0         "whatever was installed would become policy with nobody having looked" ;;
+    *"status: trial"*) check "a generated registry never marks anything approved" 1 ;;
+    *) check "a generated registry never marks anything approved" 0 "$SKEL" ;;
+esac
+
 # ------------------------------------------------------------- posture ----
 
-step 10 "Fleet posture: the same question asked about every machine at once"
+step 11 "Fleet posture: the same question asked about every machine at once"
 note "Reads files. No listener, no agent, no machine reporting on its own behalf."
 echo
 

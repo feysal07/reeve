@@ -38,7 +38,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 64 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 70 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -197,6 +197,50 @@ clean bill of health.
 On Windows, write the files with `Out-File -Encoding utf8`. PowerShell's `>` redirect
 writes UTF-16, which no JSON parser reads; `reeve posture` says so plainly if it finds
 one.
+
+### 7. MCP servers against an approved list
+
+Every MCP server extends what an agent can touch into another system, holding that
+system's credentials, and the list of them is assembled from the developer's home
+directory and from whatever repository happens to be open. `reeve scan` says what is
+configured; it does not know what anyone agreed to.
+
+```
+reeve mcp list  ./reports --as-registry > registry.yaml    # start from what is running
+reeve mcp check ./reports --registry registry.yaml --fail-on high
+```
+
+`list --as-registry` marks everything **trial**, never approved. A file generated from
+whatever happened to be installed describes the current state; it does not record a
+decision about it, and emitting it as approved would turn one into the other with
+nobody having looked.
+
+**Give every entry a command or a URL.** A server's name is a key the developer chose
+in their own configuration file: nothing registers it, nothing checks it, and any
+server at all can be called `github`. A check that matches on the name is asking the
+governed party to assert its own compliance. `reeve mcp check` matches on command or
+URL first, reports a name-only match as exactly that rather than as approval, and
+reserves its loudest verdict — `mismatch` — for a server using the name of an approved
+entry while running something else.
+
+`denied` entries are kept rather than deleted. An entry that is simply absent looks
+like one nobody has looked at, and the next person re-runs a review that already
+happened.
+
+### 8. Prove the decision log has not been edited
+
+```
+reeve audit seal   /var/log/reeve/decisions.jsonl   # from cron, hourly
+reeve audit verify /var/log/reeve/decisions.jsonl   # exits 2 if anything changed
+```
+
+A seal records how many lines the log held and what they hashed to; each seal names the
+one before it. Verifying catches a line changed, inserted, reordered or deleted, and
+several seals localise a break to the interval between two of them. Nothing written
+since the last seal is covered, and a log that has never been sealed reports as *not
+verified* rather than as clean. Keep the `.chain` file somewhere the machine writing
+the log cannot reach. See [ENFORCEMENT.md](ENFORCEMENT.md) for what a seal does and
+does not prove.
 
 ## Two things to verify yourself
 

@@ -1,0 +1,59 @@
+# The MCP servers this organisation has an opinion about.
+#
+# Write the first version of this from what is already running:
+#
+#   reeve mcp list ./reports --as-registry > registry.yaml
+#
+# then review each entry, because that command marks everything as trial. A list
+# generated from whatever happened to be installed describes the current state; it
+# does not record a decision about it, and emitting it as approved would turn one
+# into the other with nobody having looked.
+#
+# Check reality against it:
+#
+#   reeve mcp check ./reports --registry registry.yaml --fail-on high
+#
+# A server's name is not its identity. The name is a key the developer chose in their
+# own configuration file: nothing registers it, nothing checks it, and any server at
+# all can be called "github". So give every entry a command or a URL. An entry with
+# neither can only ever be matched by name, which is the governed party asserting its
+# own compliance, and `reeve mcp check` reports such a match as name-only rather than
+# as approval.
+version: 1
+owner: platform-team
+
+servers:
+  - name: github
+    owner: platform-team
+    status: approved
+    reviewed: 2026-08-01
+    command: ["npx", "-y", "@modelcontextprotocol/server-github"]
+    notes: >-
+      Read and write on repositories the token can reach. The token is the
+      developer's own, so this can do whatever they can do.
+
+  - name: internal
+    owner: platform-team
+    status: approved
+    reviewed: 2026-08-01
+    url: https://mcp.corp.internal
+
+  - name: jira
+    owner: delivery-tools
+    # Trial rather than approved, and it matters that those are different words.
+    # "We are still deciding" left unrecorded becomes "approved" by the passage of
+    # time, and nobody can point at the moment it happened.
+    status: trial
+    reviewed: 2026-09-10
+    command: ["mcp-jira"]
+
+  - name: postgres-prod
+    owner: data-team
+    status: denied
+    reviewed: 2026-07-15
+    command: ["mcp-server-postgres", "--dsn", "postgres://reporting@db.internal:5432/payments"]
+    notes: >-
+      Refused: production credentials, in a file checked into the repository, giving
+      an agent direct query access to the payments database. Kept here rather than
+      deleted. An entry that is simply absent looks like one nobody has looked at,
+      and the next person re-runs a review that already happened.

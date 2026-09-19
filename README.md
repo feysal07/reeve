@@ -73,7 +73,7 @@ Builds for Linux, macOS and Windows on the
 build provenance. One static binary, no runtime, no dependencies.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 64 checks against it. The
+sandbox of four badly configured agents and asserts 70 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 
@@ -186,6 +186,19 @@ machines has an owner and an audit trail, and a service whose job is to accept c
 about security state from the machines being judged would need both built again. Every
 file is accounted for, including the ones it could not read, and a percentage always
 names the population it is a percentage of.
+
+`reeve mcp` reconciles the MCP servers agents are configured with against the ones you
+have approved:
+
+```
+reeve mcp list  ./reports --as-registry > registry.yaml
+reeve mcp check ./reports --registry registry.yaml --fail-on high
+```
+
+A server's name is a key the developer chose in their own file — anything at all can be
+called `github` — so entries are matched on their command or URL, a name-only match is
+reported as exactly that rather than as approval, and a server using an approved name
+while running something else gets the loudest verdict there is.
 
 `reeve collect` receives what agents report over OpenTelemetry, in either wire
 encoding, normalises the three

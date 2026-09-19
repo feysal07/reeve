@@ -190,17 +190,13 @@ func Load(dir string) ([]Loaded, []Unreadable, error) {
 		// rejects it, so without this a fleet collected on Windows reports every
 		// machine as unreadable — the feature would not work at all on the platform
 		// where reports are most likely to be gathered by a script.
-		body, err := config.ReadFile(path)
+		body, err := readOne(path)
 		if err != nil {
 			bad = append(bad, Unreadable{Path: rel(path), Reason: err.Error()})
 			return nil
 		}
-		var r model.Report
-		if err := json.Unmarshal(body, &r); err != nil {
-			bad = append(bad, Unreadable{Path: rel(path), Reason: describeJSONError(body, err)})
-			return nil
-		}
-		if reason := checkReport(r); reason != "" {
+		r, reason := decodeReport(body)
+		if reason != "" {
 			bad = append(bad, Unreadable{Path: rel(path), Reason: reason})
 			return nil
 		}
@@ -234,6 +230,44 @@ func describeJSONError(body []byte, err error) string {
 		}
 	}
 	return "not valid JSON: " + err.Error()
+}
+
+// readOne reads a report file through config.ReadFile, which strips a UTF-8 byte
+// order mark. PowerShell writes one on every redirect that produces UTF-8, and Go's
+// JSON parser rejects it, so without this a fleet collected on Windows reports every
+// machine as unreadable — the feature would not work at all on the platform where
+// reports are most likely to be gathered by a script.
+func readOne(path string) ([]byte, error) { return config.ReadFile(path) }
+
+// decodeReport turns bytes into a report, or says why they are not one. Shared by the
+// directory walk and by LoadFile, so a single report is held to exactly the same
+// checks as one found in a directory.
+func decodeReport(body []byte) (model.Report, string) {
+	var r model.Report
+	if err := json.Unmarshal(body, &r); err != nil {
+		return model.Report{}, describeJSONError(body, err)
+	}
+	if reason := checkReport(r); reason != "" {
+		return model.Report{}, reason
+	}
+	return r, ""
+}
+
+// LoadFile reads a single scan report.
+//
+// It returns either a report or the reason it is not one, never both and never
+// neither. A caller that wants a fleet uses Load; this exists for the commands that
+// take one machine's report or a directory of them interchangeably.
+func LoadFile(path string) (*Loaded, *Unreadable, error) {
+	body, err := readOne(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	r, reason := decodeReport(body)
+	if reason != "" {
+		return nil, &Unreadable{Path: path, Reason: reason}, nil
+	}
+	return &Loaded{Path: path, Report: r}, nil, nil
 }
 
 // checkReport decides whether a decoded document is a scan report this build
