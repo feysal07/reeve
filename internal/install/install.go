@@ -28,6 +28,7 @@
 package install
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -261,8 +262,7 @@ func backup(path, stateDir string) (string, error) {
 		}
 		return "", err
 	}
-	dest := filepath.Join(stateDir, "backups", strings.ReplaceAll(
-		strings.TrimPrefix(filepath.ToSlash(path), "/"), "/", "_")+".before-reeve")
+	dest := filepath.Join(stateDir, "backups", backupName(path))
 	if _, err := os.Stat(dest); err == nil {
 		return dest, nil
 	}
@@ -395,4 +395,40 @@ func hookKeyFor(in agentInstaller) string {
 	default:
 		return "PreToolUse"
 	}
+}
+
+// backupName turns a full path into a filename that is legal everywhere.
+//
+// The obvious version of this replaced separators with underscores and kept the rest,
+// which on Windows produced "C:_Users_...". A colon in a filename is not an error
+// there: it names an NTFS alternate data stream, so the write succeeded, the reported
+// path could be read back, and what landed on disk was a zero-byte file called "C"
+// with the backup hidden inside it. Invisible to Explorer, to ls, and to any copy onto
+// another filesystem — a backup that exists only to whoever already knows it is there.
+//
+// The short hash keeps two files with the same base name apart, which matters because
+// every agent calls its configuration settings.json.
+func backupName(path string) string {
+	sum := sha256.Sum256([]byte(filepath.ToSlash(path)))
+	return fmt.Sprintf("%s-%x.before-reeve", safeFilename(filepath.Base(path)), sum[:4])
+}
+
+// safeFilename keeps only characters that are legal in a filename on every platform
+// this runs on. Anything else, including the colon that caused the trouble, becomes an
+// underscore.
+func safeFilename(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "config"
+	}
+	return b.String()
 }

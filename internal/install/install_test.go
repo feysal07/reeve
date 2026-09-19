@@ -390,6 +390,37 @@ func TestTheBackupIsTakenOnceAndKeepsTheOriginal(t *testing.T) {
 		t.Fatal("the backup is not the original content")
 	}
 
+	// The backup has to be a real, visible file. Reading the path back is not
+	// enough on Windows: a path containing a colon names an NTFS alternate data
+	// stream, so the write succeeds, the read succeeds, and what is on disk is a
+	// zero-byte file with the content hidden inside it. That shipped, and this
+	// test passed the whole time because it only ever read the path it was given.
+	entries, err := os.ReadDir(filepath.Dir(backupPath))
+	if err != nil {
+		t.Fatalf("the backups directory cannot be listed: %v", err)
+	}
+	var visible bool
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if filepath.Join(filepath.Dir(backupPath), e.Name()) == backupPath {
+			if info.Size() == 0 {
+				t.Errorf("the backup is a zero-byte file; the content went somewhere else")
+			}
+			visible = true
+		}
+	}
+	if !visible {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("the backup is not in the directory listing. Listed: %v, expected %s",
+			names, filepath.Base(backupPath))
+	}
+
 	if _, err := Run(opts, false); err != nil {
 		t.Fatal(err)
 	}
