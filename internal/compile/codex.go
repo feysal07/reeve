@@ -176,6 +176,10 @@ func (c *codexCLI) Compile(p *policy.Policy, platform string) (Result, error) {
 
 // compileRule renders one rule as Codex prefix rules and read denials.
 func (c *codexCLI) compileRule(r policy.Rule) (Coverage, []codexPrefixRule, []string) {
+	if countsRepetitions(r) {
+		return repeatCoverage(r), nil, nil
+	}
+
 	cov := Coverage{RuleID: r.ID, Decision: r.Decision}
 
 	if r.Decision == policy.EffectAllow {

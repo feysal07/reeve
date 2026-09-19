@@ -569,6 +569,32 @@ printf '%s' "$PAYLOAD" | "$REEVE" guard --agent gemini --policy "$POLICY" >/dev/
 [ $? = 2 ] && check "an agent name Reeve does not know denies rather than guessing a reply shape" 1 ||
     check "an agent name Reeve does not know denies rather than guessing a reply shape" 0
 
+# A circuit breaker, which is the only rule that matches on what already happened.
+# It reads the guard's own decision log, so it is also the only one with a
+# prerequisite: without a log it refuses rather than assuming nothing has happened.
+LOOP_POLICY="$REPO/examples/policy/loop-breaker.yaml"
+LOOP_LOG="$SANDBOX/loop-decisions.jsonl"
+LOOP_PAYLOAD='{"session_id":"loop","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://api.example/retry"}}'
+
+i=1
+while [ $i -le 21 ]; do
+    printf '%s' "$LOOP_PAYLOAD" |
+        "$REEVE" guard --agent claude-code --policy "$LOOP_POLICY" --log "$LOOP_LOG" >/dev/null 2>&1
+    LOOP_EXIT=$?
+    i=$((i + 1))
+done
+[ "$LOOP_EXIT" = "2" ] &&
+    check "a command repeated past the ceiling is stopped" 1 ||
+    check "a command repeated past the ceiling is stopped" 0 "exit was $LOOP_EXIT after 21 calls"
+
+# The same rule, with nothing to count from. An absent history is not evidence that
+# nothing happened, so it must refuse rather than wave the action through.
+printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$LOOP_POLICY" >/dev/null 2>&1
+[ $? = 2 ] &&
+    check "a counting rule with no log to count from denies, rather than assuming quiet" 1 ||
+    check "a counting rule with no log to count from denies, rather than assuming quiet" 0
+
+
 # ------------------------------------------------------------ telemetry ----
 
 step 6 "Telemetry: receive what agents report, normalise it, price it"

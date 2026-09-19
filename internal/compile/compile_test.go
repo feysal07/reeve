@@ -449,3 +449,56 @@ func TestBaselinePolicyCompilesForEveryAgent(t *testing.T) {
 		}
 	}
 }
+
+// TestACountingRuleIsNeverEmittedNatively.
+//
+// This is the one silent widening this package could still produce. A rule saying
+// "deny curl once it has run ten times" has three conditions, two of which every
+// compiler can express. Emitting those two alone produces "deny curl", which is a
+// stricter rule than anyone wrote, and reporting it as native claims it holds without
+// the guard. It would hold. It would be the wrong rule.
+//
+// Before this test existed, Gemini compiled exactly that and called it native.
+func TestACountingRuleIsNeverEmittedNatively(t *testing.T) {
+	p := mustParse(t, `
+version: 1
+settings:
+  guard:
+    enabled: true
+rules:
+  - id: shell-loop
+    decision: deny
+    match:
+      kind: [shell]
+      commandContains: ["curl"]
+      repeated: {same: tool, within: 5m, moreThan: 10}
+`)
+	for _, c := range All() {
+		res, err := c.Compile(p, "linux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Coverage) != 1 {
+			t.Fatalf("%s: coverage = %d entries, want 1", c.Agent(), len(res.Coverage))
+		}
+		cov := res.Coverage[0]
+
+		if cov.Status != StatusGuardOnly {
+			t.Errorf("%s: status = %q, want guard-only: the count cannot be expressed, and "+
+				"emitting the rest changes what the rule means", c.Agent(), cov.Status)
+		}
+		if len(cov.Emitted) != 0 {
+			t.Errorf("%s: emitted %v, which is the rule without its count", c.Agent(), cov.Emitted)
+		}
+		if !strings.Contains(cov.Reason, "count") {
+			t.Errorf("%s: the reason does not mention counting: %q", c.Agent(), cov.Reason)
+		}
+		// The parts that can be expressed must not reach the file on their own.
+		for _, a := range res.Artifacts {
+			if strings.Contains(string(a.Content), "curl") {
+				t.Errorf("%s: the command reached %s without the condition that limits it",
+					c.Agent(), a.Filename)
+			}
+		}
+	}
+}

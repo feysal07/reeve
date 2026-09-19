@@ -6,7 +6,12 @@
 // payload into an Action is the job of internal/hook.
 package policy
 
-import "github.com/feysal07/reeve/internal/model"
+import (
+	"strings"
+	"time"
+
+	"github.com/feysal07/reeve/internal/model"
+)
 
 // Kind is what an action fundamentally does, independent of which agent is doing it
 // or what that agent calls the tool.
@@ -71,6 +76,63 @@ type Action struct {
 	// Prompt is the user's message, for events that carry one. It is never logged
 	// or forwarded by the guard; it exists so a rule can inspect it locally.
 	Prompt string `json:"-"`
+
+	// History is what this machine has done recently, read from the guard's own
+	// decision log so that a rule can match on a pattern rather than on one action.
+	//
+	// Nil means it could not be read, which is deliberately not the same as nothing
+	// having happened. A rule that counts repetitions and cannot count denies; see
+	// Policy.Evaluate. It is never serialised: the decision log is an input to this
+	// now, and writing the history back into it would grow every line by the size of
+	// everything before it.
+	History *History `json:"-"`
+}
+
+// History is a bounded window of what came before, most recent first.
+type History struct {
+	Records []RecentAction
+}
+
+// RecentAction is one earlier decision, reduced to what a rule can match on.
+type RecentAction struct {
+	Time      time.Time
+	SessionID string
+	Tool      string
+	Command   string
+}
+
+// Count returns how many records in the window look like this action, under the
+// definition of "like" the rule asked for.
+func (h *History) Count(a Action, m RepeatedMatch, now time.Time) int {
+	if h == nil {
+		return 0
+	}
+	cutoff := now.Add(-time.Duration(m.Within))
+	n := 0
+	for _, r := range h.Records {
+		if r.Time.Before(cutoff) {
+			// Records are newest first, so the first one outside the window ends it.
+			break
+		}
+		if m.Scope != "machine" && r.SessionID != a.SessionID {
+			continue
+		}
+		switch m.Same {
+		case "command":
+			// An empty command would make every non-shell action look identical, so
+			// it never counts towards a command repeat.
+			if a.Command == "" || r.Command != a.Command {
+				continue
+			}
+		case "any":
+		default:
+			if !strings.EqualFold(r.Tool, a.ToolName) {
+				continue
+			}
+		}
+		n++
+	}
+	return n
 }
 
 // Effect is what policy decided.

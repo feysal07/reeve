@@ -2,8 +2,8 @@ package policy
 
 import (
 	"fmt"
-
 	"strings"
+	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
@@ -68,7 +68,56 @@ type Match struct {
 	// happens to mention. Use "unknown" to catch targets that could not be
 	// resolved, which is the honest way to be cautious.
 	Environment []string `yaml:"environment,omitempty"`
+
+	// Repeated matches on what has already happened rather than on the action in
+	// front of it. It is the only condition here that is not a pure function of one
+	// request, and it exists for the failure that costs the most and looks the least
+	// like an attack: an agent stuck retrying, doing a reasonable thing several
+	// hundred times.
+	Repeated *RepeatedMatch `yaml:"repeated,omitempty"`
 }
+
+// RepeatedMatch counts how often something like this has just happened.
+type RepeatedMatch struct {
+	// Same says what counts as "like this": the same tool, the same command line,
+	// or any action at all. Empty means tool.
+	Same string `yaml:"same,omitempty"`
+	// Within is how far back to look, as a Go duration such as "5m".
+	Within Duration `yaml:"within"`
+	// MoreThan is the count the window must exceed before the rule matches. The
+	// action being decided is not counted: the rule fires on the one that would
+	// take the total past the line.
+	MoreThan int `yaml:"moreThan"`
+	// Scope limits the count to this agent session, or opens it to everything the
+	// machine has done. Empty means session.
+	Scope string `yaml:"scope,omitempty"`
+}
+
+// Duration is a Go duration that parses from YAML as a string.
+type Duration time.Duration
+
+// UnmarshalYAML parses "5m" and friends, rather than a bare number of nanoseconds
+// nobody would write on purpose.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return fmt.Errorf("duration must be a string like \"5m\": %w", err)
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		// The likeliest mistake is a bare number, which YAML happily hands over as a
+		// string and which means nothing without a unit. Showing the shape costs a
+		// line and saves a search.
+		return fmt.Errorf("%q is not a duration: write it with a unit, like \"5m\" or \"30s\" (%w)", s, err)
+	}
+	if parsed <= 0 {
+		return fmt.Errorf("duration %q must be positive", s)
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
+func (d Duration) String() string { return time.Duration(d).String() }
 
 // Load reads and validates a policy file.
 func Load(path string) (*Policy, error) {
@@ -150,6 +199,25 @@ func (p *Policy) Evaluate(a Action) Decision {
 	}
 
 	for _, r := range p.Rules {
+		// A rule that counts repetitions and has nothing to count with is not a rule
+		// that failed to match. It is a rule nobody can evaluate, and an absent
+		// history is not evidence that nothing happened.
+		//
+		// This is the same asymmetry the guard applies to policy files, one level
+		// down. An absent policy allows, because there is no expressed intent to
+		// violate. An input that a rule which does exist depends on, and which cannot
+		// be read, denies.
+		if r.Match.Repeated != nil && a.History == nil {
+			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+				d.Effect = EffectDeny
+				d.RuleID = r.ID
+				d.Reason = "This rule counts how often something has just happened, and " +
+					"the record it counts from could not be read. Refusing rather than " +
+					"assuming nothing happened. Give the guard a decision log with --log, " +
+					"or set REEVE_DECISION_LOG."
+			}
+			continue
+		}
 		if !r.Match.matches(a) {
 			continue
 		}
@@ -197,6 +265,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if len(m.MCPTool) > 0 && !anyEqualFold(m.MCPTool, a.MCPTool) {
+		return false
+	}
+	if m.Repeated != nil && !m.Repeated.matches(a) {
 		return false
 	}
 	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {
@@ -359,4 +430,44 @@ func anyPathGlob(patterns []string, paths []string) bool {
 		}
 	}
 	return false
+}
+
+// matches reports whether this has happened often enough, recently enough, to count.
+//
+// The action being decided is not itself in the history, so the comparison is against
+// the number that came before: the rule fires on the call that would take the total
+// past the line rather than one call later.
+func (r RepeatedMatch) matches(a Action) bool {
+	if r.MoreThan <= 0 || r.Within <= 0 {
+		return false
+	}
+	return a.History.Count(a, r, time.Now()) >= r.MoreThan
+}
+
+// NeedsHistory reports whether any rule matches on what came before.
+//
+// Most policies do not, and the guard runs in front of a waiting agent, so the cost of
+// reading a day's decisions should be paid only by the policies that asked for it.
+func (p *Policy) NeedsHistory() bool {
+	for _, r := range p.Rules {
+		if r.Match.Repeated != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// HistoryWindow returns the longest window any rule asks for, which is how far back
+// the guard has to look to answer all of them.
+func (p *Policy) HistoryWindow() time.Duration {
+	var longest time.Duration
+	for _, r := range p.Rules {
+		if r.Match.Repeated == nil {
+			continue
+		}
+		if w := time.Duration(r.Match.Repeated.Within); w > longest {
+			longest = w
+		}
+	}
+	return longest
 }

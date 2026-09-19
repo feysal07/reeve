@@ -180,6 +180,10 @@ func (g *geminiCLI) Compile(p *policy.Policy, platform string) (Result, error) {
 
 // compileRule renders one policy rule as policy engine rules.
 func (g *geminiCLI) compileRule(r policy.Rule) (Coverage, []geminiRule, []string) {
+	if countsRepetitions(r) {
+		return repeatCoverage(r), nil, nil
+	}
+
 	cov := Coverage{RuleID: r.ID, Decision: r.Decision}
 
 	if r.Decision == policy.EffectAllow {

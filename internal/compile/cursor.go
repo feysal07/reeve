@@ -72,6 +72,13 @@ func (c *cursorCLI) Compile(p *policy.Policy, platform string) (Result, error) {
 	res := Result{Agent: c.Agent()}
 
 	for _, r := range p.Rules {
+		// A counting rule is guard-only everywhere, for a reason that would still
+		// hold if Cursor had a rules file, so it gets the accurate explanation
+		// rather than this compiler's blanket one.
+		if countsRepetitions(r) {
+			res.Coverage = append(res.Coverage, repeatCoverage(r))
+			continue
+		}
 		res.Coverage = append(res.Coverage, Coverage{
 			RuleID:   r.ID,
 			Decision: r.Decision,

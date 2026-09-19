@@ -151,6 +151,10 @@ func applyClaudeSettings(s *claudeSettings, perms **claudePermissions, set *poli
 
 // compileRule renders one rule as Claude Code permission entries.
 func (c *claudeCode) compileRule(r policy.Rule) (Coverage, []string, []string) {
+	if countsRepetitions(r) {
+		return repeatCoverage(r), nil, nil
+	}
+
 	cov := Coverage{RuleID: r.ID, Decision: r.Decision}
 
 	if r.Decision == policy.EffectAllow {

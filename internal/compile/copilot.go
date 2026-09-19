@@ -179,6 +179,10 @@ func toCopilotMatcher(ref policy.MCPRef) copilotMCPMatcher {
 // differ from Claude Code's, which is exactly the sort of difference an operator
 // should never have to hold in their head.
 func (c *copilotCLI) compileRule(r policy.Rule) (Coverage, []string, []string) {
+	if countsRepetitions(r) {
+		return repeatCoverage(r), nil, nil
+	}
+
 	cov := Coverage{RuleID: r.ID, Decision: r.Decision}
 
 	if r.Decision == policy.EffectAllow {

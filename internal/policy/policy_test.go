@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/feysal07/reeve/internal/model"
+	"time"
 )
 
 func mustParse(t *testing.T, src string) *Policy {
@@ -502,5 +503,155 @@ func TestBaselineStillCatchesTheDangerousCases(t *testing.T) {
 		if got := p.Evaluate(Action{Kind: KindShell, Command: c.cmd}).Effect; got != c.want {
 			t.Errorf("%q = %q, want %q", c.cmd, got, c.want)
 		}
+	}
+}
+
+// makeHistory builds a window of identical earlier calls.
+func makeHistory(n int, session, tool, command string, age time.Duration) *History {
+	h := &History{}
+	for i := 0; i < n; i++ {
+		h.Records = append(h.Records, RecentAction{
+			Time:      time.Now().Add(-age),
+			SessionID: session,
+			Tool:      tool,
+			Command:   command,
+		})
+	}
+	return h
+}
+
+func repeatPolicy(t *testing.T) *Policy {
+	t.Helper()
+	p, err := Parse([]byte(`
+version: 1
+rules:
+  - id: loop
+    decision: deny
+    reason: a retry loop
+    match:
+      repeated:
+        same: tool
+        within: 5m
+        moreThan: 10
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestRepeatFiresOnTheCallThatCrossesTheLine, not one call later. The action being
+// decided is not in the history, so the count compared against is what came before.
+func TestRepeatFiresOnTheCallThatCrossesTheLine(t *testing.T) {
+	p := repeatPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+
+	act.History = makeHistory(9, "s1", "Bash", "x", time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("nine earlier calls: effect = %q, want allow", d.Effect)
+	}
+
+	act.History = makeHistory(10, "s1", "Bash", "x", time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectDeny {
+		t.Errorf("ten earlier calls: effect = %q, want deny", d.Effect)
+	}
+}
+
+// TestRepeatIsScopedToTheSession by default: one developer's loop must not refuse
+// another session's first call.
+func TestRepeatIsScopedToTheSession(t *testing.T) {
+	p := repeatPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "mine"}
+	act.History = makeHistory(50, "someone-else", "Bash", "x", time.Minute)
+
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q: another session's history was counted against this one", d.Effect)
+	}
+}
+
+// TestRepeatOnlyCountsInsideTheWindow. Without this a rule would fire on activity from
+// hours ago and read as broken to whoever hit it.
+func TestRepeatOnlyCountsInsideTheWindow(t *testing.T) {
+	p := repeatPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+	act.History = makeHistory(50, "s1", "Bash", "x", 2*time.Hour)
+
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q: records older than the window were counted", d.Effect)
+	}
+}
+
+// TestUnreadableHistoryDenies is the asymmetry this feature turns on.
+//
+// An absent policy allows, because there is no expressed intent to violate. An input
+// that a rule which does exist depends on, and which cannot be read, denies: an empty
+// history is not evidence that nothing happened.
+func TestUnreadableHistoryDenies(t *testing.T) {
+	p := repeatPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+	act.History = nil
+
+	d := p.Evaluate(act)
+	if d.Effect != EffectDeny {
+		t.Fatalf("effect = %q, want deny when the history cannot be read", d.Effect)
+	}
+	if !strings.Contains(d.Reason, "could not be read") {
+		t.Errorf("the reason does not say why: %q", d.Reason)
+	}
+
+	// An empty history is a different thing and must allow: nothing has run yet.
+	act.History = &History{}
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("an empty history denied; nothing having happened is not a refusal")
+	}
+}
+
+// TestRepeatBySameCommand distinguishes a tool used often from one command retried.
+func TestRepeatBySameCommand(t *testing.T) {
+	p, err := Parse([]byte(`
+version: 1
+rules:
+  - id: same-command
+    decision: ask
+    match:
+      repeated:
+        same: command
+        within: 5m
+        moreThan: 3
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash",
+		SessionID: "s1", Command: "curl https://api.example/retry"}
+
+	// The same tool, but different commands: ordinary work.
+	act.History = makeHistory(20, "s1", "Bash", "ls", time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q: different commands were treated as a repeat", d.Effect)
+	}
+
+	act.History = makeHistory(4, "s1", "Bash", "curl https://api.example/retry", time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectAsk {
+		t.Errorf("effect = %q, want ask when the same command repeats", d.Effect)
+	}
+}
+
+// TestDurationMustBeWritten: "within: 300" is a number of nanoseconds nobody meant, so
+// a duration has to be a string.
+func TestDurationMustBeWritten(t *testing.T) {
+	_, err := Parse([]byte(`
+version: 1
+rules:
+  - id: bad
+    decision: deny
+    match: {repeated: {within: 300, moreThan: 2}}
+`))
+	if err == nil {
+		t.Fatal("a bare number was accepted as a duration")
+	}
+	if !strings.Contains(err.Error(), "5m") {
+		t.Errorf("the error does not show the expected form: %v", err)
 	}
 }

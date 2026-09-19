@@ -495,6 +495,25 @@ $null = ($payload | & $reeve guard --agent gemini --policy $policy 2>&1)
 Check "an agent name Reeve does not know denies rather than guessing a reply shape" `
     ($LASTEXITCODE -eq 2) "exit was $LASTEXITCODE"
 
+# A circuit breaker, which is the only rule that matches on what already happened.
+# It reads the guard's own decision log, so it is also the only one with a
+# prerequisite: without a log it refuses rather than assuming nothing has happened.
+$loopPolicy = Join-Path $repo "examples\policy\loop-breaker.yaml"
+$loopLog = Join-Path $Sandbox "loop-decisions.jsonl"
+$loopPayload = '{"session_id":"loop","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://api.example/retry"}}'
+
+foreach ($i in 1..21) {
+    $null = ($loopPayload | & $reeve guard --agent claude-code --policy $loopPolicy --log $loopLog 2>&1)
+    $loopExit = $LASTEXITCODE
+}
+Check "a command repeated past the ceiling is stopped" ($loopExit -eq 2) "exit was $loopExit after 21 calls"
+
+# The same rule, with nothing to count from. An absent history is not evidence that
+# nothing happened, so it must refuse rather than wave the action through.
+$null = ($loopPayload | & $reeve guard --agent claude-code --policy $loopPolicy 2>&1)
+Check "a counting rule with no log to count from denies, rather than assuming quiet" `
+    ($LASTEXITCODE -eq 2) "exit was $LASTEXITCODE"
+
 # ------------------------------------------------------------ telemetry ----
 
 Step 6 "Telemetry: receive what agents report, normalise it, price it"

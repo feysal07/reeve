@@ -260,6 +260,48 @@ address, a path to the conversation transcript and, for a file read, the entire
 contents of the file. None of it is read into the action, because the guard writes a
 decision log and anything the action carries lands on a developer's disk.
 
+## Circuit breakers: matching on what already happened
+
+Every rule above is a pure function of the action in front of it. One is not.
+
+```yaml
+- id: runaway-tool-loop
+  decision: ask
+  match:
+    repeated:
+      same: tool        # tool | command | any
+      within: 10m
+      moreThan: 50
+      scope: session    # session | machine
+```
+
+This is for the failure that costs the most and looks least like an attack: an agent
+stuck retrying, doing a reasonable thing several hundred times. Nothing about the four
+hundredth call is suspicious on its own, which is exactly why no other rule catches it.
+
+The count comes from the guard's own decision log, so a counting rule has a
+prerequisite the others do not: run the guard with `--log`, or set
+`REEVE_DECISION_LOG`. `reeve policy check` says so when a policy needs it.
+
+**A rule that cannot count refuses.** This is the same asymmetry as the policy file one
+level up, and it points the other way for a reason. An absent *policy* allows, because
+there is no expressed intent to violate. An input that a rule which *does* exist
+depends on, and which cannot be read, denies — because an empty history is not evidence
+that nothing happened. A log that simply does not exist yet is treated as empty rather
+than unreadable: nothing has run because nothing has run.
+
+The rule fires on the call that would take the total past the line, not one call later:
+the action being decided is not itself counted.
+
+**No agent can express this natively**, so a counting rule is always guard-only, and
+never partial. Emitting the rest of the match without the count produces a different
+and stricter rule — "deny curl after fifty tries" would compile to "deny curl" — so the
+compilers emit nothing for it and say why.
+
+See [examples/policy/loop-breaker.yaml](../examples/policy/loop-breaker.yaml). It is
+deliberately not in the baseline: the baseline is the first thing anyone deploys and
+must work without a decision log.
+
 ## Knowing what an action actually targets
 
 A rule can only be as good as what it can see. Matching the text "--context prod"

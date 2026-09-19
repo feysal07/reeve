@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/feysal07/reeve/internal/model"
@@ -48,6 +49,16 @@ func runPolicyCheck(args []string) error {
 		fmt.Printf("  %-28s %-5s %s\n", r.ID, r.Decision, r.Description)
 	}
 
+	if p.NeedsHistory() {
+		// A prerequisite discovered only when everything starts being denied is a
+		// prerequisite nobody thanks you for.
+		fmt.Print(`
+  This policy counts how often things have already happened, so the guard needs
+  a decision log to count from. Run it with --log, or set REEVE_DECISION_LOG.
+  Without one, the rules that count refuse rather than assume nothing happened.
+`)
+	}
+
 	// A rule that matches nothing is almost always a mistake, and it is invisible
 	// until someone expects it to fire.
 	for _, r := range p.Rules {
@@ -58,10 +69,15 @@ func runPolicyCheck(args []string) error {
 	return nil
 }
 
+// isEmptyMatch reports whether a rule narrows nothing and so applies to everything.
+//
+// Compared against the zero value rather than by listing the fields. The list version
+// omitted Environment, so a rule matching only on which cluster an action reaches was
+// warned about as unconditioned, and it would have omitted Repeated for the same
+// reason: a check that has to be updated whenever the type grows is a check that is
+// quietly wrong between the two commits.
 func isEmptyMatch(m policy.Match) bool {
-	return len(m.Agents) == 0 && len(m.Kinds) == 0 && len(m.Tools) == 0 &&
-		len(m.Command) == 0 && len(m.CommandContains) == 0 && len(m.Path) == 0 &&
-		len(m.URL) == 0 && len(m.MCPServer) == 0 && len(m.MCPTool) == 0
+	return reflect.DeepEqual(m, policy.Match{})
 }
 
 func runPolicyTest(args []string) error {
@@ -99,6 +115,11 @@ func runPolicyTest(args []string) error {
 	if *url != "" {
 		act.URLs = []string{*url}
 	}
+	// One hypothetical action, with nothing before it. An empty history is the
+	// honest reading of "evaluate this on its own", and it is not the same as the
+	// nil the guard uses for a history it could not read: that one refuses.
+	act.History = &policy.History{}
+
 	if *path != "" {
 		act.Paths = []string{*path}
 	}

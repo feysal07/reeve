@@ -191,3 +191,28 @@ func Summarise(c []Coverage) Summary {
 	}
 	return s
 }
+
+// countsRepetitions reports whether a rule matches on what came before rather than on
+// the action in front of it.
+//
+// No vendor's permission syntax can count. That makes such a rule guard-only, and
+// specifically not partial: emitting the rest of the match without the count produces
+// a rule that means something else. A loop breaker written as "deny curl after ten
+// tries" would compile to "deny curl", which is far stricter than anyone asked for and
+// would be reported as native, meaning it holds without the guard. It would hold, and
+// it would be the wrong rule.
+func countsRepetitions(r policy.Rule) bool { return r.Match.Repeated != nil }
+
+// repeatCoverage is the entry every compiler returns for such a rule.
+func repeatCoverage(r policy.Rule) Coverage {
+	return Coverage{
+		RuleID:   r.ID,
+		Decision: r.Decision,
+		Status:   StatusGuardOnly,
+		Reason: "This rule counts how often something has already happened, and no " +
+			"agent's own configuration can count. Emitting the rest of the match " +
+			"without the count would produce a different and stricter rule, so nothing " +
+			"is emitted. It holds only while the guard is running, and only where the " +
+			"guard has a decision log to count from.",
+	}
+}

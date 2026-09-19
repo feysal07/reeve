@@ -1,0 +1,57 @@
+# A circuit breaker for an agent that has stopped making progress.
+#
+# Kept out of baseline.yaml on purpose. Every other rule there is a pure function of
+# the action in front of it, so the guard can answer with nothing but the request. A
+# counting rule needs to know what came before, which it reads from the guard's own
+# decision log, and a rule that cannot count refuses rather than assuming nothing has
+# happened.
+#
+# That makes a decision log a prerequisite, and the baseline must not have one: it is
+# the first thing anyone deploys, and a default policy that denies everything until a
+# flag is set is a default policy that gets deleted.
+#
+# Use it alongside the baseline:
+#
+#   reeve guard --agent claude-code \
+#     --policy baseline.yaml \
+#     --log /var/log/reeve/decisions.jsonl
+#
+# and deploy this as a second policy, or merge the rule into your own.
+version: 1
+name: loop-breaker
+revision: 2026-09-19
+
+# Absent policy allows, so this file adds refusals and takes nothing away.
+default: allow
+
+rules:
+  - id: runaway-tool-loop
+    description: The same tool called over and over in one session
+    decision: ask
+    reason: >-
+      This tool has run more than fifty times in ten minutes in this session. That is
+      usually a retry loop rather than a task, and a loop keeps costing money for as
+      long as nobody is watching. Check the agent is making progress before letting it
+      continue.
+    # Fifty is deliberately high. A rule that fires during ordinary work gets turned
+    # off, and a loop breaker that is off is worse than none, because someone believes
+    # it is there.
+    match:
+      repeated:
+        same: tool
+        within: 10m
+        moreThan: 50
+
+  - id: identical-command-retry
+    description: The exact same command, again and again
+    decision: deny
+    reason: >-
+      This exact command has already run twenty times in five minutes. Repeating it
+      has not worked and is not going to; something upstream needs fixing first.
+    # Stricter than the rule above and deliberately so. A tool used fifty times may be
+    # doing fifty different things. The same command line twenty times is a loop.
+    match:
+      repeated:
+        same: command
+        within: 5m
+        moreThan: 20

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -92,6 +93,13 @@ func runGuard(args []string) error {
 	// than aborting: a registry that cannot be read must not stop work, because the
 	// policy still applies without it.
 	resolveEnvironment(&act, *resourcesPath)
+
+	// Read what came before, but only when a rule asks. Most policies never do, and
+	// every tool call would otherwise pay to open and parse a file that grows all
+	// day for an answer nothing consults.
+	if pol.NeedsHistory() {
+		act.History = readHistory(decisionLogPath(*logPath), pol.HistoryWindow())
+	}
 
 	decision := pol.Evaluate(act)
 	elapsed := time.Since(start)
@@ -304,4 +312,84 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 	}
 	defer f.Close()
 	f.Write(append(b, '\n'))
+}
+
+// historyLines bounds how much of the decision log is read.
+//
+// A busy day produces a lot of it, and the guard runs in front of a waiting agent. The
+// window in the policy decides what counts; this decides how far back it is worth
+// looking to find it, and a rule that wants a longer window than this holds gets a
+// truthful undercount rather than a slow answer.
+const historyLines = 5000
+
+// readHistory loads recent decisions, most recent first.
+//
+// A nil return means the history could not be read, which Evaluate treats as a reason
+// to refuse a rule that counts rather than as an empty history. The two are very
+// different and the type is what keeps them apart.
+func readHistory(path string, window time.Duration) *policy.History {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		// A log that does not exist yet is an empty history, not an unreadable one:
+		// nothing has happened because nothing has run. Any other error is a file
+		// that should be readable and is not, which must not read as quiet.
+		if os.IsNotExist(err) {
+			return &policy.History{}
+		}
+		return nil
+	}
+	defer f.Close()
+
+	// Kept in a ring so a long log costs one pass and a bounded amount of memory.
+	ring := make([]string, 0, historyLines)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		if len(ring) == historyLines {
+			ring = append(ring[1:], line)
+			continue
+		}
+		ring = append(ring, line)
+	}
+	if err := sc.Err(); err != nil {
+		return nil
+	}
+
+	cutoff := time.Now().Add(-window)
+	h := &policy.History{}
+	for i := len(ring) - 1; i >= 0; i-- {
+		var rec decisionRecord
+		if json.Unmarshal([]byte(ring[i]), &rec) != nil {
+			// A truncated final line from an interrupted write must not make the
+			// whole history unreadable, which would turn every counting rule into a
+			// refusal.
+			continue
+		}
+		if rec.Time.Before(cutoff) {
+			break
+		}
+		h.Records = append(h.Records, policy.RecentAction{
+			Time:      rec.Time,
+			SessionID: rec.SessionID,
+			Tool:      rec.Tool,
+			Command:   rec.Command,
+		})
+	}
+	return h
+}
+
+// decisionLogPath resolves the log the same way logDecision does, so the file a rule
+// counts from is always the file the guard is writing to.
+func decisionLogPath(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	return os.Getenv("REEVE_DECISION_LOG")
 }
