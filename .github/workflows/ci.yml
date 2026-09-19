@@ -53,6 +53,12 @@ jobs:
             run: sh examples/walkthrough.sh --quiet
           - os: windows-latest
             run: pwsh -File examples/walkthrough.ps1 -Quiet
+    # Named explicitly. Without this the job takes its name from every matrix value,
+    # command string included, so a required status check would be called
+    # "walkthrough (ubuntu-latest, sh examples/walkthrough.sh --quiet)" and would
+    # silently cease to exist the day that command changed. A branch rule waiting on a
+    # check that no longer reports blocks every pull request and explains nothing.
+    name: walkthrough (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
