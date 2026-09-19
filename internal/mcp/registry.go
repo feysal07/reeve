@@ -28,8 +28,6 @@ package mcp
 import (
 	"fmt"
 	"os"
-	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -217,13 +215,30 @@ func normaliseCommand(cmd string, args []string) []string {
 	if cmd == "" && len(args) == 0 {
 		return nil
 	}
-	base := strings.ToLower(filepath.Base(path.Base(cmd)))
+	base := strings.ToLower(baseName(cmd))
 	base = strings.TrimSuffix(base, ".exe")
 	base = strings.TrimSuffix(base, ".cmd")
 	out := make([]string, 0, len(args)+1)
 	out = append(out, base)
 	out = append(out, args...)
 	return out
+}
+
+// baseName strips the directory from a program path, splitting on both separators
+// whatever this machine's are.
+//
+// filepath.Base is the obvious choice and is wrong here. It follows the conventions of
+// the machine it runs on, and this runs on a machine that did not produce the report:
+// a fleet collected from Windows and reconciled on a Linux CI runner would leave
+// "C:\Program Files\nodejs\npx.cmd" untouched, fail to match the approved "npx",
+// fall through to the name, and come out as a mismatch — the loudest verdict there is,
+// raised against every Windows machine in the fleet for a path-separator reason, with
+// the real findings buried underneath. CI found this; the tests pass on Windows.
+func baseName(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 func sameCommand(a, b []string) bool {
