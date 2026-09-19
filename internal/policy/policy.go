@@ -239,16 +239,59 @@ func anyContains(list []string, v string) bool {
 	return false
 }
 
+// anyGlob matches a command line or a URL against a glob.
+//
+// It deliberately does not use the path matcher. A command line is not a filesystem
+// path, so `/` carries no structural meaning in it, and a path glob refuses to let `*`
+// cross one. That made a pattern like "*kubectl*" silently fail against
+// "kubectl apply -f k8s/ --context prod", which is exactly the kind of rule that looks
+// correct in review and protects nothing in practice. Paths keep path semantics; this
+// is for strings.
 func anyGlob(patterns []string, v string) bool {
 	if v == "" {
 		return false
 	}
+	lower := strings.ToLower(v)
 	for _, p := range patterns {
-		if ok, err := doublestar.Match(p, v); err == nil && ok {
+		if globMatch(strings.ToLower(p), lower) {
 			return true
 		}
 	}
 	return false
+}
+
+// globMatch reports whether s matches a pattern in which `*` stands for any run of
+// characters and `?` for exactly one. It is iterative rather than recursive and
+// allocates nothing, because it runs on the guard's decision path, where an agent is
+// waiting and several of them treat a slow hook as permission to continue.
+func globMatch(pattern, s string) bool {
+	var p, i int
+	starP, starI := -1, 0
+
+	for i < len(s) {
+		switch {
+		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
+			p++
+			i++
+		case p < len(pattern) && pattern[p] == '*':
+			// Remember where the wildcard was, so a later mismatch can come back
+			// and let it consume one more character.
+			starP = p
+			starI = i
+			p++
+		case starP >= 0:
+			starI++
+			i = starI
+			p = starP + 1
+		default:
+			return false
+		}
+	}
+
+	for p < len(pattern) && pattern[p] == '*' {
+		p++
+	}
+	return p == len(pattern)
 }
 
 // normalizePath rewrites a path so it can be matched the same way everywhere.

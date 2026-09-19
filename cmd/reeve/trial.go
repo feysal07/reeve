@@ -483,38 +483,78 @@ rules:
     decision: deny
     reason: >-
       This runs code from the network without anyone reading it first.
+    # A downloader AND a pipe into a shell. Listing literal strings like "curl | bash"
+    # never matched a real command, which always has a URL in between.
     match:
       kind: [shell]
+      command:
+        - "*curl*"
+        - "*wget*"
+        - "*iwr*"
+        - "*irm*"
       commandContains:
-        - "curl | sh"
-        - "curl | bash"
-        - "wget | sh"
-        - "iwr | iex"
-        - "irm | iex"
+        - "| sh"
+        - "|sh"
+        - "| bash"
+        - "|bash"
+        - "| iex"
+        - "|iex"
 
+  # Narrowed to protected branches. Force-pushing your own feature branch does not
+  # prompt, including with --force-with-lease, which the earlier version of this rule
+  # punished despite it being the safer idiom.
   - id: rewrite-history
-    description: Force push or history rewrite
+    description: Rewriting history on a shared branch
     decision: ask
     reason: >-
-      This rewrites history other people may already have pulled.
+      This rewrites history on a branch other people pull from.
     match:
       kind: [shell]
+      command:
+        - "*push*--force*"
+        - "*push*-f *"
+        - "*--force*push*"
       commandContains:
-        - "push --force"
-        - "push -f"
-        - "reset --hard"
+        - " main"
+        - " master"
+        - " develop"
+        - " release"
 
-  - id: production-infrastructure
-    description: Changing infrastructure
+  - id: discard-working-tree
+    description: Discarding uncommitted work
     decision: ask
     reason: >-
-      Confirm the target is the one you meant.
+      This throws away changes that are not committed anywhere.
     match:
       kind: [shell]
       commandContains:
-        - "kubectl delete"
-        - "kubectl apply"
-        - "terraform apply"
-        - "terraform destroy"
-        - "helm upgrade"
+        - "reset --hard"
+        - "git clean -fd"
+        - "git checkout -- ."
+
+  # Narrowed from any infrastructure command to one that explicitly names production.
+  # The earlier version prompted on a local kind cluster exactly as hard as on a
+  # production one. It misses a target set earlier by use-context, which needs a
+  # resource registry to fix properly.
+  - id: production-infrastructure
+    description: Changing infrastructure that is explicitly production
+    decision: ask
+    reason: >-
+      This command names a production target. Confirm it is the one you meant.
+    match:
+      kind: [shell]
+      command:
+        - "*kubectl*"
+        - "*terraform*"
+        - "*helm*"
+        - "*aws *"
+        - "*gcloud*"
+      commandContains:
+        - "--context prod"
+        - "--context production"
+        - "--namespace prod"
+        - "-n prod"
+        - "prod.tfvars"
+        - "production.tfvars"
+        - "workspace select prod"
 `

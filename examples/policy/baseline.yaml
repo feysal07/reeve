@@ -103,18 +103,47 @@ rules:
         - "Remove-Item -Recurse -Force"
 
   - id: rewrite-history
-    description: Force push or history rewrite
+    description: Rewriting history on a shared branch
     decision: ask
     reason: >-
-      This rewrites history other people may already have pulled. Confirm you are
-      on your own branch and that nobody else is working from it.
+      This rewrites history on a branch other people pull from. Confirm nobody else
+      is working from it.
+    # Narrowed to protected branches. Force-pushing your own feature branch is
+    # routine and no longer prompts, including with --force-with-lease, which the
+    # earlier rule punished despite it being the safer idiom.
+    #
+    # The two fields are combined with AND: a force-push form, and a protected
+    # branch named in the command.
+    #
+    # Known gap: `git push --force` with an upstream already configured names no
+    # branch, so it is not caught. Catching that needs the current branch, which is
+    # not in the command line. Widening the rule to compensate would put us back
+    # where we started.
+    match:
+      kind: [shell]
+      command:
+        - "*push*--force*"
+        - "*push*-f *"
+        - "*--force*push*"
+      commandContains:
+        - " main"
+        - " master"
+        - " develop"
+        - " release"
+        - "+main"
+        - "+master"
+
+  - id: history-rewrite-tools
+    description: Rewriting history wholesale
+    decision: ask
+    reason: >-
+      These rewrite every commit they touch. They are almost never part of ordinary
+      work, so a prompt costs nothing and catching a mistake is worth a great deal.
     match:
       kind: [shell]
       commandContains:
-        - "push --force"
-        - "push -f"
-        - "reset --hard"
         - "filter-branch"
+        - "filter-repo"
 
   - id: discard-working-tree
     description: Discarding uncommitted work
@@ -128,6 +157,12 @@ rules:
         - "git checkout -- ."
         - "git clean -fd"
         - "git restore ."
+        # Moved here from rewrite-history, where it never belonged: a hard reset
+        # discards uncommitted work rather than rewriting published history. It is
+        # left in place rather than narrowed because destroying work nobody has
+        # committed is the most common way an agent loses something, and the command
+        # line does not say whether there was any.
+        - "reset --hard"
 
   # --------------------------------------------------------------- exposure ----
 
@@ -137,15 +172,28 @@ rules:
     reason: >-
       This runs code from the network without anyone reading it first. Download the
       script, read it, then run it.
+    # The two fields are combined with AND: a downloader, and a pipe into a shell.
+    #
+    # This rule previously listed literal strings like "curl | bash", which never
+    # matched anything: a real command is `curl https://x.sh | bash`, with the URL in
+    # between. It read plausibly in review and caught nothing for as long as it
+    # existed, which is the precise failure this project is meant to prevent.
     match:
       kind: [shell]
+      command:
+        - "*curl*"
+        - "*wget*"
+        - "*iwr*"
+        - "*irm*"
+        - "*invoke-webrequest*"
       commandContains:
-        - "curl | sh"
-        - "curl | bash"
-        - "wget | sh"
-        - "wget -qO- | bash"
-        - "iwr | iex"
-        - "irm | iex"
+        - "| sh"
+        - "|sh"
+        - "| bash"
+        - "|bash"
+        - "| zsh"
+        - "| iex"
+        - "|iex"
 
   - id: publish-package
     description: Publishing a package to a public registry
@@ -165,20 +213,41 @@ rules:
   # -------------------------------------------------------------- production ----
 
   - id: production-infrastructure
-    description: Changing production infrastructure
+    description: Changing infrastructure that is explicitly production
     decision: ask
     reason: >-
-      This targets production. Confirm the context is the one you meant and that the
-      change has been reviewed.
+      This command names a production target. Confirm it is the one you meant and
+      that the change has been reviewed.
+    # Narrowed from "any infrastructure command" to "an infrastructure command that
+    # explicitly names production". The two fields are combined with AND.
+    #
+    # The earlier rule prompted on `kubectl apply --context kind-local` exactly as
+    # hard as on a production cluster, because a command line does not say which
+    # environment it reaches.
+    #
+    # Known gap, and it is a large one: this only fires when the target is named in
+    # the command. Someone who ran `kubectl config use-context prod` earlier and then
+    # types `kubectl delete` is not caught. Closing that properly needs a resource
+    # registry mapping contexts, namespaces and workspaces to environments, resolved
+    # at decision time. Until that exists this rule is a partial control, and is
+    # worth having only because a false negative here costs less than a policy
+    # everyone has muted.
     match:
       kind: [shell]
+      command:
+        - "*kubectl*"
+        - "*terraform*"
+        - "*helm*"
+        - "*aws *"
+        - "*gcloud*"
       commandContains:
-        - "kubectl delete"
-        - "kubectl apply"
-        - "terraform apply"
-        - "terraform destroy"
-        - "helm upgrade"
-        - "helm uninstall"
+        - "--context prod"
+        - "--context production"
+        - "--namespace prod"
+        - "-n prod"
+        - "prod.tfvars"
+        - "production.tfvars"
+        - "workspace select prod"
 
   # -------------------------------------------------------------------- mcp ----
 
