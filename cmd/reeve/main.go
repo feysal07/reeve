@@ -100,7 +100,11 @@ Guard flags (reeve guard is invoked by an agent, not usually by hand):
                          or cursor
                          An unrecognised value is refused rather than guessed at
   --policy <file>        Policy to enforce (default: the first one found)
-  --log <file>           Append decisions as JSON lines
+  --log <file>           Append decisions as JSON lines. Also what counting rules
+                         count from, so a policy with one needs this
+  --store <file>         Event store from reeve collect. Budget rules total from
+                         it; a budget with no store refuses rather than assuming
+                         nothing was spent
   --dry-run              Evaluate and log, but always allow
 
 Collect flags:

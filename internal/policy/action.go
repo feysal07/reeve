@@ -86,6 +86,67 @@ type Action struct {
 	// now, and writing the history back into it would grow every line by the size of
 	// everything before it.
 	History *History `json:"-"`
+
+	// Spend is recent cost, read from the event store that reeve collect writes.
+	//
+	// Nil means it could not be read, which again is not the same as nothing having
+	// been spent. A budget that cannot read the record refuses; see Policy.Evaluate.
+	// Not serialised, for the same reason History is not.
+	Spend *Spend `json:"-"`
+}
+
+// Spend is a bounded window of recorded cost, most recent first.
+type Spend struct {
+	Records []CostRecord
+
+	// Truncated says the reader hit its own limit before reaching the start of the
+	// window, so Records is the most recent part of it and not all of it.
+	//
+	// It matters because a total computed from part of a window is a lower bound,
+	// and a budget compared against a lower bound fails in the permissive
+	// direction. A store busy enough to overrun the reader is exactly the store
+	// where spend is high, so the under-count would arrive precisely when the
+	// budget was needed, and would look like staying comfortably inside it.
+	Truncated bool
+}
+
+// Incomplete reports that this window cannot answer the budget it was read for.
+//
+// Only when both are true: the read was cut short, and the part that was read is
+// still under the threshold. If the visible part already exceeds it, the unread
+// remainder cannot bring it back down, so the answer is known.
+func (s *Spend) Incomplete(a Action, m SpendMatch, now time.Time) bool {
+	if s == nil || !s.Truncated {
+		return false
+	}
+	return s.Total(a, m, now) <= m.MoreThan
+}
+
+// CostRecord is one earlier priced event, reduced to what a budget can total.
+type CostRecord struct {
+	Time      time.Time
+	SessionID string
+	CostUSD   float64
+}
+
+// Total returns the cost in the window under the scope the rule asked for.
+func (s *Spend) Total(a Action, m SpendMatch, now time.Time) float64 {
+	if s == nil {
+		return 0
+	}
+	cutoff := now.Add(-time.Duration(m.Within))
+	var total float64
+	for _, r := range s.Records {
+		if r.Time.Before(cutoff) {
+			// Records are newest first, so the first one outside the window ends it.
+			break
+		}
+		if m.Scope != "machine" && r.SessionID != a.SessionID {
+			continue
+		}
+		total += r.CostUSD
+	}
+	return total
 }
 
 // History is a bounded window of what came before, most recent first.

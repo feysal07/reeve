@@ -605,6 +605,82 @@ printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$LOOP
     check "a counting rule with no log to count from denies, rather than assuming quiet" 0
 
 
+# A budget, the other rule that depends on a record rather than on the request. It
+# totals the event store the collector writes, and its failure modes are the ones
+# worth asserting: unreadable refuses, and an agent that reports no cost at all is
+# reported as uncovered rather than quietly passing.
+BUDGET_POLICY="$REPO/examples/policy/budget.yaml"
+BUDGET_STORE="$SANDBOX/budget-events.jsonl"
+BUDGET_PAYLOAD='{"session_id":"spender","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hello"}}'
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+: > "$BUDGET_STORE"
+i=1
+while [ $i -le 9 ]; do
+    printf '{"time":"%s","kind":"api_request","agent":"claude-code","sessionId":"spender","costUsd":1.00}
+'         "$NOW" >> "$BUDGET_STORE"
+    i=$((i + 1))
+done
+
+printf '%s' "$BUDGET_PAYLOAD" |
+    "$REEVE" guard --agent claude-code --policy "$BUDGET_POLICY" --store "$BUDGET_STORE" >/dev/null 2>&1
+BUDGET_UNDER=$?
+
+# The tenth dollar reaches the limit exactly, and the eleventh passes it. A cap of
+# ten that refuses at ten is a cap of just under ten.
+printf '{"time":"%s","kind":"api_request","agent":"claude-code","sessionId":"spender","costUsd":1.00}
+'     "$NOW" >> "$BUDGET_STORE"
+printf '%s' "$BUDGET_PAYLOAD" |
+    "$REEVE" guard --agent claude-code --policy "$BUDGET_POLICY" --store "$BUDGET_STORE" >/dev/null 2>&1
+BUDGET_AT=$?
+
+printf '{"time":"%s","kind":"api_request","agent":"claude-code","sessionId":"spender","costUsd":5.00}
+'     "$NOW" >> "$BUDGET_STORE"
+BUDGET_OVER=$(printf '%s' "$BUDGET_PAYLOAD" |
+    "$REEVE" guard --agent claude-code --policy "$BUDGET_POLICY" --store "$BUDGET_STORE" 2>&1)
+
+if [ "$BUDGET_UNDER" = "0" ] && [ "$BUDGET_AT" = "0" ]; then
+    check "a budget does not fire under the limit, or exactly at it" 1
+else
+    check "a budget does not fire under the limit, or exactly at it" 0         "nine dollars exited $BUDGET_UNDER, ten exited $BUDGET_AT"
+fi
+
+case "$BUDGET_OVER" in
+    *"already spent"*) check "a budget fires once spend passes the line" 1 ;;
+    *) check "a budget fires once spend passes the line" 0 "$BUDGET_OVER" ;;
+esac
+
+# Another session's spending is not charged to this one.
+OTHER_PAYLOAD='{"session_id":"someone-else","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hello"}}'
+printf '%s' "$OTHER_PAYLOAD" |
+    "$REEVE" guard --agent claude-code --policy "$BUDGET_POLICY" --store "$BUDGET_STORE" >/dev/null 2>&1
+[ $? = 0 ] &&
+    check "one session's overspend does not refuse another session's first call" 1 ||
+    check "one session's overspend does not refuse another session's first call" 0
+
+# No store at all. Zero recorded spend and unreadable spend are not the same claim.
+printf '%s' "$BUDGET_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$BUDGET_POLICY" >/dev/null 2>&1
+[ $? = 2 ] &&
+    check "a budget with no store to total denies, rather than assuming nothing was spent" 1 ||
+    check "a budget with no store to total denies, rather than assuming nothing was spent" 0
+
+# The gap that matters most, because it is silent: an agent whose usage never reaches
+# your store keeps a budget at zero forever. Compilation has to say so by name.
+BUDGET_CURSOR=$("$REEVE" policy compile "$BUDGET_POLICY" --agent cursor --out "$DIST/budget" 2>&1)
+case "$BUDGET_CURSOR" in
+    *"NOT ENFORCED ANYWHERE"*)
+        check "a budget on an agent that reports no cost is reported as covered by nothing" 1 ;;
+    *)  check "a budget on an agent that reports no cost is reported as covered by nothing" 0             "reported as though the guard had it covered" ;;
+esac
+
+BUDGET_CLAUDE=$("$REEVE" policy compile "$BUDGET_POLICY" --agent claude-code --out "$DIST/budget-cc" 2>&1)
+case "$BUDGET_CLAUDE" in
+    *"NOT ENFORCED ANYWHERE"*)
+        check "the same budget is guard-enforced where cost does reach the store" 0             "reported as unenforceable on an agent that exports cost" ;;
+    *)  check "the same budget is guard-enforced where cost does reach the store" 1 ;;
+esac
+
+
 # ------------------------------------------------------------ telemetry ----
 
 step 6 "Telemetry: receive what agents report, normalise it, price it"

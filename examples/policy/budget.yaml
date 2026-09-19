@@ -1,0 +1,66 @@
+# A spending cap for agents that have stopped being supervised.
+#
+# Kept out of baseline.yaml for the same reason as loop-breaker.yaml: every rule in
+# the baseline is a pure function of the action in front of it, so the guard can
+# answer with nothing but the request. A budget has to know what has already been
+# spent, which it reads from the event store that `reeve collect` writes, and a rule
+# that cannot read it refuses rather than assuming nothing has been spent.
+#
+# That makes the store a prerequisite, and the baseline must not have one.
+#
+# Use it alongside the baseline:
+#
+#   reeve guard --agent claude-code \
+#     --policy baseline.yaml \
+#     --store /var/lib/reeve/events.jsonl
+#
+# Two things to understand before relying on this.
+#
+# It is soft, and it lags. Cost arrives in the store through each agent's own
+# telemetry export, which is batched. The figure the guard reads is behind real spend
+# by that interval, so this catches a runaway within about a minute rather than
+# stopping the request that crosses the line. The only hard ceilings that exist are
+# the ones a vendor enforces on its own side of the API.
+#
+# It does not cover every agent. An agent that cannot be configured to export usage
+# to an endpoint you choose contributes nothing to the store, so its spend is always
+# zero here and these rules never fire for it. That is a gap rather than a refusal,
+# and a gap is quiet: run `reeve policy compile` against this file and read the rows
+# marked unenforceable before you decide the fleet is covered.
+version: 1
+name: budget
+revision: 2026-09-19
+
+# Absent policy allows, so this file adds refusals and takes nothing away.
+default: allow
+
+rules:
+  - id: session-runaway-spend
+    description: One session has spent more than a normal day's work
+    decision: ask
+    reason: >-
+      This session has already spent more than ten dollars. That is well above an
+      ordinary session, and the usual cause is a loop nobody is watching rather than
+      a large piece of work. Check what it is doing before letting it continue.
+    match:
+      spend:
+        within: 6h
+        moreThan: 10.00
+        scope: session
+
+  - id: daily-cap
+    description: Everything on this machine, over a day
+    decision: deny
+    reason: >-
+      This machine has spent more than fifty dollars in the last twenty-four hours.
+      Whatever is running has already cost more than a day of supervised work, so it
+      stops here until someone has looked at it.
+    # scope: machine means every event in the store this guard was given, so point it
+    # at a store that holds this machine's events and not the whole fleet's. The guard
+    # cannot check that for you: events carry a session, an identity and a repository,
+    # and nothing that names a machine.
+    match:
+      spend:
+        within: 24h
+        moreThan: 50.00
+        scope: machine

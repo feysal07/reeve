@@ -94,7 +94,7 @@ func runPolicyCompile(args []string) error {
 		}
 
 		s := compile.Summarise(res.Coverage)
-		if s.Partial > 0 || s.GuardOnly > 0 {
+		if s.Partial > 0 || s.GuardOnly > 0 || s.Unenforceable > 0 {
 			anyGap = true
 		}
 	}
@@ -114,8 +114,14 @@ func printCoverage(res compile.Result) {
 	}
 	s := compile.Summarise(res.Coverage)
 
-	fmt.Printf("\n  Coverage: %d enforced natively, %d partially, %d by the guard only\n\n",
+	fmt.Printf("\n  Coverage: %d enforced natively, %d partially, %d by the guard only",
 		s.Native, s.Partial, s.GuardOnly)
+	// Printed on the same line, and only when it is not zero, so a number that
+	// should almost always be zero is conspicuous on the rare occasion it is not.
+	if s.Unenforceable > 0 {
+		fmt.Printf(", %d NOT ENFORCED ANYWHERE", s.Unenforceable)
+	}
+	fmt.Print("\n\n")
 
 	for _, c := range res.Coverage {
 		fmt.Printf("    %-12s %-26s %s\n", c.Status, c.RuleID, c.Decision)
@@ -132,5 +138,16 @@ func printCoverage(res compile.Result) {
 			wrap("Rules above marked partial or guard-only are not enforced by these files. "+
 				"They hold only while the guard is running, so deploy the guard alongside "+
 				"this configuration rather than instead of it.", 74, "  "))
+	}
+	// Separate from the sentence above, and phrased as an instruction rather than
+	// a caveat, because "deploy the guard as well" is not the remedy here and
+	// following it would leave the operator believing they had closed the gap.
+	if s.Unenforceable > 0 {
+		fmt.Printf("\n  %s\n",
+			wrap("Rules marked unenforceable are covered by neither this configuration "+
+				"nor the guard. Deploying the guard will not close them. Read the reason "+
+				"on each one and either accept the gap deliberately or drop the rule for "+
+				"this agent, because as written it will never fire and nothing will say "+
+				"so again.", 74, "  "))
 	}
 }

@@ -302,6 +302,73 @@ See [examples/policy/loop-breaker.yaml](../examples/policy/loop-breaker.yaml). I
 deliberately not in the baseline: the baseline is the first thing anyone deploys and
 must work without a decision log.
 
+## Budgets: matching on what has already been spent
+
+The other rule that is not a function of the request in front of it.
+
+```yaml
+- id: daily-cap
+  decision: deny
+  match:
+    spend:
+      within: 24h
+      moreThan: 50.00   # US dollars
+      scope: machine    # session | machine
+```
+
+The total comes from the event store `reeve collect` writes, so a budget has its own
+prerequisite: run the guard with `--store`, or set `REEVE_EVENT_STORE`.
+`reeve policy check` says so when a policy needs it.
+
+**A budget that cannot read the store refuses**, for the same reason a counting rule
+that cannot count refuses: zero recorded spend and unreadable spend are not the same
+claim. A store that does not exist yet is treated as empty, because the collector has
+not written anything.
+
+**It refuses on a partial answer too.** The guard reads the tail of the store rather
+than all of it. If the store is busy enough that the read stops before reaching the
+start of the window, the total in hand is a floor rather than a figure — and a budget
+compared against a floor fails in the permissive direction, on exactly the machine
+where spend is highest. So a truncated window that is still under the limit denies and
+says to rotate the store or shorten the window. A truncated window already over the
+limit is not ambiguous and denies by the rule itself: unread older events cannot bring
+a total back down.
+
+It fires on the first action *after* the line was crossed, not on the one that crosses
+it. What a pending action will cost is not known until it has run.
+
+### Two limits to understand before relying on it
+
+**It is soft, and it lags.** Cost reaches the store through each agent's own telemetry
+export, which is batched. The figure the guard reads is behind real spend by that
+interval, so a budget catches a runaway within about a minute rather than stopping the
+request that crossed the line. The only hard ceilings that exist are the ones a vendor
+enforces on its own side of the API.
+
+**It does not cover every agent, and that gap is silent.** An agent that cannot be
+configured to export usage to an endpoint you choose contributes nothing to the store.
+Its spend reads as zero, stays under every threshold, and the rule never fires. Nothing
+refuses and nothing complains, which is the most convincing way for a control to be
+absent.
+
+Because of that, `reeve policy compile` reports a budget on such an agent as
+**`unenforceable`** rather than `guard-only`. The three other statuses are a promise:
+`guard-only` means deploy the guard and the rule holds. This one means no layer covers
+it, deploying the guard will not change that, and the rule must either be dropped for
+that agent or the gap accepted deliberately.
+
+```
+Coverage: 0 enforced natively, 0 partially, 0 by the guard only, 2 NOT ENFORCED ANYWHERE
+```
+
+`scope: machine` means every event in the store the guard was given. That is only this
+machine's spend if the store is this machine's, so point the guard at a local one. The
+guard does not claim a boundary it cannot check: events carry a session, an identity
+and a repository, and nothing that names a machine.
+
+See [examples/policy/budget.yaml](../examples/policy/budget.yaml). Like the loop
+breaker, it is deliberately not in the baseline.
+
 ## Knowing what an action actually targets
 
 A rule can only be as good as what it can see. Matching the text "--context prod"

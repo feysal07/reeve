@@ -75,6 +75,39 @@ type Match struct {
 	// like an attack: an agent stuck retrying, doing a reasonable thing several
 	// hundred times.
 	Repeated *RepeatedMatch `yaml:"repeated,omitempty"`
+
+	// Spend matches on money already spent in a window, read from the event store
+	// that reeve collect writes.
+	//
+	// Like Repeated, it is not a function of the request in front of it, and for a
+	// related reason: the action that finally exceeds a budget is an ordinary one.
+	// Nothing about it is refusable on its own terms, which is why no permission
+	// rule anywhere catches the case.
+	Spend *SpendMatch `yaml:"spend,omitempty"`
+}
+
+// SpendMatch is a budget: the rule applies once this much has already been spent.
+//
+// It is soft by construction and the documentation says so rather than leaving it to
+// be discovered. Cost reaches the store by the agent's own telemetry export, which is
+// batched, so the figure the guard reads lags real spend by that export interval. A
+// budget here catches a runaway within about a minute. It is not a hard ceiling, and
+// the only hard ceilings that exist are the ones a vendor enforces on its own side.
+type SpendMatch struct {
+	// Within is how far back to total, as a Go duration such as "24h".
+	Within Duration `yaml:"within"`
+	// MoreThan is the amount in US dollars the window must exceed. The pending
+	// action is not counted, because its cost is not known until it has run.
+	MoreThan float64 `yaml:"moreThan"`
+	// Scope limits the total to this agent session, or opens it to everything in
+	// the store. Empty means session.
+	//
+	// "machine" means every event in the store the guard was given, which is only
+	// this machine's spend if that store is this machine's. Point the guard at a
+	// local store, exactly as with the decision log. The guard cannot verify the
+	// boundary, so it does not claim one: events carry a session, an identity and a
+	// repository, and no machine.
+	Scope string `yaml:"scope,omitempty"`
 }
 
 // RepeatedMatch counts how often something like this has just happened.
@@ -207,6 +240,35 @@ func (p *Policy) Evaluate(a Action) Decision {
 		// down. An absent policy allows, because there is no expressed intent to
 		// violate. An input that a rule which does exist depends on, and which cannot
 		// be read, denies.
+		// Same asymmetry as below, for the other input a rule can depend on. An
+		// unreadable event store is not a spend of zero.
+		if r.Match.Spend != nil {
+			var why string
+			switch {
+			case a.Spend == nil:
+				why = "This rule is a budget, and the record of what has been spent " +
+					"could not be read. Refusing rather than assuming nothing has " +
+					"been spent. Give the guard an event store with --store, or set " +
+					"REEVE_EVENT_STORE."
+			case a.Spend.Incomplete(a, *r.Match.Spend, time.Now()):
+				// A partial window totals low, and a budget compared against a
+				// total that is too low permits. Refusing is the only honest answer
+				// to "I could not see far enough back to know".
+				why = "This rule is a budget, and the event store is too large to " +
+					"read far enough back to total its window. What was read is " +
+					"under the limit, but that is a floor rather than the figure. " +
+					"Refusing rather than reporting a total known to be too low. " +
+					"Rotate the store, or shorten the rule's window."
+			}
+			if why != "" {
+				if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+					d.Effect = EffectDeny
+					d.RuleID = r.ID
+					d.Reason = why
+				}
+				continue
+			}
+		}
 		if r.Match.Repeated != nil && a.History == nil {
 			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
 				d.Effect = EffectDeny
@@ -268,6 +330,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if m.Repeated != nil && !m.Repeated.matches(a) {
+		return false
+	}
+	if m.Spend != nil && !m.Spend.matches(a) {
 		return false
 	}
 	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {
@@ -444,10 +509,47 @@ func (r RepeatedMatch) matches(a Action) bool {
 	return a.History.Count(a, r, time.Now()) >= r.MoreThan
 }
 
+// matches reports whether spend in the window already exceeds the budget.
+//
+// The pending action is not counted, because what it will cost is not known until it
+// has run. The rule therefore fires on the first action after the line was crossed
+// rather than on the one that crossed it, which is the same shape as a repeat count
+// and the only shape available before the fact.
+func (m SpendMatch) matches(a Action) bool {
+	if m.MoreThan < 0 || m.Within <= 0 {
+		return false
+	}
+	return a.Spend.Total(a, m, time.Now()) > m.MoreThan
+}
+
 // NeedsHistory reports whether any rule matches on what came before.
 //
 // Most policies do not, and the guard runs in front of a waiting agent, so the cost of
 // reading a day's decisions should be paid only by the policies that asked for it.
+// NeedsSpend reports whether any rule needs the event store.
+func (p *Policy) NeedsSpend() bool {
+	for _, r := range p.Rules {
+		if r.Match.Spend != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// SpendWindow is the longest window any budget asks for, so the guard reads once.
+func (p *Policy) SpendWindow() time.Duration {
+	var longest time.Duration
+	for _, r := range p.Rules {
+		if r.Match.Spend == nil {
+			continue
+		}
+		if w := time.Duration(r.Match.Spend.Within); w > longest {
+			longest = w
+		}
+	}
+	return longest
+}
+
 func (p *Policy) NeedsHistory() bool {
 	for _, r := range p.Rules {
 		if r.Match.Repeated != nil {

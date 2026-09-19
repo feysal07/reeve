@@ -182,6 +182,11 @@ func (c *copilotCLI) compileRule(r policy.Rule) (Coverage, []string, []string) {
 	if countsRepetitions(r) {
 		return repeatCoverage(r), nil, nil
 	}
+	// A budget is guard-only for the same reason, and on an agent that
+	// exports no cost it is not enforced anywhere at all.
+	if countsSpend(r) {
+		return spendCoverage(r, c.Agent()), nil, nil
+	}
 
 	cov := Coverage{RuleID: r.ID, Decision: r.Decision}
 

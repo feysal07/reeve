@@ -18,6 +18,7 @@ import (
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
 	"github.com/feysal07/reeve/internal/resource"
+	"github.com/feysal07/reeve/internal/telemetry"
 )
 
 // runGuard is the hook handler. It reads one hook payload on stdin, decides, and
@@ -39,6 +40,7 @@ func runGuard(args []string) error {
 	policyPath := fs.String("policy", "", "path to the policy file (default: the first policy found)")
 	logPath := fs.String("log", "", "append decisions to this file as JSON lines")
 	resourcesPath := fs.String("resources", "", "resource registry, to resolve which environment an action targets")
+	storePath := fs.String("store", "", "event store written by reeve collect, for budget rules")
 	dryRun := fs.Bool("dry-run", false, "evaluate and log, but always allow")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -99,6 +101,9 @@ func runGuard(args []string) error {
 	// day for an answer nothing consults.
 	if pol.NeedsHistory() {
 		act.History = readHistory(decisionLogPath(*logPath), pol.HistoryWindow())
+	}
+	if pol.NeedsSpend() {
+		act.Spend = readSpend(eventStorePath(*storePath), pol.SpendWindow())
 	}
 
 	decision := pol.Evaluate(act)
@@ -384,6 +389,106 @@ func readHistory(path string, window time.Duration) *policy.History {
 	}
 	return h
 }
+
+// eventStorePath resolves the store a budget totals from.
+func eventStorePath(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	return os.Getenv("REEVE_EVENT_STORE")
+}
+
+// readSpend returns recent cost from the event store, most recent first.
+//
+// Nil means the store should have been readable and was not, which Evaluate turns
+// into a refusal. An empty result means nothing has been spent in the window, which
+// is an answer rather than an absence.
+//
+// The same tail-reading shape as readHistory, and for the same reason: this runs on
+// every tool call, and the store is a file that grows all day.
+func readSpend(path string, window time.Duration) *policy.Spend {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		// A store that does not exist yet has recorded no spend, because the
+		// collector has not written anything. Any other error is a file that should
+		// be readable and is not.
+		if os.IsNotExist(err) {
+			return &policy.Spend{}
+		}
+		return nil
+	}
+	defer f.Close()
+
+	ring := make([]string, 0, storeLines)
+	dropped := false
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		if len(ring) == storeLines {
+			ring = append(ring[1:], line)
+			dropped = true
+			continue
+		}
+		ring = append(ring, line)
+	}
+	if err := sc.Err(); err != nil {
+		return nil
+	}
+
+	cutoff := time.Now().Add(-window)
+	sp := &policy.Spend{}
+	reachedStartOfWindow := false
+	for i := len(ring) - 1; i >= 0; i-- {
+		var e telemetry.Event
+		if json.Unmarshal([]byte(ring[i]), &e) != nil {
+			// A half-written final line must not make the whole store unreadable,
+			// which would turn every budget into a refusal.
+			continue
+		}
+		if e.Time.Before(cutoff) {
+			// Seeing an event older than the window proves the whole window is in
+			// hand, whatever was dropped before it.
+			reachedStartOfWindow = true
+			break
+		}
+		// Events with no cost are most of the file: tool calls, decisions, and
+		// requests whose tokens carried no price. Carrying them would bound the
+		// window far short of what the rule asked for.
+		if e.CostUSD == 0 {
+			continue
+		}
+		sp.Records = append(sp.Records, policy.CostRecord{
+			Time:      e.Time,
+			SessionID: e.SessionID,
+			CostUSD:   e.CostUSD,
+		})
+	}
+
+	// Truncated only when lines were dropped AND the loop above ran out of ring
+	// rather than reaching the start of the window. Reading the whole window and
+	// happening to have dropped older lines beyond it is not truncation: those
+	// lines were outside the window anyway and would not have counted.
+	if dropped && !reachedStartOfWindow {
+		sp.Truncated = true
+	}
+	return sp
+}
+
+// storeLines bounds how much of the event store is read.
+//
+// Larger than historyLines because the windows are longer: a counting rule looks back
+// minutes, a budget looks back a day, and a day of a busy machine is a lot of events.
+// It is a memory bound rather than a correctness one. Correctness comes from Spend
+// being marked truncated when this limit stops the read short of the window, so a
+// partial total refuses instead of reporting a figure it knows is too low.
+const storeLines = 20000
 
 // decisionLogPath resolves the log the same way logDecision does, so the file a rule
 // counts from is always the file the guard is writing to.

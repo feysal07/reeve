@@ -59,6 +59,35 @@ func runPolicyCheck(args []string) error {
 `)
 	}
 
+	if p.NeedsSpend() {
+		fmt.Print(`
+  This policy contains a budget, so the guard needs the event store that
+  reeve collect writes. Run it with --store, or set REEVE_EVENT_STORE.
+  Without one, the budget rules refuse rather than assume nothing was spent.
+
+  A budget is soft. Cost reaches the store by each agent's own batched export,
+  so the figure the guard reads lags real spend by that interval.
+`)
+		// Naming the agents is the whole point. A budget that cannot bind reads
+		// exactly like a budget that has not been exceeded.
+		var mute []string
+		for _, a := range model.AllAgents() {
+			if !a.ExportsCostTelemetry() {
+				mute = append(mute, string(a))
+			}
+		}
+		if len(mute) > 0 {
+			fmt.Printf("  %s\n\n", wrap(fmt.Sprintf(
+				"Not every agent is covered: %s %s no usage to an endpoint you choose, "+
+					"so none of %s spend reaches the store. The budget stays at zero for %s "+
+					"and never fires. Run reeve policy compile to see this per agent.",
+				strings.Join(mute, ", "),
+				plural(len(mute), "export", "exports"),
+				plural(len(mute), "their", "its"),
+				plural(len(mute), "them", "it")), 74, "  "))
+		}
+	}
+
 	// A rule that matches nothing is almost always a mistake, and it is invisible
 	// until someone expects it to fire.
 	for _, r := range p.Rules {
@@ -119,6 +148,8 @@ func runPolicyTest(args []string) error {
 	// honest reading of "evaluate this on its own", and it is not the same as the
 	// nil the guard uses for a history it could not read: that one refuses.
 	act.History = &policy.History{}
+	// And nothing spent, for the same reason. Not the nil that refuses.
+	act.Spend = &policy.Spend{}
 
 	if *path != "" {
 		act.Paths = []string{*path}
@@ -189,4 +220,14 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// plural picks a word form. Small, but the alternative is a sentence written for the
+// plural case that reads as broken on the day only one agent is affected, which is
+// the day someone is most likely to be reading it closely.
+func plural(n int, many, one string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

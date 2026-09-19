@@ -39,6 +39,17 @@ const (
 	// StatusGuardOnly means nothing about this rule can be expressed natively. It
 	// is enforced only while the guard runs.
 	StatusGuardOnly Status = "guard-only"
+	// StatusUnenforceable means no layer enforces this rule for this agent: not the
+	// agent's configuration, and not the guard either.
+	//
+	// This status exists because the three above are a promise. Reporting such a
+	// rule as guard-only would say the guard has it covered, and an operator who
+	// reads that stops looking. The only rules that reach it today are budgets on an
+	// agent that reports no cost, where the input the rule needs never arrives, so
+	// the total stays at zero and the threshold is never crossed. Nothing refuses
+	// and nothing complains, which is the most convincing way for a control to be
+	// absent.
+	StatusUnenforceable Status = "unenforceable"
 )
 
 // Coverage records what happened to one rule, and why.
@@ -150,7 +161,9 @@ var effectRank = map[policy.Effect]int{
 // sortCoverage puts the strictest, least-covered rules first, because those are the
 // ones an operator most needs to look at.
 func sortCoverage(c []Coverage) {
-	statusRank := map[Status]int{StatusGuardOnly: 0, StatusPartial: 1, StatusNative: 2}
+	statusRank := map[Status]int{
+		StatusUnenforceable: -1, StatusGuardOnly: 0, StatusPartial: 1, StatusNative: 2,
+	}
 	sort.SliceStable(c, func(i, j int) bool {
 		if statusRank[c[i].Status] != statusRank[c[j].Status] {
 			return statusRank[c[i].Status] < statusRank[c[j].Status]
@@ -171,9 +184,10 @@ func guardOnly(r policy.Rule, reason string) Coverage {
 
 // Summary counts coverage by status, for a one-line verdict.
 type Summary struct {
-	Native    int
-	Partial   int
-	GuardOnly int
+	Native        int
+	Partial       int
+	GuardOnly     int
+	Unenforceable int
 }
 
 // Summarise counts a coverage list.
@@ -187,6 +201,8 @@ func Summarise(c []Coverage) Summary {
 			s.Partial++
 		case StatusGuardOnly:
 			s.GuardOnly++
+		case StatusUnenforceable:
+			s.Unenforceable++
 		}
 	}
 	return s
@@ -202,6 +218,45 @@ func Summarise(c []Coverage) Summary {
 // would be reported as native, meaning it holds without the guard. It would hold, and
 // it would be the wrong rule.
 func countsRepetitions(r policy.Rule) bool { return r.Match.Repeated != nil }
+
+// countsSpend reports whether a rule is a budget.
+//
+// Like a repeat count, no permission syntax anywhere can express it, and for the same
+// reason emitting the rest of the match alone would produce a different, stricter
+// rule: "deny deploys once we have spent fifty dollars" would compile to "deny
+// deploys".
+func countsSpend(r policy.Rule) bool { return r.Match.Spend != nil }
+
+// spendCoverage is the entry every compiler returns for a budget.
+//
+// It is the one place a compiler reports on something the guard cannot do either. An
+// agent that does not export cost to an endpoint you choose contributes nothing to
+// the store the guard totals, so the budget reads zero for it forever.
+func spendCoverage(r policy.Rule, agent model.AgentID) Coverage {
+	if !agent.ExportsCostTelemetry() {
+		return Coverage{
+			RuleID:   r.ID,
+			Decision: r.Decision,
+			Status:   StatusUnenforceable,
+			Reason: "This rule is a budget, and this agent does not export usage to an " +
+				"endpoint you choose, so none of its spend reaches the store the guard " +
+				"totals. The budget would sit at zero for this agent and never fire. " +
+				"Nothing is emitted, and the guard cannot cover it either: this agent is " +
+				"outside the budget until its spend is imported some other way.",
+		}
+	}
+	return Coverage{
+		RuleID:   r.ID,
+		Decision: r.Decision,
+		Status:   StatusGuardOnly,
+		Reason: "This rule is a budget, and no agent's own configuration can total " +
+			"spend. Emitting the rest of the match without the threshold would produce " +
+			"a different and stricter rule, so nothing is emitted. It holds only while " +
+			"the guard is running, only where the guard has an event store to total " +
+			"from, and only as closely as that store is up to date: cost arrives by the " +
+			"agent's own batched export, so the figure lags real spend.",
+	}
+}
 
 // repeatCoverage is the entry every compiler returns for such a rule.
 func repeatCoverage(r policy.Rule) Coverage {

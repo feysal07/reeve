@@ -514,6 +514,67 @@ $null = ($loopPayload | & $reeve guard --agent claude-code --policy $loopPolicy 
 Check "a counting rule with no log to count from denies, rather than assuming quiet" `
     ($LASTEXITCODE -eq 2) "exit was $LASTEXITCODE"
 
+# A budget, the other rule that depends on a record rather than on the request. It
+# totals the event store the collector writes, and its failure modes are the ones
+# worth asserting: unreadable refuses, and an agent that reports no cost at all is
+# reported as uncovered rather than quietly passing.
+$budgetPolicy = Join-Path $repo "examples\policy\budget.yaml"
+$budgetStore = Join-Path $Sandbox "budget-events.jsonl"
+$budgetPayload = '{"session_id":"spender","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hello"}}'
+$stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+function Add-Cost($amount) {
+    $line = '{"time":"' + $stamp + '","kind":"api_request","agent":"claude-code","sessionId":"spender","costUsd":' + $amount + '}'
+    Add-Content -Path $budgetStore -Value $line -Encoding utf8
+}
+
+Set-Content -Path $budgetStore -Value "" -Encoding utf8
+1..9 | ForEach-Object { Add-Cost "1.00" }
+
+$null = ($budgetPayload | & $reeve guard --agent claude-code --policy $budgetPolicy --store $budgetStore 2>&1)
+$budgetUnder = $LASTEXITCODE
+
+# The tenth dollar reaches the limit exactly, and the eleventh passes it. A cap of
+# ten that refuses at ten is a cap of just under ten.
+Add-Cost "1.00"
+$null = ($budgetPayload | & $reeve guard --agent claude-code --policy $budgetPolicy --store $budgetStore 2>&1)
+$budgetAt = $LASTEXITCODE
+
+Add-Cost "5.00"
+$budgetOver = ($budgetPayload | & $reeve guard --agent claude-code --policy $budgetPolicy --store $budgetStore 2>&1 | Out-String)
+
+Check "a budget does not fire under the limit, or exactly at it" `
+    (($budgetUnder -eq 0) -and ($budgetAt -eq 0)) `
+    "nine dollars exited $budgetUnder, ten exited $budgetAt"
+
+Check "a budget fires once spend passes the line" `
+    ($budgetOver -match "already spent") `
+    $budgetOver
+
+# Another session's spending is not charged to this one.
+$otherPayload = '{"session_id":"someone-else","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hello"}}'
+$null = ($otherPayload | & $reeve guard --agent claude-code --policy $budgetPolicy --store $budgetStore 2>&1)
+Check "one session's overspend does not refuse another session's first call" `
+    ($LASTEXITCODE -eq 0) "exit was $LASTEXITCODE"
+
+# No store at all. Zero recorded spend and unreadable spend are not the same claim.
+$null = ($budgetPayload | & $reeve guard --agent claude-code --policy $budgetPolicy 2>&1)
+Check "a budget with no store to total denies, rather than assuming nothing was spent" `
+    ($LASTEXITCODE -eq 2) "exit was $LASTEXITCODE"
+
+# The gap that matters most, because it is silent: an agent whose usage never reaches
+# your store keeps a budget at zero forever. Compilation has to say so by name.
+$budgetCursor = (& $reeve policy compile $budgetPolicy --agent cursor --out (Join-Path $dist "budget") 2>&1 | Out-String)
+Check "a budget on an agent that reports no cost is reported as covered by nothing" `
+    ($budgetCursor -match "NOT ENFORCED ANYWHERE") `
+    "reported as though the guard had it covered"
+
+$budgetClaude = (& $reeve policy compile $budgetPolicy --agent claude-code --out (Join-Path $dist "budget-cc") 2>&1 | Out-String)
+Check "the same budget is guard-enforced where cost does reach the store" `
+    (-not ($budgetClaude -match "NOT ENFORCED ANYWHERE")) `
+    "reported as unenforceable on an agent that exports cost"
+
+
 # ------------------------------------------------------------ telemetry ----
 
 Step 6 "Telemetry: receive what agents report, normalise it, price it"

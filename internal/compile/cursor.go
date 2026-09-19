@@ -79,6 +79,12 @@ func (c *cursorCLI) Compile(p *policy.Policy, platform string) (Result, error) {
 			res.Coverage = append(res.Coverage, repeatCoverage(r))
 			continue
 		}
+		// A budget is guard-only for the same reason, and on an agent that
+		// exports no cost it is not enforced anywhere at all.
+		if countsSpend(r) {
+			res.Coverage = append(res.Coverage, spendCoverage(r, c.Agent()))
+			continue
+		}
 		res.Coverage = append(res.Coverage, Coverage{
 			RuleID:   r.ID,
 			Decision: r.Decision,

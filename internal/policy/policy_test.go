@@ -655,3 +655,260 @@ rules:
 		t.Errorf("the error does not show the expected form: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------- budgets ----
+
+// makeSpend builds a window of priced events, all in one session, spaced apart.
+func makeSpend(n int, session string, each float64, spacing time.Duration) *Spend {
+	s := &Spend{}
+	now := time.Now()
+	for i := 0; i < n; i++ {
+		s.Records = append(s.Records, CostRecord{
+			Time:      now.Add(-time.Duration(i+1) * spacing),
+			SessionID: session,
+			CostUSD:   each,
+		})
+	}
+	return s
+}
+
+func budgetPolicy(t *testing.T) *Policy {
+	t.Helper()
+	p, err := Parse([]byte(`
+version: 1
+rules:
+  - id: cap
+    decision: deny
+    reason: over budget
+    match:
+      spend:
+        within: 6h
+        moreThan: 10.00
+        scope: session
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestBudgetFiresOnlyOnceTheLineIsCrossed.
+//
+// Exactly at the threshold is not over it. A budget of ten dollars that refuses at ten
+// dollars is a budget of just under ten, and the operator who wrote the number is the
+// one who finds out.
+func TestBudgetFiresOnlyOnceTheLineIsCrossed(t *testing.T) {
+	p := budgetPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+
+	act.Spend = makeSpend(9, "s1", 1.00, time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("nine dollars against a ten dollar cap: effect = %q, want allow", d.Effect)
+	}
+
+	act.Spend = makeSpend(10, "s1", 1.00, time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("exactly ten against a ten dollar cap: effect = %q, want allow; "+
+			"moreThan means more than", d.Effect)
+	}
+
+	act.Spend = makeSpend(11, "s1", 1.00, time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectDeny {
+		t.Errorf("eleven against a ten dollar cap: effect = %q, want deny", d.Effect)
+	}
+}
+
+// TestBudgetIsScopedToTheSession by default. A shared store must not let one runaway
+// session refuse everyone else's first request.
+func TestBudgetIsScopedToTheSession(t *testing.T) {
+	p := budgetPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "mine"}
+	act.Spend = makeSpend(500, "someone-else", 1.00, time.Minute)
+
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q: another session's spend was charged to this one", d.Effect)
+	}
+}
+
+// TestMachineScopeCountsEverySession, which is the whole difference between the two
+// scopes and the reason the daily cap uses it.
+func TestMachineScopeCountsEverySession(t *testing.T) {
+	p, err := Parse([]byte(`
+version: 1
+rules:
+  - id: cap
+    decision: deny
+    match:
+      spend:
+        within: 24h
+        moreThan: 10.00
+        scope: machine
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "mine"}
+	act.Spend = makeSpend(20, "someone-else", 1.00, time.Minute)
+
+	if d := p.Evaluate(act); d.Effect != EffectDeny {
+		t.Errorf("effect = %q: machine scope ignored spend from another session", d.Effect)
+	}
+}
+
+// TestBudgetOnlyCountsInsideTheWindow.
+//
+// Fifty dollars spent over fifty hours is six dollars inside a six hour window. A
+// budget that totalled the whole file would refuse work that is well within it, and
+// would look broken to whoever hit it rather than looking like a budget.
+func TestBudgetOnlyCountsInsideTheWindow(t *testing.T) {
+	p := budgetPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+
+	// Fifty dollars in the file, one an hour, against a six hour window.
+	act.Spend = makeSpend(50, "s1", 1.00, time.Hour)
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q: spend older than the window was counted", d.Effect)
+	}
+
+	// The same total inside the window must refuse, or the test above would pass
+	// for a budget that never fires at all.
+	act.Spend = makeSpend(50, "s1", 1.00, time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectDeny {
+		t.Errorf("effect = %q: fifty dollars inside a ten dollar window was allowed", d.Effect)
+	}
+}
+
+// TestUnreadableSpendDenies is the same asymmetry the counting rules turn on, applied
+// to the other input a rule can depend on.
+//
+// An absent policy allows, because no intent was expressed. A store that an existing
+// budget depends on and cannot be read denies: zero recorded spend and unreadable
+// spend are not the same claim.
+func TestUnreadableSpendDenies(t *testing.T) {
+	p := budgetPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+	act.Spend = nil
+
+	d := p.Evaluate(act)
+	if d.Effect != EffectDeny {
+		t.Fatalf("effect = %q, want deny when the store cannot be read", d.Effect)
+	}
+	if !strings.Contains(d.Reason, "could not be read") {
+		t.Errorf("the reason does not say why: %q", d.Reason)
+	}
+
+	// An empty store is a different thing and must allow: nothing has been spent.
+	act.Spend = &Spend{}
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("an empty store denied; nothing having been spent is not a refusal")
+	}
+}
+
+// TestBudgetAndCountingRulesCoexist. A policy carrying both needs both inputs, and
+// having one must not satisfy the other.
+func TestBudgetAndCountingRulesCoexist(t *testing.T) {
+	p, err := Parse([]byte(`
+version: 1
+rules:
+  - id: cap
+    decision: deny
+    match:
+      spend: {within: 6h, moreThan: 10.00}
+  - id: loop
+    decision: deny
+    match:
+      repeated: {same: tool, within: 5m, moreThan: 10}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.NeedsSpend() {
+		t.Error("NeedsSpend is false for a policy containing a budget")
+	}
+	if !p.NeedsHistory() {
+		t.Error("NeedsHistory is false for a policy containing a counting rule")
+	}
+
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+
+	// History present, store missing: the budget must still refuse.
+	act.History = &History{}
+	act.Spend = nil
+	if d := p.Evaluate(act); d.Effect != EffectDeny || d.RuleID != "cap" {
+		t.Errorf("effect = %q rule = %q; a readable history satisfied a budget",
+			d.Effect, d.RuleID)
+	}
+
+	// Store present, history missing: the counting rule must still refuse.
+	act.History = nil
+	act.Spend = &Spend{}
+	if d := p.Evaluate(act); d.Effect != EffectDeny || d.RuleID != "loop" {
+		t.Errorf("effect = %q rule = %q; a readable store satisfied a counting rule",
+			d.Effect, d.RuleID)
+	}
+}
+
+// TestSpendWindowIsTheLongestAsked, so the guard reads the store once and every rule
+// has what it needs.
+func TestSpendWindowIsTheLongestAsked(t *testing.T) {
+	p, err := Parse([]byte(`
+version: 1
+rules:
+  - id: a
+    decision: ask
+    match: {spend: {within: 6h, moreThan: 1}}
+  - id: b
+    decision: deny
+    match: {spend: {within: 72h, moreThan: 100}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.SpendWindow(); got != 72*time.Hour {
+		t.Errorf("SpendWindow = %v, want 72h: the longer rule would see a short window", got)
+	}
+}
+
+// TestATruncatedWindowRefusesRatherThanUnderCounting.
+//
+// A store too large to read back to the start of the window yields a total that is a
+// floor, not a figure. Compared against a budget, a floor fails in the permissive
+// direction — and a store busy enough to overrun the reader is exactly the store
+// where spend is high, so the under-count would arrive at the moment the budget was
+// needed and would look like staying comfortably inside it.
+func TestATruncatedWindowRefusesRatherThanUnderCounting(t *testing.T) {
+	p := budgetPolicy(t)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+
+	// Five dollars visible against a ten dollar cap, but the read was cut short.
+	// Under the threshold and unable to prove it, so it refuses.
+	act.Spend = makeSpend(5, "s1", 1.00, time.Minute)
+	act.Spend.Truncated = true
+	d := p.Evaluate(act)
+	if d.Effect != EffectDeny {
+		t.Errorf("effect = %q, want deny: a partial total was treated as the total", d.Effect)
+	}
+	if !strings.Contains(d.Reason, "too low") {
+		t.Errorf("the reason does not say the figure is a floor: %q", d.Reason)
+	}
+
+	// The same truncation with the visible part already over the line is not
+	// ambiguous: the unread remainder cannot bring a total back down. This must
+	// deny by the rule itself, with the rule's own reason.
+	act.Spend = makeSpend(20, "s1", 1.00, time.Minute)
+	act.Spend.Truncated = true
+	d = p.Evaluate(act)
+	if d.Effect != EffectDeny {
+		t.Fatalf("effect = %q, want deny", d.Effect)
+	}
+	if strings.Contains(d.Reason, "too low") {
+		t.Errorf("reported as unreadable when the answer was known: %q", d.Reason)
+	}
+
+	// And an untruncated window under the threshold still allows, or the first
+	// assertion would pass for a budget that simply always refuses.
+	act.Spend = makeSpend(5, "s1", 1.00, time.Minute)
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q: a complete window under the limit was refused", d.Effect)
+	}
+}

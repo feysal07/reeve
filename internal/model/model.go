@@ -17,6 +17,37 @@ const (
 	AgentOpenCode   AgentID = "opencode"
 )
 
+// AllAgents lists every agent this build knows about.
+//
+// Kept beside the constants so that adding one and forgetting this list is a single
+// edit away from being noticed, rather than a silent omission from every report that
+// asks a question about all of them.
+func AllAgents() []AgentID {
+	return []AgentID{
+		AgentClaudeCode,
+		AgentCopilotCLI,
+		AgentCodexCLI,
+		AgentGeminiCLI,
+		AgentCursor,
+	}
+}
+
+// ExportsCostTelemetry reports whether this product can be configured to send its
+// own usage and cost to an endpoint the operator chooses.
+//
+// It is a fact about the vendor, not about an installation, which is why it is a
+// method on the id rather than a field read off disk.
+//
+// It exists so that a budget rule can say where it will not bind. Cursor sends usage
+// to Cursor's own service, readable back through their API; there is no OTLP endpoint
+// to point at Reeve. A budget on a machine running Cursor would therefore see no
+// spend from it, stay under every threshold and never fire. That is not a refusal
+// failing safe, it is a control that was never connected, and the only useful moment
+// to say so is before the policy is deployed.
+func (a AgentID) ExportsCostTelemetry() bool {
+	return a != AgentCursor
+}
+
 // Installation is one agent found on one machine.
 type Installation struct {
 	Agent        AgentID           `json:"agent"`

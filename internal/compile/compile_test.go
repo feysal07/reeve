@@ -502,3 +502,78 @@ rules:
 		}
 	}
 }
+
+// TestBudgetIsUnenforceableWhereNoCostIsReported.
+//
+// This is the one case where a compiler reports on something the guard cannot do
+// either, and the distinction is the whole point of the status.
+//
+// Every agent that exports usage to an endpoint you choose gets guard-only, which is
+// a promise: deploy the guard and the rule holds. Cursor sends its usage to Cursor,
+// so nothing it spends reaches the store the guard totals. The budget sits at zero
+// for it and never fires. Reporting that as guard-only would tell an operator the
+// guard has it covered, and they would stop looking — which is exactly how a control
+// ends up absent while everyone believes it is deployed.
+func TestBudgetIsUnenforceableWhereNoCostIsReported(t *testing.T) {
+	src := `
+version: 1
+settings:
+  guard:
+    enabled: true
+rules:
+  - id: cap
+    decision: deny
+    match:
+      spend: {within: 24h, moreThan: 50.00}
+`
+	for _, agent := range model.AllAgents() {
+		c, err := For(agent)
+		if err != nil {
+			t.Fatalf("%s: %v", agent, err)
+		}
+		res, err := c.Compile(mustParse(t, src), "linux")
+		if err != nil {
+			t.Fatalf("%s: %v", agent, err)
+		}
+		if len(res.Coverage) != 1 {
+			t.Fatalf("%s: coverage = %+v, want one entry", agent, res.Coverage)
+		}
+		cov := res.Coverage[0]
+
+		want := StatusGuardOnly
+		if !agent.ExportsCostTelemetry() {
+			want = StatusUnenforceable
+		}
+		if cov.Status != want {
+			t.Errorf("%s: status = %q, want %q", agent, cov.Status, want)
+		}
+		if cov.Reason == "" {
+			t.Errorf("%s: no reason given", agent)
+		}
+		// Nothing native may be emitted for a budget on any agent. Emitting the
+		// rest of the match without the threshold turns "deny once we have spent
+		// fifty dollars" into "deny", which is a different and much stricter rule.
+		if len(cov.Emitted) != 0 {
+			t.Errorf("%s: emitted %v for a budget; the threshold cannot be expressed",
+				agent, cov.Emitted)
+		}
+	}
+}
+
+// TestSummariseCountsUnenforceableSeparately. Folding it into guard-only would make
+// the headline number say the guard covers rules it does not.
+func TestSummariseCountsUnenforceableSeparately(t *testing.T) {
+	s := Summarise([]Coverage{
+		{Status: StatusNative},
+		{Status: StatusGuardOnly},
+		{Status: StatusUnenforceable},
+		{Status: StatusUnenforceable},
+	})
+	if s.Unenforceable != 2 {
+		t.Errorf("Unenforceable = %d, want 2", s.Unenforceable)
+	}
+	if s.GuardOnly != 1 {
+		t.Errorf("GuardOnly = %d, want 1; unenforceable rules were counted as covered",
+			s.GuardOnly)
+	}
+}
