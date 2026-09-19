@@ -14,10 +14,28 @@ const (
 	AgentCodexCLI   AgentID = "codex-cli"
 	AgentGeminiCLI  AgentID = "gemini-cli"
 	AgentCursor     AgentID = "cursor"
-	AgentOpenCode   AgentID = "opencode"
+	// AgentOpenCode is recognised in telemetry only. There is no adapter for it,
+	// so scan, guard and policy compile have never heard of it, and AllAgents does
+	// not list it.
+	//
+	// It is here rather than deleted because the metrics endpoint bounds agent
+	// labels to a known set, and a name that is not in that set is reported as
+	// "other". Somebody running OpenCode and exporting usage to this collector
+	// gets their spend attributed rather than lumped in with everything
+	// unrecognised, which is worth more than the tidiness of removing it.
+	//
+	// It is not an adapter written from documentation nobody has checked, which is
+	// what building one would be: nothing here has read a real OpenCode
+	// configuration file, and an adapter that has not is exactly the kind of
+	// confident wrongness the rest of this package exists to prevent.
+	AgentOpenCode AgentID = "opencode"
 )
 
-// AllAgents lists every agent this build knows about.
+// AllAgents lists every agent this build has an adapter for.
+//
+// Not every AgentID: AgentOpenCode is recognised in telemetry and nowhere else, and
+// including it here would put an agent into scan, install and doctor that none of them
+// can do anything with.
 //
 // Kept beside the constants so that adding one and forgetting this list is a single
 // edit away from being noticed, rather than a silent omission from every report that
