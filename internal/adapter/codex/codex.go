@@ -211,6 +211,8 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 		load(filepath.Join(env.WorkDir, ".codex", "config.toml"), model.ScopeProject),
 	)
 
+	sources = dedupeSources(sources)
+
 	for _, s := range sources {
 		inst.ConfigFiles = append(inst.ConfigFiles, model.ConfigFile{
 			Path:     s.path,
@@ -539,4 +541,22 @@ func detectAuth(env adapter.Env, sources []source) model.AuthConfig {
 		return model.AuthConfig{Method: "subscription", Provider: "chatgpt"}
 	}
 	return model.AuthConfig{Method: "unknown"}
+}
+
+// dedupeSources drops sources that resolve to a file already listed, which happens
+// when a developer's home directory is also their working directory.
+func dedupeSources(in []source) []source {
+	paths := make([]string, len(in))
+	for i, s := range in {
+		paths[i] = s.path
+	}
+	keep := adapter.Dedupe(paths)
+
+	out := in[:0]
+	for i, s := range in {
+		if keep[i] {
+			out = append(out, s)
+		}
+	}
+	return out
 }

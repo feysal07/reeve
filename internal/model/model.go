@@ -38,6 +38,13 @@ type Scope string
 
 const (
 	ScopeManaged Scope = "managed" // admin-owned: MDM, root-owned file, or server-pushed
+	// ScopeDefault is administrator-authored but overridable by the developer.
+	//
+	// It looks like a control and is not one. Gemini CLI has this explicitly, in a
+	// system-defaults file that any user setting overrides, and conflating it with
+	// ScopeManaged would let an organisation believe it had deployed a policy that
+	// every developer can silently ignore.
+	ScopeDefault Scope = "admin-default"
 	ScopeUser    Scope = "user"    // developer's own config
 	ScopeProject Scope = "project" // checked into the repository
 	ScopePlugin  Scope = "plugin"  // supplied by an installed plugin

@@ -19,6 +19,7 @@ type Rule func(model.Installation) []model.Finding
 // rules is the default rule set, evaluated in order.
 var rules = []Rule{
 	noManagedSettings,
+	adminConfigIsOnlyADefault,
 	bypassAvailable,
 	telemetryDisabled,
 	promptContentCaptured,
@@ -58,6 +59,43 @@ func noManagedSettings(inst model.Installation) []model.Finding {
 			"at any time without leaving a trace.",
 		Remedy: "Deploy a managed settings file through MDM or configuration management, " +
 			"owned by root or Administrators.",
+	}}
+}
+
+// adminConfigIsOnlyADefault fires when the only administrator-authored configuration
+// is one the developer can override.
+//
+// This is a distinct and more dangerous state than having none at all. Someone did the
+// work of writing a policy and believes it is deployed, so nobody goes looking again,
+// while every developer can silently ignore it. Gemini CLI has this explicitly, in a
+// system-defaults file that any user setting overrides.
+func adminConfigIsOnlyADefault(inst model.Installation) []model.Finding {
+	var sawDefault bool
+	for _, f := range inst.ConfigFiles {
+		if !f.Exists {
+			continue
+		}
+		if f.Scope == model.ScopeManaged {
+			return nil // a real control exists, so this is not the situation
+		}
+		if f.Scope == model.ScopeDefault {
+			sawDefault = true
+		}
+	}
+	if !sawDefault {
+		return nil
+	}
+	return []model.Finding{{
+		ID:       "policy.admin-config-is-overridable",
+		Severity: model.SeverityHigh,
+		Agent:    inst.Agent,
+		Title:    "Administrator configuration exists but can be overridden",
+		Detail: "The only administrator-authored configuration here is a file that any " +
+			"user setting overrides. That is more dangerous than having none, because " +
+			"someone wrote a policy and believes it is deployed, so nobody checks again, " +
+			"while every developer can ignore it.",
+		Remedy: "Move the settings that must hold into the administrator settings file, " +
+			"which takes precedence over a developer's own.",
 	}}
 }
 
