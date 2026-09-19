@@ -833,6 +833,40 @@ try {
     $entries = ([regex]::Matches((Get-Content $instSettings -Raw), "guard --agent claude-code")).Count
     Check "installing twice registers the guard once" ($entries -eq 1) "found $entries registrations"
 
+    # Registered is not firing. A hook can be in the file, answer perfectly when
+    # called by hand, and never once be called by the agent — and from the outside
+    # that looks exactly like a machine on which nothing bad happened.
+    $doctorOut = (& $reeve doctor 2>&1 | Out-String)
+    Check "doctor proves the registered hook actually answers" `
+        ($doctorOut -match "answers in") $doctorOut
+
+    # The probe runs the real guard, so it must not write a synthetic action into
+    # the record of what an agent actually attempted.
+    $docPayload = '{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Bash","tool_input":{"command":"echo hi"}}'
+    $docLog = Join-Path $instHome ".reeve\decisions.jsonl"
+    $null = ($docPayload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $instHome ".reeve\policy.yaml") --log $docLog --dry-run 2>&1)
+    $docBefore = if (Test-Path $docLog) { @(Get-Content $docLog).Count } else { 0 }
+    $null = (& $reeve doctor 2>&1)
+    $docAfter = if (Test-Path $docLog) { @(Get-Content $docLog).Count } else { 0 }
+    Check "doctor does not write its own probe into the audit trail" `
+        ($docBefore -eq $docAfter) "the log went from $docBefore to $docAfter lines"
+
+    # A hook pointing at a binary that is gone is the commonest way this breaks, and
+    # the one that looks like nothing at all. Installed from a copy which is then
+    # deleted, so this tests what actually happens rather than what a text
+    # substitution can manage.
+    $moved = Join-Path $Sandbox "reeve-about-to-move.exe"
+    Copy-Item $reeve $moved -Force
+    $null = (& $moved install 2>&1)
+    Remove-Item $moved -Force
+    $null = (& $reeve doctor 2>&1)
+    Check "doctor fails when the binary a hook points at is gone" `
+        ($LASTEXITCODE -eq 2) "it reported a healthy machine"
+
+    # Put a working hook back, so the uninstall checks below still have ours to remove.
+    $null = (& $reeve install 2>&1)
+
     $null = (& $reeve uninstall 2>&1)
     $afterUninstall = Get-Content $instSettings -Raw
     Check "uninstall removes the guard" `

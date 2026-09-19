@@ -61,6 +61,8 @@ func run(args []string) error {
 		return runInstall(args[1:])
 	case "uninstall":
 		return runUninstall(args[1:])
+	case "doctor":
+		return runDoctor(args[1:])
 	case "trial":
 		return runTrial(args[1:])
 	case "version", "--version", "-v":
@@ -89,6 +91,7 @@ Usage:
   reeve mcp <cmd>        Reconcile MCP servers against an approved list (check, list)
   reeve install          Register the guard in every agent on this machine
   reeve uninstall        Remove it again, leaving your own hooks alone
+  reeve doctor           Check the guard is registered AND actually answering
   reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
   reeve version          Print the version
   reeve help             Show this message

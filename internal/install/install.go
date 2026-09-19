@@ -150,6 +150,117 @@ func GuardArgs(opts Options, agent model.AgentID) string {
 	return cmd
 }
 
+// Registration is a guard hook found in an agent's configuration.
+type Registration struct {
+	Agent   model.AgentID
+	Name    string
+	Path    string
+	Command string
+}
+
+// Registered returns the guard hooks currently in each agent's configuration.
+//
+// It reads the command back out of the file rather than reconstructing what install
+// would write, because the two can differ: the binary may have moved, the policy path
+// may have changed, or somebody may have edited the hook by hand. What is in the file
+// is what the agent will run.
+func Registered(opts Options) []Registration {
+	var out []Registration
+	for _, in := range installers() {
+		path := in.path(opts)
+		if path == "" {
+			continue
+		}
+		cmd := commandIn(in, path)
+		if cmd == "" {
+			continue
+		}
+		out = append(out, Registration{
+			Agent: in.agent(), Name: in.name(), Path: path, Command: cmd,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// commandIn digs the guard's command line out of one agent's configuration.
+func commandIn(in agentInstaller, path string) string {
+	switch in.(type) {
+	case codexCLI:
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return ""
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.Contains(line, "command") && isOurs(line) {
+				// The command is a quoted TOML string on this line.
+				if a := strings.Index(line, `"`); a >= 0 {
+					if b := strings.LastIndex(line, `"`); b > a {
+						return line[a+1 : b]
+					}
+				}
+			}
+		}
+		return ""
+	case copilotCLI:
+		doc, err := readJSON(copilotHookFilePath(path))
+		if err != nil {
+			return ""
+		}
+		hooks, _ := doc["hooks"].(map[string]any)
+		for _, e := range asSlice(hooks["preToolUse"]) {
+			m, _ := e.(map[string]any)
+			exec, _ := m["exec"].(string)
+			if exec == "" {
+				continue
+			}
+			parts := []string{quoteIfSpaced(exec)}
+			for _, a := range asSlice(m["args"]) {
+				if s, ok := a.(string); ok {
+					parts = append(parts, quoteIfSpaced(s))
+				}
+			}
+			return strings.Join(parts, " ")
+		}
+		return ""
+	default:
+		doc, err := readJSON(path)
+		if err != nil {
+			return ""
+		}
+		hooks, _ := doc["hooks"].(map[string]any)
+		for _, e := range asSlice(hooks[hookKeyFor(in)]) {
+			m, _ := e.(map[string]any)
+			if s, _ := m["command"].(string); isOurs(s) {
+				return s
+			}
+			for _, h := range asSlice(m["hooks"]) {
+				hm, _ := h.(map[string]any)
+				if s, _ := hm["command"].(string); isOurs(s) {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+}
+
+func asSlice(v any) []any {
+	s, _ := v.([]any)
+	return s
+}
+
+func quoteIfSpaced(s string) string {
+	if strings.ContainsAny(s, " \t") {
+		return `"` + s + `"`
+	}
+	return s
+}
+
+// SplitCommand exposes the command-line splitter, so a caller that wants to run the
+// registered hook can turn the string back into a program and its arguments.
+func SplitCommand(command string) (string, []string) { return splitCommand(command) }
+
 // Run installs or removes the guard across every agent present.
 func Run(opts Options, remove bool) ([]Result, error) {
 	var out []Result

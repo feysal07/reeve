@@ -968,6 +968,46 @@ ENTRIES=$(grep -c "guard --agent claude-code" "$INST_HOME/.claude/settings.json"
     check "installing twice registers the guard once" 1 ||
     check "installing twice registers the guard once" 0 "found $ENTRIES registrations"
 
+# Registered is not firing. A hook can be in the file, answer perfectly when
+# called by hand, and never once be called by the agent — and from the outside
+# that looks exactly like a machine on which nothing bad happened.
+DOCTOR_OUT=$(env $INST_ENV "$REEVE" doctor 2>&1)
+case "$DOCTOR_OUT" in
+    *"answers in"*) check "doctor proves the registered hook actually answers" 1 ;;
+    *) check "doctor proves the registered hook actually answers" 0 "$DOCTOR_OUT" ;;
+esac
+
+# The probe runs the real guard, so it must not write a synthetic action into
+# the record of what an agent actually attempted.
+DOC_PAYLOAD='{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Bash","tool_input":{"command":"echo hi"}}'
+printf '%s' "$DOC_PAYLOAD" | env $INST_ENV "$REEVE" guard --agent claude-code \
+    --policy "$INST_HOME/.reeve/policy.yaml" \
+    --log "$INST_HOME/.reeve/decisions.jsonl" --dry-run >/dev/null 2>&1
+DOC_BEFORE=$(wc -l < "$INST_HOME/.reeve/decisions.jsonl" 2>/dev/null || echo 0)
+env $INST_ENV "$REEVE" doctor >/dev/null 2>&1
+DOC_AFTER=$(wc -l < "$INST_HOME/.reeve/decisions.jsonl" 2>/dev/null || echo 0)
+[ "$DOC_BEFORE" = "$DOC_AFTER" ] &&
+    check "doctor does not write its own probe into the audit trail" 1 ||
+    check "doctor does not write its own probe into the audit trail" 0 \
+        "the log went from $DOC_BEFORE to $DOC_AFTER lines"
+
+# A hook pointing at a binary that is gone is the commonest way this breaks, and
+# the one that looks like nothing at all. Installed from a copy which is then
+# deleted, rather than by editing the hook, so this tests what actually happens
+# rather than what a text substitution can manage.
+MOVED="$SANDBOX/reeve-about-to-move"
+cp "$REEVE" "$MOVED"
+env $INST_ENV "$MOVED" install >/dev/null 2>&1
+rm -f "$MOVED"
+
+env $INST_ENV "$REEVE" doctor >/dev/null 2>&1
+[ $? = 2 ] &&
+    check "doctor fails when the binary a hook points at is gone" 1 ||
+    check "doctor fails when the binary a hook points at is gone" 0         "it reported a healthy machine"
+
+# Put a working hook back, so the uninstall checks below still have ours to remove.
+env $INST_ENV "$REEVE" install >/dev/null 2>&1
+
 env $INST_ENV "$REEVE" uninstall >/dev/null 2>&1
 grep -q "guard --agent" "$INST_HOME/.claude/settings.json" &&
     check "uninstall removes the guard" 0 "the hook is still there" ||
