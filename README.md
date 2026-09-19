@@ -62,6 +62,10 @@ export, so telemetry there means reading their API rather than receiving OTLP.
 
 ## Try it
 
+```bash
+./examples/walkthrough.sh
+```
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1
 ```

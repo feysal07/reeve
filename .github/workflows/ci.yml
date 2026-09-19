@@ -39,6 +39,30 @@ jobs:
       - name: Build
         run: go build ./...
 
+  # Both walkthroughs assert the same things about the same sandbox, in two
+  # languages. Running each on the platform it is written for is what stops them
+  # drifting apart in silence, which is the only real risk of keeping two.
+  walkthrough:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            run: sh examples/walkthrough.sh --quiet
+          - os: macos-latest
+            run: sh examples/walkthrough.sh --quiet
+          - os: windows-latest
+            run: pwsh -File examples/walkthrough.ps1 -Quiet
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Walk through every plane against a sandbox
+        run: ${{ matrix.run }}
+
   chart:
     runs-on: ubuntu-latest
     steps:

@@ -10,9 +10,15 @@ agents honour. Your Claude Code configuration is read, never written.
 
 ## The scripted walkthrough
 
-Windows blocks unsigned scripts by default, so run it like this:
+On macOS or Linux:
 
-```powershell
+```
+./examples/walkthrough.sh
+```
+
+On Windows. Unsigned scripts are blocked by default, so run it like this:
+
+```
 powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1
 ```
 
@@ -20,16 +26,23 @@ powershell -ExecutionPolicy Bypass -File .\examples\walkthrough.ps1
 your machine. If your policy already allows local scripts, `.\examples\walkthrough.ps1`
 works on its own.
 
-It builds the binary, creates a sandbox with four deliberately badly configured
+The two are the same walkthrough in two languages and assert the same checks. CI runs
+the shell one on Linux and macOS and the PowerShell one on Windows, so neither quietly
+stops working while the other is maintained.
+
+Either builds the binary, creates a sandbox with four deliberately badly configured
 agents, and runs all four planes in order: discovery, policy, enforcement, telemetry.
-Add `-KeepSandbox` to keep the artifacts.
+Add `--keep-sandbox` (or `-KeepSandbox`) to keep the artifacts.
 
 The sandbox has a home directory of its own, which it points the agents at for the
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
 It ends with a summary like `All 41 checks passed.` and exits non-zero if any did not,
-so it doubles as a smoke test. Add `-Quiet` for just the checks.
+so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
+
+The shell version uses `jq` or `python3` to read the scan's JSON. With neither
+installed it says which checks it skipped rather than dropping them quietly.
 
 The collector binds to a port the operating system picks, so an existing collector on
 4317 or 4318 does not clash. That matters if you run the claude-code-otel stack.
