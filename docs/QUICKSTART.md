@@ -38,7 +38,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 41 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 44 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -52,8 +52,9 @@ Expect roughly this:
 - **30 findings** across four agents, including a Codex install running with no
   sandbox and no prompting, a Copilot install exporting prompt content, and a Gemini
   install whose administrator file the developer has already overridden.
-- **Eight enforcement decisions**, including Gemini, whose hook names its tools,
-  its event and the field in its reply differently from everyone else.
+- **Ten enforcement decisions**, including Gemini and Cursor, which name their tools,
+  their events and the field in their reply differently from everyone else. Cursor
+  names no tool at all for a shell command, so its kind comes from the event.
 - **Five failure cases**: an unparseable policy denies, an absent policy allows, an
   unreadable request denies, and an agent name Reeve does not recognise denies rather
   than guessing at the shape of a reply.

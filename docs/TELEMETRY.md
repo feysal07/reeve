@@ -6,16 +6,18 @@ and what did the policy actually stop.
 
 ## Why not just point an off-the-shelf collector at the agents
 
-You can, and you will get three incompatible datasets.
+You can, and you will get four incompatible datasets.
 
 Every agent names the same measurement differently. Claude Code emits
 `claude_code.token.usage` with a `type` attribute; Copilot emits
-`gen_ai.client.token.usage` with `gen_ai.token.type`; Codex emits its own event stream.
-Summing them requires knowing all three.
+`gen_ai.client.token.usage` with `gen_ai.token.type`; Gemini emits
+`gemini_cli.token.usage`; Codex emits its own event stream rather than metrics at all.
+Summing them requires knowing all four. Cursor emits nothing locally: its usage lives
+in Cursor's own service and is read back from their API.
 
-They also disagree about cost. Two of the three report none at all. The one that does
-calls it an estimate at published list price, which is wrong for any organisation with
-negotiated rates. So Reeve computes cost centrally from token counts, using a price
+They also disagree about cost. Most report none at all. The one that does calls it an
+estimate at published list price, which is wrong for any organisation with negotiated
+rates. So Reeve computes cost centrally from token counts, using a price
 table you supply, and keeps the vendor's own figure in a separate column so the two can
 be compared rather than conflated.
 
