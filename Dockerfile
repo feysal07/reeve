@@ -35,6 +35,11 @@ COPY --from=build /out/reeve /usr/local/bin/reeve
 # written to, so the root filesystem can be mounted read-only.
 VOLUME ["/var/lib/reeve"]
 
+# 4318 is the OTLP over HTTP port, and it is deliberately not moved. An agent's
+# exporter looks there by default, so keeping it is what lets an agent find this
+# collector without being configured to. Inside a container it can never clash: the
+# namespace holds nothing else. On a host that already runs a collector, remap it
+# rather than changing it, with -p 14318:4318.
 EXPOSE 4318
 
 USER nonroot:nonroot

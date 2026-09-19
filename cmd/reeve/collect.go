@@ -105,6 +105,27 @@ See docs/TELEMETRY.md`)
 	// asked which agents are in use, how much is being spent and how busy the
 	// organisation is, none of which is any of their business. Keeping the two apart
 	// makes the exposure decision once, per port, rather than once per route.
+	// Bound before anything starts, so the common failure can be explained rather than
+	// reported. 4318 being the default is exactly why it is worth keeping and exactly
+	// why something else is often already on it.
+	otlpLn, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return fmt.Errorf(`listen on %s: %w
+
+4318 is the default port for OTLP over HTTP, which is why an agent finds this
+collector without being told where it is, and why something else is often already
+there: a Docker Desktop collector, a WSL one, or another copy of this.
+
+Give it a port of its own and tell the agents about that instead:
+
+  reeve collect --addr 127.0.0.1:14318 --store %s
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318
+
+In a container, keep 4318 on the inside and remap it on the outside:
+
+  docker run -p 14318:4318 ...`, *addr, err, *store)
+	}
+
 	var metricsLn net.Listener
 	if *metricsAddr != "" {
 		ln, err := net.Listen("tcp", *metricsAddr)
@@ -183,7 +204,7 @@ See docs/TELEMETRY.md`)
 		}
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := srv.Serve(otlpLn); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
