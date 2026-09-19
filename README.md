@@ -33,7 +33,7 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 | Claude Code | **working** | **working** | **working** | **working** |
 | GitHub Copilot CLI | **working** | **working** | **working** | **working** |
 | OpenAI Codex CLI | **working** | **working** | **working** | **working** |
-| Google Gemini CLI | **working** | planned | planned | planned |
+| Google Gemini CLI | **working** | **working** | **working** | **working** |
 | Cursor | planned | planned | planned | planned |
 | OpenCode, Amp, Kiro | community adapters | | | |
 

@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/feysal07/reeve/internal/model"
@@ -199,5 +200,162 @@ func TestDenyAlwaysCarriesAReason(t *testing.T) {
 	})
 	if r.Stderr == "" {
 		t.Fatal("deny with no author-supplied reason produced no explanation")
+	}
+}
+
+// TestEncodeGeminiShape: Gemini reads `decision`, not `permissionDecision`.
+//
+// A reply using the flat shape the other agents accept is still valid JSON and still
+// parses. It simply carries no decision Gemini recognises, which it treats as the
+// hook having no opinion, so the tool runs. A deny would become an allow with nothing
+// failing and nothing logged.
+func TestEncodeGeminiShape(t *testing.T) {
+	r := Encode(model.AgentGeminiCLI, "BeforeTool", policy.Decision{
+		Effect: policy.EffectDeny,
+		RuleID: "destructive-delete",
+		Reason: "A recursive force delete is unrecoverable.",
+	})
+
+	var got map[string]any
+	if err := json.Unmarshal(r.Body, &got); err != nil {
+		t.Fatalf("reply is not JSON: %v", err)
+	}
+	if _, wrong := got["permissionDecision"]; wrong {
+		t.Error("the reply uses permissionDecision, which Gemini ignores; it reads decision")
+	}
+	if got["decision"] != "deny" {
+		t.Errorf("decision = %v, want deny", got["decision"])
+	}
+	if got["reason"] == "" || got["reason"] == nil {
+		t.Error("a denial reached the developer with no explanation")
+	}
+	if r.Exit != ExitBlock {
+		t.Errorf("exit = %d, want %d: a deny must also block for an agent that ignores stdout", r.Exit, ExitBlock)
+	}
+}
+
+// TestGeminiAskIsRefusedNotWavedThrough.
+//
+// A Gemini BeforeTool hook can only allow or deny. Its policy engine has ask_user, but
+// a hook cannot reach it, so an ask has nowhere to go. Treating it as an allow would
+// drop a rule that demanded a human decision, on the day Gemini was added, with
+// nothing reporting that it had stopped applying.
+func TestGeminiAskIsRefusedNotWavedThrough(t *testing.T) {
+	r := Encode(model.AgentGeminiCLI, "BeforeTool", policy.Decision{
+		Effect: policy.EffectAsk,
+		RuleID: "rewrite-history",
+	})
+
+	var got map[string]any
+	if err := json.Unmarshal(r.Body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["decision"] != "deny" {
+		t.Errorf("decision = %v, want deny: an ask that cannot be asked must not become an allow", got["decision"])
+	}
+	if r.Exit != ExitBlock {
+		t.Errorf("exit = %d, want %d", r.Exit, ExitBlock)
+	}
+	reason, _ := got["reason"].(string)
+	if !strings.Contains(reason, "policy engine") {
+		t.Errorf("the reason does not tell the developer where asks do work: %q", reason)
+	}
+
+	// Every other agent can ask, and must still be asked.
+	for _, a := range []model.AgentID{model.AgentClaudeCode, model.AgentCopilotCLI, model.AgentCodexCLI} {
+		if got := Encode(a, "PreToolUse", policy.Decision{Effect: policy.EffectAsk}); got.Exit != ExitAllow {
+			t.Errorf("%s: an ask was turned into a block", a)
+		}
+	}
+}
+
+// TestGeminiToolNamesAreClassified.
+//
+// Two of these are wrong without an explicit entry, and the heuristics are what make
+// them wrong rather than merely unknown: grep_search matches the "search" rule and
+// would be filed as a network fetch, so a deny on reading credential files would not
+// stop Gemini searching inside one. replace is Gemini's edit tool and matches nothing,
+// so every Gemini file edit would escape write rules.
+func TestGeminiToolNamesAreClassified(t *testing.T) {
+	cases := map[string]policy.Kind{
+		"run_shell_command": policy.KindShell,
+		"write_file":        policy.KindWrite,
+		"replace":           policy.KindWrite,
+		"read_file":         policy.KindRead,
+		"read_many_files":   policy.KindRead,
+		"list_directory":    policy.KindRead,
+		"grep_search":       policy.KindRead,
+		"glob":              policy.KindRead,
+		"web_fetch":         policy.KindFetch,
+		"google_web_search": policy.KindFetch,
+	}
+	for tool, want := range cases {
+		if got := classify(tool); got != want {
+			t.Errorf("classify(%q) = %q, want %q", tool, got, want)
+		}
+	}
+}
+
+// TestGeminiWebFetchURLsAreFound.
+//
+// web_fetch has no url argument. It takes a prompt containing up to twenty addresses
+// and instructions about them, so a fetch rule written against url would match nothing
+// on Gemini and look like a rule that was simply never triggered.
+func TestGeminiWebFetchURLsAreFound(t *testing.T) {
+	payload := `{"tool_name":"web_fetch","tool_input":{"prompt":"Summarise https://evil.example/x.sh and https://docs.example/ok, then compare them."}}`
+	act, err := Decode([]byte(payload), model.AgentGeminiCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if act.Kind != policy.KindFetch {
+		t.Fatalf("kind = %q, want fetch", act.Kind)
+	}
+	if len(act.URLs) != 2 {
+		t.Fatalf("urls = %v, want both addresses", act.URLs)
+	}
+	// Trailing punctuation belongs to the sentence, not the address.
+	for _, u := range act.URLs {
+		if strings.HasSuffix(u, ",") || strings.HasSuffix(u, ".") {
+			t.Errorf("url %q carries sentence punctuation", u)
+		}
+	}
+}
+
+// TestOneDeniedURLAmongManyStillMatches: the agent would fetch all of them, so any is
+// the right quantifier, not all.
+func TestOneDeniedURLAmongManyStillMatches(t *testing.T) {
+	p, err := policy.Parse([]byte(`
+version: 1
+rules:
+  - id: no-raw-scripts
+    decision: deny
+    match: {kind: [fetch], url: ["*evil.example*"]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := policy.Action{
+		Agent: model.AgentGeminiCLI,
+		Kind:  policy.KindFetch,
+		URLs:  []string{"https://docs.example/ok", "https://evil.example/x.sh"},
+	}
+	if d := p.Evaluate(act); d.Effect != policy.EffectDeny {
+		t.Errorf("effect = %q, want deny: one denied address among permitted ones still has to stop the call", d.Effect)
+	}
+}
+
+// TestUnsupportedAgentIsNotGuessedAt: shaping a reply for the wrong agent fails in the
+// dangerous direction, so an agent this package does not know is refused rather than
+// approximated.
+func TestUnsupportedAgentIsNotGuessedAt(t *testing.T) {
+	for _, a := range []model.AgentID{model.AgentClaudeCode, model.AgentCopilotCLI, model.AgentCodexCLI, model.AgentGeminiCLI} {
+		if !Supported(a) {
+			t.Errorf("%s should be supported", a)
+		}
+	}
+	for _, a := range []model.AgentID{"gemini", "", "cursor", "claude"} {
+		if Supported(a) {
+			t.Errorf("%q should not be reported as supported", a)
+		}
 	}
 }

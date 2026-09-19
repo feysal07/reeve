@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
 )
 
@@ -65,8 +66,13 @@ rules:
 }
 
 // TestCommandContainsIsNeverNarrowedSilently: a rule written to catch a substring
-// anywhere must not be compiled into a prefix rule, which would quietly enforce
+// anywhere must never be compiled into a prefix rule, which would quietly enforce
 // something narrower than the operator asked for.
+//
+// The invariant is about narrowing, not about failing. Most targets can only match
+// leading tokens, so for them the only honest outcome is to emit nothing and report
+// the rule as guard-only. Gemini's policy engine takes a regex, so it can say exactly
+// what was meant; it is held to the stronger standard of proving it did.
 func TestCommandContainsIsNeverNarrowedSilently(t *testing.T) {
 	p := mustParse(t, `
 version: 1
@@ -85,6 +91,23 @@ rules:
 			t.Fatalf("%s: coverage entries = %d, want 1", c.Agent(), len(res.Coverage))
 		}
 		cov := res.Coverage[0]
+
+		if c.Agent() == model.AgentGeminiCLI {
+			// It must have used the regex, and it must not have invented a prefix.
+			if cov.Status != StatusNative {
+				t.Errorf("%s: status = %q, want native: a regex expresses this exactly",
+					c.Agent(), cov.Status)
+			}
+			body := string(res.Artifacts[0].Content)
+			if !strings.Contains(body, "commandRegex") {
+				t.Errorf("%s: no commandRegex was emitted for a substring rule", c.Agent())
+			}
+			if strings.Contains(body, "commandPrefix") {
+				t.Errorf("%s: a substring rule produced a commandPrefix, which matches only leading tokens", c.Agent())
+			}
+			continue
+		}
+
 		if cov.Status != StatusGuardOnly {
 			t.Errorf("%s: status = %q, want guard-only: a substring match has no native equivalent",
 				c.Agent(), cov.Status)

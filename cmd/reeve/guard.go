@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/feysal07/reeve/internal/config"
@@ -33,7 +34,7 @@ import (
 // is no intent to violate, so the action proceeds and the guard says so.
 func runGuard(args []string) error {
 	fs := flag.NewFlagSet("guard", flag.ContinueOnError)
-	agentFlag := fs.String("agent", "", "which agent is calling: claude-code, copilot-cli, codex-cli")
+	agentFlag := fs.String("agent", "", "which agent is calling: "+strings.Join(hook.SupportedAgents(), ", "))
 	policyPath := fs.String("policy", "", "path to the policy file (default: the first policy found)")
 	logPath := fs.String("log", "", "append decisions to this file as JSON lines")
 	resourcesPath := fs.String("resources", "", "resource registry, to resolve which environment an action targets")
@@ -45,6 +46,17 @@ func runGuard(args []string) error {
 	agent := model.AgentID(*agentFlag)
 	if agent == "" {
 		return errors.New("--agent is required so the reply can be shaped for the right agent")
+	}
+	if !hook.Supported(agent) {
+		// A misspelled agent is more dangerous than a missing one. The reply would
+		// be shaped for nobody, and an agent that recognises no decision in it
+		// treats the hook as having no opinion, so the action goes ahead. Exit 2 is
+		// the one signal every supported agent reads as a refusal, so it is the
+		// only thing safe to say when the shape of the reply is unknown.
+		fmt.Fprintf(os.Stderr,
+			"reeve guard: unknown --agent %q, so no reply can be shaped for it. Supported: %s\n",
+			agent, strings.Join(hook.SupportedAgents(), ", "))
+		os.Exit(int(hook.ExitBlock))
 	}
 
 	raw, err := io.ReadAll(os.Stdin)
@@ -235,7 +247,7 @@ type decisionRecord struct {
 	Tool        string        `json:"tool,omitempty"`
 	Command     string        `json:"command,omitempty"`
 	Paths       []string      `json:"paths,omitempty"`
-	URL         string        `json:"url,omitempty"`
+	URLs        []string      `json:"urls,omitempty"`
 	MCPServer   string        `json:"mcpServer,omitempty"`
 	MCPTool     string        `json:"mcpTool,omitempty"`
 	Environment string        `json:"environment,omitempty"`
@@ -267,7 +279,7 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 		Tool:        a.ToolName,
 		Command:     a.Command,
 		Paths:       a.Paths,
-		URL:         a.URL,
+		URLs:        a.URLs,
 		MCPServer:   a.MCPServer,
 		MCPTool:     a.MCPTool,
 		Environment: a.Environment,

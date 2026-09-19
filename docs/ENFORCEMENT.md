@@ -179,6 +179,45 @@ allowed_approval_policies = ["on-request"]
 allowed_sandbox_modes = ["read-only", "workspace-write"]
 ```
 
+### Gemini CLI
+
+Gemini has two configuration systems, and the guard belongs in the settings file. In
+`/etc/gemini-cli/settings.json`, or `%ProgramData%\gemini-cli\settings.json`:
+
+```json
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "reeve-guard",
+            "type": "command",
+            "command": "reeve guard --agent gemini-cli --log /var/log/reeve/decisions.jsonl"
+          }
+        ]
+      }
+    ]
+  },
+  "security": { "disableYoloMode": true }
+}
+```
+
+The event is `BeforeTool`, not `PreToolUse`, and the reply is read from a field spelled
+`decision` rather than `permissionDecision`. A reply in any other agent's shape parses
+as JSON, carries nothing Gemini recognises, and is treated as the hook having no
+opinion, so the tool runs. That is why `--agent` is required and why an unrecognised
+value is refused rather than guessed at.
+
+**Gemini hooks cannot ask.** `BeforeTool` returns allow or deny and has no third
+option. A rule whose decision is `ask` is therefore refused by the guard, with a reason
+saying so, rather than allowed: turning a rule that demanded a human decision into one
+that needs none would remove the control the day Gemini was added, and nothing would
+report it. Gemini's policy engine *can* prompt, and `reeve policy compile` writes ask
+rules into it, so that is where they belong. If you would rather those rules prompted
+than blocked, deploy the compiled policy file and leave the guard unregistered.
+
 ## Knowing what an action actually targets
 
 A rule can only be as good as what it can see. Matching the text "--context prod"
@@ -261,9 +300,11 @@ destination, the MCP allow list and the guard registration.
 
 ### Read the coverage report
 
-Native configuration is strictly less expressive than the guard. Every agent matches a
-command by its leading tokens or a path by a glob. None can match a substring in the
-middle of a command line, and none understands the neutral action kinds.
+Native configuration is less expressive than the guard, and how much less depends on
+the agent. Most match a command by its leading tokens or a path by a glob, cannot
+match a substring in the middle of a command line, and do not understand the neutral
+action kinds. Gemini's policy engine is the exception: it takes a regular expression
+and an `ask_user` decision, so it carries rules the others cannot.
 
 So the compiler reports what happened to every rule:
 
@@ -273,10 +314,27 @@ So the compiler reports what happened to every rule:
 | `partial` | Some of the rule compiled. The guard covers the rest. |
 | `guard-only` | Nothing about this rule can be expressed natively. |
 
-Compiling the shipped baseline against any agent reports one rule enforced natively
-and eight guard-only, because the baseline leans on substring matching. That number is
-not a defect in the compiler. It is the honest measure of how much of a real policy an
-agent can enforce by itself, and it is the reason both layers are deployed together.
+Compiling the shipped baseline reports, out of eleven rules:
+
+| Agent | native | partial | guard-only |
+|---|---|---|---|
+| Claude Code | 1 | 0 | 10 |
+| GitHub Copilot CLI | 1 | 0 | 10 |
+| Codex CLI | 1 | 0 | 10 |
+| Gemini CLI | 6 | 2 | 3 |
+
+Those numbers are not a defect in the compiler. They are the honest measure of how
+much of a real policy each agent can enforce by itself, and they are the reason both
+layers are deployed together.
+
+Gemini scores higher because its rules take a regex, so the baseline's substring
+matching survives translation. It is not a clean sweep: three rules still need the
+guard, two of them because they combine a command pattern and a substring with AND,
+and Gemini tests one condition per rule. Emitting both as separate rules would match
+either instead of both, turning a narrow prompt about force-pushing to a protected
+branch into one that fires on any command containing " main". The compiler reports
+those as guard-only rather than shipping a rule that shares a name with the
+operator's intent and not its meaning.
 
 A rule is never quietly narrowed to make it fit. A rule written to catch `rm -rf`
 anywhere would become a rule catching it only at the start of a command, which is a

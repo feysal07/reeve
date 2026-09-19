@@ -190,7 +190,7 @@ func (m Match) matches(a Action) bool {
 	if len(m.Path) > 0 && !anyPathGlob(m.Path, a.Paths) {
 		return false
 	}
-	if len(m.URL) > 0 && !anyGlob(m.URL, a.URL) {
+	if len(m.URL) > 0 && !anyGlobAny(m.URL, a.URLs) {
 		return false
 	}
 	if len(m.MCPServer) > 0 && !anyEqualFold(m.MCPServer, a.MCPServer) {
@@ -263,6 +263,19 @@ func anyGlob(patterns []string, v string) bool {
 	lower := strings.ToLower(v)
 	for _, p := range patterns {
 		if globMatch(strings.ToLower(p), lower) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyGlobAny reports whether any of the values matches any of the patterns.
+//
+// Any, not all: one denied address among twenty permitted ones still has to stop the
+// call, because the agent would fetch all of them.
+func anyGlobAny(patterns []string, values []string) bool {
+	for _, v := range values {
+		if anyGlob(patterns, v) {
 			return true
 		}
 	}

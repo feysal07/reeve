@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/adapter/claudecode"
 	"github.com/feysal07/reeve/internal/adapter/copilot"
+	"github.com/feysal07/reeve/internal/adapter/gemini"
 	"github.com/feysal07/reeve/internal/findings"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
@@ -56,6 +58,27 @@ func TestCompiledConfigSatisfiesTheScanner(t *testing.T) {
 				write(t, filepath.Join(dir, "GitHub", "Copilot", "managed-settings.json"), artifacts[0].Content)
 				for _, a := range artifacts[1:] {
 					write(t, filepath.Join(dir, "GitHub", "Copilot", "policy.d", "reeve.json"), a.Content)
+				}
+				env.GOOS = "windows"
+				env.ProgramData = dir
+			},
+		},
+		{
+			name:  "gemini cli",
+			agent: model.AgentGeminiCLI,
+			adapt: gemini.New(),
+			install: func(t *testing.T, env *adapter.Env, artifacts []Artifact) {
+				// Gemini gets two files in two formats, and both have to land
+				// where the adapter looks or the round trip proves nothing about
+				// the half that went missing.
+				dir := filepath.Join(t.TempDir(), "ProgramData")
+				for _, a := range artifacts {
+					switch {
+					case strings.HasSuffix(a.Filename, ".toml"):
+						write(t, filepath.Join(dir, "gemini-cli", "policies", "reeve.toml"), a.Content)
+					default:
+						write(t, filepath.Join(dir, "gemini-cli", "settings.json"), a.Content)
+					}
 				}
 				env.GOOS = "windows"
 				env.ProgramData = dir

@@ -93,9 +93,11 @@ func runPolicyTest(args []string) error {
 		ToolName:  *tool,
 		Kind:      policy.Kind(*kind),
 		Command:   *command,
-		URL:       *url,
 		MCPServer: *mcpServer,
 		MCPTool:   *mcpTool,
+	}
+	if *url != "" {
+		act.URLs = []string{*url}
 	}
 	if *path != "" {
 		act.Paths = []string{*path}
@@ -118,8 +120,8 @@ func runPolicyTest(args []string) error {
 	if len(act.Paths) > 0 {
 		fmt.Printf("  path    : %s\n", strings.Join(act.Paths, ", "))
 	}
-	if act.URL != "" {
-		fmt.Printf("  url     : %s\n", act.URL)
+	if len(act.URLs) > 0 {
+		fmt.Printf("  url     : %s\n", strings.Join(act.URLs, ", "))
 	}
 	if act.MCPServer != "" {
 		fmt.Printf("  mcp     : %s/%s\n", act.MCPServer, act.MCPTool)
@@ -152,7 +154,7 @@ func inferKind(a policy.Action) policy.Kind {
 		return policy.KindMCP
 	case a.Command != "":
 		return policy.KindShell
-	case a.URL != "":
+	case len(a.URLs) > 0:
 		return policy.KindFetch
 	case len(a.Paths) > 0:
 		return policy.KindRead

@@ -107,6 +107,21 @@ var toolKinds = map[string]policy.Kind{
 	"view":        policy.KindRead,
 	"fetch":       policy.KindFetch,
 
+	// Gemini CLI. Three of these would be misclassified without an entry, and one
+	// of them dangerously: grep_search matches the "search" heuristic below and
+	// would be filed as a network fetch, so a deny on reading **/.env would not
+	// stop Gemini searching inside it. "replace" is Gemini's edit tool and matches
+	// no heuristic at all, so every Gemini file edit would escape write rules.
+	"run_shell_command": policy.KindShell,
+	"write_file":        policy.KindWrite,
+	"replace":           policy.KindWrite,
+	"list_directory":    policy.KindRead,
+	"grep_search":       policy.KindRead,
+	"read_many_files":   policy.KindRead,
+	"web_fetch":         policy.KindFetch,
+	"google_web_search": policy.KindFetch,
+	"save_memory":       policy.KindOther,
+
 	// Codex CLI
 	"exec":        policy.KindShell,
 	"local_shell": policy.KindShell,
@@ -172,7 +187,7 @@ func populate(a *policy.Action, input map[string]any) {
 		a.Command = v
 	}
 	if v := firstString(input, urlKeys); v != "" {
-		a.URL = v
+		a.URLs = append(a.URLs, v)
 	}
 	for _, k := range pathKeys {
 		if v, ok := input[k].(string); ok && v != "" {
@@ -188,6 +203,19 @@ func populate(a *policy.Action, input map[string]any) {
 				}
 			}
 		}
+	}
+
+	// Gemini's web_fetch takes no url field at all: it is handed a prompt that
+	// contains up to twenty addresses and told what to do with them. A fetch rule
+	// written against url would therefore match nothing on Gemini, and would look
+	// like a rule that was simply never triggered.
+	if a.Kind == policy.KindFetch {
+		for _, v := range input {
+			if s, ok := v.(string); ok {
+				a.URLs = append(a.URLs, extractURLs(s)...)
+			}
+		}
+		a.URLs = dedupe(a.URLs)
 	}
 
 	if a.Kind == policy.KindMCP {
@@ -222,4 +250,65 @@ func splitMCPName(tool string) (server, name string) {
 		return parts[0], ""
 	}
 	return "", ""
+}
+
+// extractURLs pulls http and https addresses out of free text.
+//
+// It exists for agents that do not pass a fetch target in a field of its own. The
+// alternative is a fetch rule that matches nothing for those agents, which is worse
+// than a rule that occasionally matches an address mentioned in passing: the first
+// fails silently, and the second announces itself.
+func extractURLs(s string) []string {
+	var out []string
+	lower := strings.ToLower(s)
+	for i := 0; i < len(lower); {
+		j := strings.Index(lower[i:], "http")
+		if j < 0 {
+			break
+		}
+		start := i + j
+		rest := lower[start:]
+		if !strings.HasPrefix(rest, "http://") && !strings.HasPrefix(rest, "https://") {
+			i = start + 4
+			continue
+		}
+		end := start
+		for end < len(s) && !isURLTerminator(s[end]) {
+			end++
+		}
+		// Trailing punctuation belongs to the sentence, not the address.
+		for end > start && strings.ContainsRune(".,;:!?)]}'\"", rune(s[end-1])) {
+			end--
+		}
+		if end > start {
+			out = append(out, s[start:end])
+		}
+		i = end
+		if i == start {
+			i = start + 1
+		}
+	}
+	return out
+}
+
+func isURLTerminator(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '<' || c == '>' || c == '"' || c == '`'
+}
+
+// dedupe removes repeats while keeping the order, so a decision log reads the way the
+// request did.
+func dedupe(in []string) []string {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, v := range in {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }

@@ -92,7 +92,8 @@ Policy commands:
     --agent, --platform, --out <dir>, --strict, --quiet
 
 Guard flags (reeve guard is invoked by an agent, not usually by hand):
-  --agent <id>           Required: claude-code, copilot-cli or codex-cli
+  --agent <id>           Required: claude-code, copilot-cli, codex-cli or gemini-cli
+                         An unrecognised value is refused rather than guessed at
   --policy <file>        Policy to enforce (default: the first one found)
   --log <file>           Append decisions as JSON lines
   --dry-run              Evaluate and log, but always allow

@@ -51,8 +51,10 @@ type Action struct {
 	Command string `json:"command,omitempty"`
 	// Paths are the files an action reads or writes. More than one is possible.
 	Paths []string `json:"paths,omitempty"`
-	// URL is the target of a network fetch.
-	URL string `json:"url,omitempty"`
+	// URLs are the targets of a network fetch. More than one is possible: Gemini's
+	// web_fetch takes up to twenty in a single call, and matching only the first
+	// would let a denied address through in the company of permitted ones.
+	URLs []string `json:"urls,omitempty"`
 	// MCPServer and MCPTool identify an MCP call.
 	MCPServer string `json:"mcpServer,omitempty"`
 	MCPTool   string `json:"mcpTool,omitempty"`

@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
@@ -38,6 +39,13 @@ func Encode(agent model.AgentID, event string, d policy.Decision) Response {
 	reason := d.Reason
 	if reason == "" {
 		reason = defaultReason(d)
+	}
+
+	// Gemini is handled before the others because its reply differs in shape as
+	// well as in spelling, and because it is the one agent whose protocol cannot
+	// carry every decision Reeve can make.
+	if agent == model.AgentGeminiCLI {
+		return encodeGemini(d, reason)
 	}
 
 	var body []byte
@@ -115,4 +123,79 @@ func defaultReason(d policy.Decision) string {
 	default:
 		return ""
 	}
+}
+
+// geminiResponse is what a Gemini CLI BeforeTool hook writes.
+//
+// The field is `decision`, not `permissionDecision`. A reply using any other spelling
+// is still valid JSON and still parses, carries no decision Gemini recognises, and is
+// treated as no opinion: the tool runs. A deny would become an allow with nothing
+// logged and nothing failing, which is the single outcome this package exists to
+// prevent.
+type geminiResponse struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// encodeGemini renders a decision for Gemini CLI.
+//
+// Gemini's hook protocol has two decisions, allow and deny. Its policy engine has a
+// third, ask_user, but a hook cannot reach it, so a Reeve rule that asks has nowhere
+// to go here.
+//
+// It is refused rather than allowed. Turning a rule that demanded a human decision
+// into one that needs none removes the control while reporting success, and nobody
+// would learn that their ask rules stopped applying on the day Gemini was added. The
+// reason says so, and `reeve policy compile` emits ask rules into Gemini's policy
+// engine, which is the layer that can actually prompt.
+func encodeGemini(d policy.Decision, reason string) Response {
+	effect := d.Effect
+	if effect == policy.EffectAsk {
+		effect = policy.EffectDeny
+		reason = strings.TrimSpace(reason) + " Refused rather than asked: a Gemini hook" +
+			" can only allow or deny, and treating an ask as an allow would drop the" +
+			" rule. Gemini's own policy engine can prompt; deploy the policy file that" +
+			" reeve policy compile produces for it."
+	}
+
+	b, _ := json.Marshal(geminiResponse{Decision: string(effect), Reason: reason})
+	r := Response{Body: b, Exit: ExitAllow}
+	if effect == policy.EffectDeny {
+		r.Exit = ExitBlock
+		r.Stderr = reason
+	}
+	return r
+}
+
+// supportedAgents are the agents whose hook protocol this package can speak.
+//
+// It is a list rather than a default because getting this wrong fails in the most
+// dangerous direction. A reply shaped for the wrong agent is still valid JSON, and an
+// agent that finds no decision it recognises treats the hook as having no opinion, so
+// the action proceeds. The guard therefore refuses an agent it has never heard of
+// instead of guessing at a shape.
+var supportedAgents = []model.AgentID{
+	model.AgentClaudeCode,
+	model.AgentCopilotCLI,
+	model.AgentCodexCLI,
+	model.AgentGeminiCLI,
+}
+
+// Supported reports whether a decision can be encoded for this agent.
+func Supported(agent model.AgentID) bool {
+	for _, a := range supportedAgents {
+		if a == agent {
+			return true
+		}
+	}
+	return false
+}
+
+// SupportedAgents lists the agent identifiers the guard accepts.
+func SupportedAgents() []string {
+	out := make([]string, len(supportedAgents))
+	for i, a := range supportedAgents {
+		out[i] = string(a)
+	}
+	return out
 }

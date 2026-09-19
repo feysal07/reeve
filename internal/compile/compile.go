@@ -92,6 +92,7 @@ func All() []Compiler {
 		&claudeCode{},
 		&copilotCLI{},
 		&codexCLI{},
+		&geminiCLI{},
 	}
 }
 
