@@ -73,7 +73,7 @@ Builds for Linux, macOS and Windows on the
 build provenance. One static binary, no runtime, no dependencies.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 70 checks against it. The
+sandbox of four badly configured agents and asserts 78 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 
@@ -163,9 +163,24 @@ reeve policy check examples/policy/baseline.yaml
 reeve policy test  examples/policy/baseline.yaml --command "rm -rf /var"
 ```
 
-See [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) for how to wire it into each agent, and
-for the failure behaviour, which is the part that determines whether enforcement is
-real.
+See [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) for the failure behaviour, which is the
+part that determines whether enforcement is real.
+
+To wire it into every agent on a machine without editing five files by hand:
+
+```
+reeve install --plan     # say what would change, and change nothing
+reeve install            # dry run: records what it would have blocked
+reeve install --enforce  # once the policy looks right
+reeve uninstall
+```
+
+It merges into the developer's own configuration rather than replacing it, backs up
+each file before the first change, and removes only what it added — a hook you wrote
+yourself survives both directions. It will not rewrite Codex's `config.toml` when one
+already exists, because that file is TOML with comments no round trip preserves; it
+prints the snippet to paste and reports that agent as needing a manual step rather
+than counting it as done.
 
 `reeve policy compile` renders the same policy as each agent's own
 administrator-owned configuration, so enforcement survives the guard being absent. It

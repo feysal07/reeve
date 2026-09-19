@@ -834,9 +834,76 @@ if [ -f "$EVENTS" ]; then
     esac
 fi
 
+# ------------------------------------------------------------- install ----
+
+step 9 "Installing the guard, and taking it back out"
+note "This is the only part of Reeve that writes to an agent's own files."
+note "It runs against the sandbox home, never against yours."
+echo
+
+# A hook the developer wrote themselves, which must survive both directions.
+INST_HOME="$SANDBOX/install-home"
+mkdir -p "$INST_HOME/.claude" "$INST_HOME/.cursor"
+write_text "$INST_HOME/.claude/settings.json" <<'EOF'
+{
+  "permissions": { "allow": ["Bash(git:*)"] },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/usr/local/bin/their-own-hook" }] }
+    ]
+  }
+}
+EOF
+
+INST_ENV="HOME=$INST_HOME USERPROFILE=$INST_HOME"
+
+# --plan must change nothing at all. It is the flag somebody reaches for
+# precisely because they do not trust this yet.
+BEFORE=$(cat "$INST_HOME/.claude/settings.json")
+env $INST_ENV "$REEVE" install --plan >/dev/null 2>&1
+AFTER=$(cat "$INST_HOME/.claude/settings.json")
+[ "$BEFORE" = "$AFTER" ] &&
+    check "--plan changes nothing" 1 ||
+    check "--plan changes nothing" 0 "the settings file was modified by a dry run"
+
+INSTALL_OUT=$(env $INST_ENV "$REEVE" install 2>&1)
+case "$INSTALL_OUT" in
+    *"dry run"*) check "the guard installs in dry run, not enforcing, by default" 1 ;;
+    *) check "the guard installs in dry run, not enforcing, by default" 0 "$INSTALL_OUT" ;;
+esac
+
+grep -q "their-own-hook" "$INST_HOME/.claude/settings.json" &&
+    check "a hook the developer wrote survives the install" 1 ||
+    check "a hook the developer wrote survives the install" 0
+grep -q "Bash(git:\*)" "$INST_HOME/.claude/settings.json" &&
+    check "settings that have nothing to do with hooks survive the install" 1 ||
+    check "settings that have nothing to do with hooks survive the install" 0
+
+# Cursor fails a hook open unless told otherwise, so an installed hook without
+# failClosed stands down exactly on the machines where it broke.
+grep -q '"failClosed": true' "$INST_HOME/.cursor/hooks.json" 2>/dev/null &&
+    check "the Cursor hook is installed failing closed" 1 ||
+    check "the Cursor hook is installed failing closed" 0
+
+# Installing twice must refresh rather than register a second time: two hooks
+# decide every action twice and log it twice, doubling every count in the report.
+env $INST_ENV "$REEVE" install >/dev/null 2>&1
+ENTRIES=$(grep -c "guard --agent claude-code" "$INST_HOME/.claude/settings.json")
+[ "$ENTRIES" = "1" ] &&
+    check "installing twice registers the guard once" 1 ||
+    check "installing twice registers the guard once" 0 "found $ENTRIES registrations"
+
+env $INST_ENV "$REEVE" uninstall >/dev/null 2>&1
+grep -q "guard --agent" "$INST_HOME/.claude/settings.json" &&
+    check "uninstall removes the guard" 0 "the hook is still there" ||
+    check "uninstall removes the guard" 1
+grep -q "their-own-hook" "$INST_HOME/.claude/settings.json" &&
+    check "uninstall leaves the developer's own hook alone" 1 ||
+    check "uninstall leaves the developer's own hook alone" 0         "their hook was removed along with ours"
+
 # --------------------------------------------------------------- audit ----
 
-step 9 "The audit trail: proving the decision log has not been edited"
+step 10 "The audit trail: proving the decision log has not been edited"
 note "The only record that an action was refused. As far as the agent is"
 note "concerned it never happened, so nothing else anywhere has a trace of it."
 echo
@@ -905,7 +972,7 @@ esac
 
 # ------------------------------------------------------------------ mcp ----
 
-step 10 "MCP servers: what is connected, against what was approved"
+step 11 "MCP servers: what is connected, against what was approved"
 note "Each one extends the agent's reach into another system, with that"
 note "system's credentials. The list is assembled from the developer's home"
 note "directory and from whatever repository happens to be open."
@@ -969,7 +1036,7 @@ esac
 
 # ------------------------------------------------------------- posture ----
 
-step 11 "Fleet posture: the same question asked about every machine at once"
+step 12 "Fleet posture: the same question asked about every machine at once"
 note "Reads files. No listener, no agent, no machine reporting on its own behalf."
 echo
 

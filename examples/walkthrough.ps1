@@ -698,9 +698,81 @@ if (Test-Path $events) {
     Check "refusals appear, which no vendor telemetry can report" ($reportText -match "blocked")
 }
 
+# ------------------------------------------------------------- install ----
+
+Step 9 "Installing the guard, and taking it back out"
+Note "This is the only part of Reeve that writes to an agent's own files."
+Note "It runs against the sandbox home, never against yours."
+Write-Host ""
+
+# A hook the developer wrote themselves, which must survive both directions.
+$instHome = Join-Path $Sandbox "install-home"
+New-Item -ItemType Directory -Force -Path (Join-Path $instHome ".claude") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $instHome ".cursor") | Out-Null
+$instSettings = Join-Path $instHome ".claude\settings.json"
+Write-Text $instSettings @'
+{
+  "permissions": { "allow": ["Bash(git:*)"] },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/usr/local/bin/their-own-hook" }] }
+    ]
+  }
+}
+'@
+
+# The install reads the home directory from the environment, so it is redirected
+# for exactly the length of this step and put back afterwards.
+$savedProfile = $env:USERPROFILE
+$savedHome = $env:HOME
+$env:USERPROFILE = $instHome
+$env:HOME = $instHome
+
+try {
+    # --plan must change nothing at all. It is the flag somebody reaches for
+    # precisely because they do not trust this yet.
+    $before = Get-Content $instSettings -Raw
+    $null = (& $reeve install --plan 2>&1)
+    $after = Get-Content $instSettings -Raw
+    Check "--plan changes nothing" ($before -eq $after) "the settings file was modified by a dry run"
+
+    $installOut = (& $reeve install 2>&1 | Out-String)
+    Check "the guard installs in dry run, not enforcing, by default" `
+        ($installOut -match "dry run") $installOut
+
+    $settingsNow = Get-Content $instSettings -Raw
+    Check "a hook the developer wrote survives the install" `
+        ($settingsNow -match "their-own-hook") $settingsNow
+    Check "settings that have nothing to do with hooks survive the install" `
+        ($settingsNow -match [regex]::Escape('Bash(git:*)')) $settingsNow
+
+    # Cursor fails a hook open unless told otherwise, so an installed hook without
+    # failClosed stands down exactly on the machines where it broke.
+    $cursorHooks = Join-Path $instHome ".cursor\hooks.json"
+    $cursorNow = if (Test-Path $cursorHooks) { Get-Content $cursorHooks -Raw } else { "" }
+    Check "the Cursor hook is installed failing closed" `
+        ($cursorNow -match '"failClosed": true') $cursorNow
+
+    # Installing twice must refresh rather than register a second time: two hooks
+    # decide every action twice and log it twice, doubling every count in the report.
+    $null = (& $reeve install 2>&1)
+    $entries = ([regex]::Matches((Get-Content $instSettings -Raw), "guard --agent claude-code")).Count
+    Check "installing twice registers the guard once" ($entries -eq 1) "found $entries registrations"
+
+    $null = (& $reeve uninstall 2>&1)
+    $afterUninstall = Get-Content $instSettings -Raw
+    Check "uninstall removes the guard" `
+        (-not ($afterUninstall -match "guard --agent")) "the hook is still there"
+    Check "uninstall leaves the developer's own hook alone" `
+        ($afterUninstall -match "their-own-hook") "their hook was removed along with ours"
+} finally {
+    $env:USERPROFILE = $savedProfile
+    if ($savedHome) { $env:HOME = $savedHome } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }
+}
+
 # --------------------------------------------------------------- audit ----
 
-Step 9 "The audit trail: proving the decision log has not been edited"
+Step 10 "The audit trail: proving the decision log has not been edited"
 Note "The only record that an action was refused. As far as the agent is"
 Note "concerned it never happened, so nothing else anywhere has a trace of it."
 Write-Host ""
@@ -766,7 +838,7 @@ Check "decisions deleted from the end of the log are caught" `
 
 # ------------------------------------------------------------------ mcp ----
 
-Step 10 "MCP servers: what is connected, against what was approved"
+Step 11 "MCP servers: what is connected, against what was approved"
 Note "Each one extends the agent's reach into another system, with that"
 Note "system's credentials. The list is assembled from the developer's home"
 Note "directory and from whatever repository happens to be open."
@@ -819,7 +891,7 @@ Check "a generated registry never marks anything approved" `
 
 # ------------------------------------------------------------- posture ----
 
-Step 11 "Fleet posture: the same question asked about every machine at once"
+Step 12 "Fleet posture: the same question asked about every machine at once"
 Note "Reads files. No listener, no agent, no machine reporting on its own behalf."
 Write-Host ""
 

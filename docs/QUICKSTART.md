@@ -38,7 +38,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 70 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 78 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -142,6 +142,33 @@ theatre:
 
 See [ENFORCEMENT.md](ENFORCEMENT.md) for wiring it into each agent so it runs
 automatically.
+
+### 4b. Installing the guard on a machine
+
+Wiring the guard into five agents means five files in five formats. That is the step
+where a pilot stops, so:
+
+```
+reeve install --plan     # what would change, changing nothing
+reeve install            # dry run by default: records, never blocks
+reeve install --enforce  # when the policy looks right
+reeve uninstall
+```
+
+Four things it holds to. It merges into your existing configuration rather than
+replacing it. It backs up each file before the first change and never overwrites that
+backup on a later run. It removes only what it added, so a hook you wrote yourself
+survives an uninstall. And it will not rewrite Codex's `config.toml` when one already
+exists — that file is TOML with comments and ordering no round trip preserves, so it
+prints the snippet to paste and reports Codex as **needing a manual step**, counted
+separately from the agents that are done.
+
+Installing twice refreshes the existing registration rather than adding a second one.
+Two registrations would decide every action twice and log it twice, doubling every
+count in `reeve report`.
+
+For an organisation, `reeve policy compile` is the other half: it produces the
+administrator-owned files to deploy, which a developer cannot remove.
 
 ### 5. Telemetry
 

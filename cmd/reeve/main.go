@@ -57,6 +57,10 @@ func run(args []string) error {
 		return runAudit(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
+	case "install":
+		return runInstall(args[1:])
+	case "uninstall":
+		return runUninstall(args[1:])
 	case "trial":
 		return runTrial(args[1:])
 	case "version", "--version", "-v":
@@ -83,6 +87,8 @@ Usage:
   reeve posture <dir>    Aggregate many scan reports into one view of a fleet
   reeve audit <cmd>      Seal and verify the decision log (seal, verify)
   reeve mcp <cmd>        Reconcile MCP servers against an approved list (check, list)
+  reeve install          Register the guard in every agent on this machine
+  reeve uninstall        Remove it again, leaving your own hooks alone
   reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
   reeve version          Print the version
   reeve help             Show this message
@@ -135,6 +141,14 @@ Posture flags:
                          fail the gate on their own: a verdict that skipped part of
                          the fleet is not a verdict on the fleet
   --stale-after <dur>    Report a scan older than this as stale (default 720h)
+
+Install flags:
+  --policy <file>        Policy to enforce (default: the built-in baseline)
+  --store <file>         Event store, if the policy contains budgets
+  --enforce              Block, rather than only recording what would be blocked.
+                         Off by default
+  --plan                 Say what would change, and change nothing
+  --json
 
 MCP commands:
   reeve mcp list <target>            Every MCP server found, and where it came from
