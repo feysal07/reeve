@@ -112,17 +112,18 @@ Reeve targets the agents below. Support is staged; see the roadmap.
 | GitHub Copilot CLI | **working** | **working** | **working** | **working** |
 | OpenAI Codex CLI | **working** | **working** | **working** | **working** |
 | Google Gemini CLI | **working** | **working** | **working** | **working** |
-| Cursor | **working** | planned | planned | planned |
+| Cursor | **working** | **working** | **working** | planned |
 | OpenCode, Amp, Kiro | community adapters | | | |
 
-Cursor is the odd one out in two ways worth knowing before you plan around it. Its
-only administrator-owned file is a hooks file, so permissions, the approval mode, the
+Cursor is the odd one out, in a way worth knowing before you plan around it. Its only
+administrator-owned file is a hooks file, so permissions, the approval mode, the
 sandbox and the MCP list stay editable by the developer whatever an organisation
-deploys; the guard is not the livelier of two layers there, it is the only one. And
-its hooks fail open by default, so the one control it does offer stands down on any
-machine where the hook crashes or times out unless `failClosed` is set. `reeve scan`
-reports both. Its usage data lives in Cursor's own service rather than in a local
-export, so telemetry there means reading their API rather than receiving OTLP.
+deploys. The guard is not the livelier of two layers there; it is the only one, which
+is why compiling the baseline policy for Cursor reports every rule as guard-only while
+the others manage at least one natively. Its hooks also fail open by default, so
+`reeve policy compile` always writes `failClosed` and `reeve scan` reports a hook that
+lacks it. Its usage data lives in Cursor's own service rather than in a local export,
+so telemetry there means reading their API rather than receiving OTLP.
 
 ## Design principles
 
@@ -153,7 +154,7 @@ what was observed, why it matters and how to fix it. It is read-only and makes n
 network calls. `--json` emits the full report; `--fail-on high` makes it usable as a
 CI gate.
 
-Enforcement works for the first four. `reeve guard` is the hook handler an agent runs
+Enforcement works for all five. `reeve guard` is the hook handler an agent runs
 before a tool call; it normalises the pending action, evaluates one policy that applies
 to every agent, and answers in the shape that agent understands:
 

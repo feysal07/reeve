@@ -153,6 +153,15 @@ rules:
 	}
 }
 
+// TestPathRuleCompilesNatively: a path glob is the one rule shape every permission
+// syntax can carry, so a target with an administrator-owned file for rules has no
+// excuse for leaving it to the guard.
+//
+// Cursor has no such file. Its permissions live where the developer can edit them, so
+// the rule is guard-only for a reason that has nothing to do with the rule: there is
+// nowhere to put it. That is a different claim from "the syntax cannot express this",
+// and it is asserted rather than waived, because the two would be indistinguishable in
+// a coverage report that only carried a status.
 func TestPathRuleCompilesNatively(t *testing.T) {
 	p := mustParse(t, `
 version: 1
@@ -166,9 +175,27 @@ rules:
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(res.Coverage) == 0 {
+			t.Fatalf("%s: the rule vanished from coverage entirely", c.Agent())
+		}
+
+		if c.Agent() == model.AgentCursor {
+			if res.Coverage[0].Status != StatusGuardOnly {
+				t.Errorf("cursor: status = %q, want guard-only", res.Coverage[0].Status)
+			}
+			if !strings.Contains(res.Coverage[0].Reason, "administrator-owned file") {
+				t.Errorf("cursor: the reason blames the rule rather than the vendor: %q",
+					res.Coverage[0].Reason)
+			}
+			continue
+		}
+
 		if res.Coverage[0].Status != StatusNative {
 			t.Errorf("%s: a path deny should compile natively, got %s (%s)",
 				c.Agent(), res.Coverage[0].Status, res.Coverage[0].Reason)
+		}
+		if len(res.Artifacts) == 0 {
+			t.Fatalf("%s: no configuration was produced", c.Agent())
 		}
 		if !strings.Contains(string(res.Artifacts[0].Content), ".env") {
 			t.Errorf("%s: the path did not reach the generated file", c.Agent())
@@ -189,14 +216,42 @@ rules: []
 		"claude-code": "disableBypassPermissionsMode",
 		"copilot-cli": "disableBypassPermissionsMode",
 		// Codex expresses the same intent by enumerating what remains permitted.
-		"codex-cli": "allowed_approval_policies",
+		"codex-cli":  "allowed_approval_policies",
+		"gemini-cli": "disableYoloMode",
 	}
+	// Cursor keeps its approval mode in a file the developer owns. There is no
+	// administrator-owned setting to write, so it is exempt from the needle and held
+	// to saying so instead.
+	cannot := map[string]bool{"cursor": true}
+
 	for _, c := range All() {
 		res, err := c.Compile(p, "linux")
 		if err != nil {
 			t.Fatal(err)
 		}
-		needle := want[string(c.Agent())]
+		agent := string(c.Agent())
+
+		if cannot[agent] {
+			var explained bool
+			for _, w := range res.Warnings {
+				if strings.Contains(w, "approval mode") {
+					explained = true
+				}
+			}
+			if !explained {
+				t.Errorf("%s: cannot lock bypass and did not say so: %v", agent, res.Warnings)
+			}
+			continue
+		}
+
+		needle, declared := want[agent]
+		if !declared {
+			// An empty needle would make the check below pass for anything, so a
+			// compiler added without an expectation here must fail rather than be
+			// waved through by a substring search for "".
+			t.Errorf("%s: no expectation declared; add it to want or to cannot", agent)
+			continue
+		}
 		var found bool
 		for _, a := range res.Artifacts {
 			if strings.Contains(string(a.Content), needle) {
@@ -204,7 +259,7 @@ rules: []
 			}
 		}
 		if !found {
-			t.Errorf("%s: bypass lock did not appear as %q in any artifact", c.Agent(), needle)
+			t.Errorf("%s: bypass lock did not appear as %q in any artifact", agent, needle)
 		}
 	}
 }

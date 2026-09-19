@@ -218,6 +218,48 @@ report it. Gemini's policy engine *can* prompt, and `reeve policy compile` write
 rules into it, so that is where they belong. If you would rather those rules prompted
 than blocked, deploy the compiled policy file and leave the guard unregistered.
 
+### Cursor
+
+Cursor's only administrator-owned file is its hooks file. In `/etc/cursor/hooks.json`,
+`/Library/Application Support/Cursor/hooks.json`, or
+`%ProgramData%\Cursor\hooks.json`:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "reeve guard --agent cursor --log /var/log/reeve/decisions.jsonl",
+        "type": "command",
+        "timeout": 10,
+        "failClosed": true
+      }
+    ]
+  }
+}
+```
+
+**`failClosed` is the important key, and it defaults to false.** Without it a crash, a
+timeout, or an exit code Cursor does not recognise is logged and the action is allowed.
+Those are the conditions under which a machine is least likely to be in a state anyone
+has checked, so a hook deployed without it stands down precisely when it mattered.
+`reeve policy compile` always writes it, and `reeve scan` raises
+`policy.hook-fails-open` against a blocking hook that lacks it.
+
+**One event, not four.** Cursor has purpose-built permission hooks for shell commands,
+file reads and MCP calls, and a generic `preToolUse` that fires for every tool type.
+Only `preToolUse` sees a file being *written*: there is a `beforeReadFile` but no
+`beforeFileEdit`, and `afterFileEdit` runs once the edit has happened. Registering a
+specific event alongside the generic one runs both for a single action, which decides
+the same thing twice and writes it to the decision log twice, so every count in
+`reeve report` would be double what happened.
+
+**Cursor sends more than the guard needs.** Every hook receives the developer's email
+address, a path to the conversation transcript and, for a file read, the entire
+contents of the file. None of it is read into the action, because the guard writes a
+decision log and anything the action carries lands on a developer's disk.
+
 ## Knowing what an action actually targets
 
 A rule can only be as good as what it can see. Matching the text "--context prod"
@@ -322,10 +364,18 @@ Compiling the shipped baseline reports, out of eleven rules:
 | GitHub Copilot CLI | 1 | 0 | 10 |
 | Codex CLI | 1 | 0 | 10 |
 | Gemini CLI | 6 | 2 | 3 |
+| Cursor | 0 | 0 | 11 |
 
 Those numbers are not a defect in the compiler. They are the honest measure of how
 much of a real policy each agent can enforce by itself, and they are the reason both
 layers are deployed together.
+
+Cursor scores zero for a different reason from everyone else's, and the distinction
+matters. Elsewhere a rule is guard-only because the vendor's permission syntax cannot
+express its shape. On Cursor the shape is irrelevant: there is no administrator-owned
+file to put a permission rule in at all. The guard is the only layer there, and the
+compiled hooks file is the only thing an organisation can deploy that a developer
+cannot edit.
 
 Gemini scores higher because its rules take a regex, so the baseline's substring
 matching survives translation. It is not a clean sweep: three rules still need the

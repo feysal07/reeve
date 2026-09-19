@@ -93,6 +93,7 @@ func All() []Compiler {
 		&copilotCLI{},
 		&codexCLI{},
 		&geminiCLI{},
+		&cursorCLI{},
 	}
 }
 
