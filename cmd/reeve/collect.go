@@ -273,7 +273,9 @@ func (c *collector) handle(signal string, decodeJSON, decodeProto func([]byte) (
 			c.metrics.RecordEvents(events)
 		}
 		if c.verbose {
-			fmt.Printf("%s %s -> %d events\n", time.Now().Format(time.RFC3339), r.URL.Path, len(events))
+			safePath := strings.ReplaceAll(r.URL.Path, "\n", "")
+			safePath = strings.ReplaceAll(safePath, "\r", "")
+			fmt.Printf("%s %s -> %d events\n", time.Now().Format(time.RFC3339), safePath, len(events))
 		}
 
 		// OTLP expects a JSON object in reply; an empty one means everything was
