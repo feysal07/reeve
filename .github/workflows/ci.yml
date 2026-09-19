@@ -66,14 +66,18 @@ jobs:
                  --set-file collector.prices.content=examples/telemetry/prices.yaml
           render --set service.type=NodePort --set service.nodePort=31318
           render --set networkPolicy.enabled=true
+          render --set collector.metrics.enabled=false
+          render --set serviceMonitor.enabled=true --set prometheusRule.enabled=true
+          render --set networkPolicy.enabled=true --set serviceMonitor.enabled=true \
+                 --set 'networkPolicy.scrapeFrom[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=monitoring'
           render --set ingress.enabled=true \
                  --set ingress.authenticatedByProxy=true \
                  --set ingress.tls[0].secretName=tls \
                  --set ingress.tls[0].hosts[0]=reeve.internal
 
-      # The chart refuses four configurations that would deploy cleanly and be
-      # wrong. A refusal that stops refusing is a silent regression, so each one
-      # is asserted rather than assumed.
+      # The chart refuses configurations that would deploy cleanly and be wrong. A
+      # refusal that stops refusing is a silent regression, so each one is asserted
+      # rather than assumed.
       - name: Refuse what would be quietly wrong
         run: |
           set -eu
@@ -98,6 +102,25 @@ jobs:
             --set ingress.tls[0].secretName=tls \
             --set ingress.tls[0].hosts[0]=reeve.internal \
             --set networkPolicy.enabled=true
+          refuses "a network policy that would deny Prometheus" \
+            --set networkPolicy.enabled=true --set serviceMonitor.enabled=true
+          refuses "a ServiceMonitor selecting metrics that are switched off" \
+            --set serviceMonitor.enabled=true --set collector.metrics.enabled=false
+          refuses "alerts on metrics that are never published" \
+            --set prometheusRule.enabled=true --set collector.metrics.enabled=false
+
+      # An alert expression with a typo loads and then simply never fires, so the
+      # rules are checked by the tool Prometheus itself ships.
+      - name: Check the alert rules with promtool
+        run: |
+          set -eu
+          helm template t deploy/helm/reeve-collector \
+            --set prometheusRule.enabled=true \
+            --show-only templates/prometheusrule.yaml \
+            | python3 -c 'import sys,yaml; yaml.safe_dump(yaml.safe_load(sys.stdin)["spec"], open("rules.yaml","w"))'
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD/rules.yaml:/rules.yaml" \
+            prom/prometheus:latest check rules /rules.yaml
 
   image:
     runs-on: ubuntu-latest

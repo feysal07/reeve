@@ -38,3 +38,27 @@ spec:
       protocol: TCP
   selector:
     {{- include "reeve-collector.selectorLabels" . | nindent 4 }}
+{{- if .Values.collector.metrics.enabled }}
+---
+# Metrics get a Service of their own rather than a second port on the one above.
+#
+# The agent-facing Service is the one an operator may turn into a NodePort or a
+# LoadBalancer to let developer machines reach it. A metrics port riding along on
+# that change would be published too, without anyone deciding to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}-metrics
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+    reeve-endpoint: metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ .Values.collector.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "reeve-collector.selectorLabels" . | nindent 4 }}
+{{- end }}

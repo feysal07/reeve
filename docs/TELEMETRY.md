@@ -68,6 +68,54 @@ marshal real OTLP messages, and the decoder's output is compared against the JSO
 path's. Test-only imports are not linked into the binary, so the decoder is checked
 against the canonical implementation while the shipped artifact stays small.
 
+## Watching the collector itself
+
+`--metrics-addr` serves Prometheus metrics about the collector: batches received and
+rejected, events written by agent and kind, tokens and computed cost by agent,
+requests it could not price, store write failures, and the store's size and last-write
+time.
+
+```
+reeve collect --store ./events.jsonl --metrics-addr 127.0.0.1:9464
+```
+
+They are on a listener of their own, never on the port agents export to. That port is
+the one reachable from developer machines, and metrics served there would tell anyone
+who asked which agents are in use and what they cost. If the address cannot be bound
+the collector refuses to start rather than running without it, because a collector
+that is up but unscrapable looks healthy from every direction except the one that
+matters.
+
+The expression worth alerting on is the least obvious:
+
+```
+time() - reeve_store_modified_timestamp_seconds
+```
+
+An agent that cannot export mostly carries on working. Nothing errors, no request
+fails, and the developer notices nothing. A collector that has stopped receiving
+therefore looks exactly like an organisation with nothing to report, and that
+distance from the last write is the only thing that tells them apart.
+
+**No label carries an email, a subject, a session or a repository.** The event store is
+access controlled and retained as an audit record; a metrics endpoint is scraped by a
+system with different retention and much wider read access, and copying identities
+into it would create a second, unmanaged record of who did what. A test fails if any
+of them ever appear.
+
+Label values are also bounded deliberately. The agent name arrives in a resource
+attribute the sender sets, and `reeve.agent` is passed through verbatim so a new
+vendor can be collected before an adapter exists for it. That is right for the store
+and wrong for a metric, where every distinct value is a series the monitoring system
+keeps: anything unrecognised is counted as `other` rather than minting one per
+request. Unpriced requests are counted per agent and not per model for the same
+reason; `reeve report` names the models.
+
+The exposition format is written by hand rather than taken from the Prometheus client
+library, for the same reason as the protobuf decoder, and checked the same way: the
+canonical parser is imported by the tests and used to read the output back. Neither
+library is linked into the binary.
+
 ## Attribution is resolved, not trusted
 
 An agent runs on a developer's machine, so every attribute it sends is asserted by that

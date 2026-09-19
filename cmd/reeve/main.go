@@ -102,6 +102,8 @@ Collect flags:
   --store <file>         Required: where normalised events are appended
   --teams <file>         Team mapping, so attribution is not client-asserted
   --prices <file>        Price table, for cost at your rates rather than list
+  --metrics-addr <a>     Serve Prometheus metrics here, on a listener of their own,
+                         separate from the port agents export to
 
 Report flags:
   --store <file>         Event store written by reeve collect

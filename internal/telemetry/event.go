@@ -106,3 +106,22 @@ type Event struct {
 	// them can be investigated rather than averaged away.
 	Source string `json:"source,omitempty"`
 }
+
+// VendorReportedCost reports whether this event carries the agent's own cost claim
+// rather than one computed here.
+//
+// The two are deliberately separate events so they can be compared rather than
+// conflated, which means every consumer has to know not to add them together.
+func (e Event) VendorReportedCost() bool { return e.Source == "otlp-vendor-cost" }
+
+// Unpriced reports whether this event counted tokens that no price table entry
+// covered.
+//
+// It is a method so that the report and the metrics endpoint cannot disagree about
+// what unpriced means. Zero cost is indistinguishable from free, and two places
+// deciding that question separately would eventually give two different answers about
+// the same events.
+func (e Event) Unpriced() bool {
+	return e.Kind == KindAPIRequest && !e.VendorReportedCost() &&
+		e.CostUSD == 0 && !e.Tokens.Empty()
+}

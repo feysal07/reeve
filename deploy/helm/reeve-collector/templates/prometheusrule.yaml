@@ -1,0 +1,98 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- $claim := printf "store-%s-0" (include "reeve-collector.fullname" .) -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: reeve-collector
+      rules:
+        # The one a person cannot notice on their own. An agent that cannot export
+        # mostly carries on working, so a collector that has stopped receiving looks
+        # exactly like an organisation with nothing to report.
+        - alert: ReeveAuditTrailQuiet
+          expr: time() - reeve_store_modified_timestamp_seconds > {{ .Values.prometheusRule.quietForSeconds }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Reeve has recorded nothing for {{ div .Values.prometheusRule.quietForSeconds 3600 }}h
+            description: >-
+              No event has been written to the store on {{ "{{ $labels.instance }}" }}.
+              Either nobody is using an agent, or agents have stopped being able to
+              export and are carrying on without telling anyone. The second is
+              indistinguishable from the first at the agent, which is why this alert
+              exists rather than an error somewhere.
+
+        - alert: ReeveCollectorAbsent
+          expr: absent(reeve_build_info)
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: The Reeve collector is not being scraped
+            description: >-
+              Nothing is answering on the metrics endpoint. While this is true the
+              audit trail is unmonitored, and the quiet-trail alert above cannot fire
+              because its metric is absent too.
+
+        # Nothing prunes the store. When the volume fills the collector stops
+        # accepting events, and agents carry on working.
+        - alert: ReeveStoreVolumeFilling
+          expr: >-
+            kubelet_volume_stats_available_bytes{persistentvolumeclaim="{{ $claim }}"}
+            / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="{{ $claim }}"}
+            < {{ .Values.prometheusRule.volumeFreeBelow }}
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: The Reeve event store volume is running out of room
+            description: >-
+              Less than {{ .Values.prometheusRule.volumeFreeBelow }} of
+              {{ $claim }} is free. Nothing prunes the event file; see the chart
+              README for how to archive it, which requires stopping the writer.
+
+        - alert: ReeveBatchesRejected
+          expr: increase(reeve_batches_rejected_total[15m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Reeve is refusing telemetry it cannot decode
+            description: >-
+              An agent is exporting {{ "{{ $labels.signal }}" }} in a shape this
+              collector does not understand, so that agent's activity is missing from
+              the record while the agent itself reports no problem.
+
+        - alert: ReeveStoreWriteErrors
+          expr: increase(reeve_store_write_errors_total[15m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Reeve cannot write to the event store
+            description: >-
+              Appending to the store is failing. Senders are told to retry, so some
+              events may survive, but a sustained rate means the audit trail is
+              losing what it is meant to keep.
+
+        # Not an outage, but the number everyone will quote is wrong.
+        - alert: ReeveModelsAreUnpriced
+          expr: increase(reeve_events_unpriced_total[1h]) > 0
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: Reeve is seeing models that are not in the price table
+            description: >-
+              Requests from {{ "{{ $labels.agent }}" }} carry tokens for a model with
+              no price entry, so their cost is missing from every total. Run
+              `reeve report` to see which models, and add them to the price table.
+{{- end }}

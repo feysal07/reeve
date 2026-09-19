@@ -117,6 +117,36 @@ Name the ingress controller's namespace, for example:
           matchLabels:
             kubernetes.io/metadata.name: ingress-nginx` }}
 {{- end }}
+{{- if and .Values.networkPolicy.enabled .Values.serviceMonitor.enabled (not .Values.networkPolicy.scrapeFrom) }}
+{{- fail `reeve-collector: networkPolicy.enabled and serviceMonitor.enabled are both
+true, but networkPolicy.scrapeFrom is empty.
+
+The policy would deny Prometheus, so the ServiceMonitor would create a target that
+fails every scrape. The metrics exist to tell you when the collector has gone quiet,
+and this arrangement is a monitoring setup that is itself unmonitored.
+
+Name the namespace Prometheus runs in, for example:
+
+  networkPolicy:
+    scrapeFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring` }}
+{{- end }}
+{{- if and .Values.serviceMonitor.enabled (not .Values.collector.metrics.enabled) }}
+{{- fail `reeve-collector: serviceMonitor.enabled is true but collector.metrics.enabled is false.
+
+There would be no metrics Service for it to select and no endpoint behind it, so the
+ServiceMonitor would sit there selecting nothing. An operator reading the cluster would
+see scrape configuration in place and conclude the collector was being watched.` }}
+{{- end }}
+{{- if and .Values.prometheusRule.enabled (not .Values.collector.metrics.enabled) }}
+{{- fail `reeve-collector: prometheusRule.enabled is true but collector.metrics.enabled is false.
+
+Every alert would evaluate against a metric that is never published. Most would stay
+silent for ever, which reads as healthy, and the one that does fire would be the absent()
+check reporting a collector that was never asked to report.` }}
+{{- end }}
 {{- if .Values.ingress.enabled }}
 {{- if not .Values.ingress.tls }}
 {{- fail `reeve-collector: ingress.enabled is true but ingress.tls is empty.

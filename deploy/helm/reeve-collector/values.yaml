@@ -60,6 +60,20 @@ collector:
     content: ""
     existingConfigMap: ""
 
+  # Prometheus metrics about the collector itself: what it received, what it wrote,
+  # what it could not price, and how big the store has grown.
+  #
+  # These are served on a listener of their own, never on the port agents export to.
+  # That port is usually reachable from every developer machine, and the metrics
+  # there would tell anyone who asked which agents are in use and how much is being
+  # spent. They also get their own ClusterIP Service, so making the agent-facing one
+  # a LoadBalancer cannot take them along with it.
+  #
+  # No label carries an email, a session or a repository. See docs/TELEMETRY.md.
+  metrics:
+    enabled: true
+    port: 9464
+
   # Extra arguments appended to the command, for a flag this chart does not model.
   extraArgs: []
 
@@ -138,6 +152,44 @@ networkPolicy:
   #  - namespaceSelector:
   #      matchLabels:
   #        kubernetes.io/metadata.name: ci
+
+  # Selectors permitted to scrape the metrics port. Kept separate from the senders
+  # above, because letting Prometheus in is not a reason to let it write events.
+  scrapeFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: monitoring
+
+# Scrape configuration for the Prometheus Operator. Off by default because it
+# needs the operator's CRDs, and a chart that assumes them fails to install on a
+# cluster that has plain Prometheus instead.
+serviceMonitor:
+  enabled: false
+  interval: 60s
+  scrapeTimeout: 10s
+  labels: {}
+  relabelings: []
+  metricRelabelings: []
+
+# Alerts, as a PrometheusRule. Also off by default, and for the same reason.
+#
+# Metrics without alerts are a dashboard nobody opens. The two that matter are
+# the ones a person cannot notice on their own: a collector that has quietly
+# stopped receiving, and a volume filling towards the point where it stops.
+prometheusRule:
+  enabled: false
+  labels: {}
+  # How long, in seconds, the store may go unwritten before the audit trail is
+  # called quiet. Seconds rather than a duration string because the expression is
+  # PromQL arithmetic, not a Prometheus duration literal.
+  #
+  # Set it above the longest gap you expect outside working hours. An alert that
+  # fires every night is an alert that gets silenced, and a silenced quiet-trail
+  # alert is worse than none: it looks like coverage.
+  quietForSeconds: 21600
+  # Fraction of the store volume still free below which to warn. Needs kubelet
+  # metrics, which kube-prometheus-stack scrapes by default.
+  volumeFreeBelow: 0.15
 
 serviceAccount:
   create: true

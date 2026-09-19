@@ -4,6 +4,7 @@ reeve-collector {{ .Chart.Version }} installed as {{ .Release.Name }} in {{ .Rel
   store  : {{ include "reeve-collector.storePath" . }}
   teams  : {{ if include "reeve-collector.teamsConfigMap" . }}{{ include "reeve-collector.teamsConfigMap" . }}{{ else }}none{{ end }}
   prices : {{ if include "reeve-collector.pricesConfigMap" . }}{{ include "reeve-collector.pricesConfigMap" . }}{{ else }}built-in list rates{{ end }}
+  metrics: {{ if .Values.collector.metrics.enabled }}port {{ .Values.collector.metrics.port }}, on a listener of its own{{ else }}off{{ end }}
 
 Check it is up:
 
@@ -28,37 +29,59 @@ this collector from there yet. Enable the Ingress, or forward the port to try it
   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "reeve-collector.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
 {{- end }}
 
-Read what it has collected:
+Read what it has collected. The image has no shell, so the binary is named in full:
 
-  kubectl --namespace {{ .Release.Namespace }} exec {{ include "reeve-collector.fullname" . }}-0 -- \
-    reeve report --store {{ include "reeve-collector.storePath" . }} --since 168h
+  kubectl --namespace {{ .Release.Namespace }} exec {{ include "reeve-collector.fullname" . }}-0 -- /usr/local/bin/reeve report --store {{ include "reeve-collector.storePath" . }} --since 168h
+{{ if .Values.collector.metrics.enabled }}
+Metrics are served on their own port and their own Service, never on the one agents
+export to, so exposing that one cannot publish these along with it:
 
-{{ if not .Values.persistence.enabled -}}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "reeve-collector.fullname" . }}-metrics {{ .Values.collector.metrics.port }}:{{ .Values.collector.metrics.port }}
+{{- if not .Values.serviceMonitor.enabled }}
+
+No ServiceMonitor was created. With Prometheus but no operator, scrape:
+
+  {{ include "reeve-collector.fullname" . }}-metrics.{{ .Release.Namespace }}.svc:{{ .Values.collector.metrics.port }}/metrics
+{{- end }}
+{{ end }}
+{{- if not .Values.persistence.enabled }}
 WARNING: persistence is disabled. The event store is an emptyDir, so the audit
 record is deleted when the pod restarts, is rescheduled, or is upgraded. Fine for
 trying the chart out; not a way to run it.
-
-{{ end -}}
-{{ if not (include "reeve-collector.teamsConfigMap" .) -}}
+{{ end }}
+{{- if not (include "reeve-collector.teamsConfigMap" .) }}
 WARNING: no team mapping. Every event will land in the unattributed bucket, and
 the cost report will show one team. Set collector.teams.content, or point
 collector.teams.existingConfigMap at a ConfigMap holding a teams.yaml key.
-
-{{ end -}}
-{{ if not (include "reeve-collector.pricesConfigMap" .) -}}
+{{ end }}
+{{- if not (include "reeve-collector.pricesConfigMap" .) }}
 WARNING: no price table, so costs are computed at published list rates. They will
 be wrong for any negotiated agreement and they go out of date. Supply your own
 before anyone charges a team for them.
-
-{{ end -}}
-{{ if and .Values.ingress.enabled (not .Values.networkPolicy.enabled) -}}
+{{ end }}
+{{- if and .Values.ingress.enabled (not .Values.networkPolicy.enabled) }}
 NOTE: the collector is reachable through the Ingress and has no authentication of
 its own. You confirmed authentication is enforced in front of it. If that stops
 being true, anything that can reach the endpoint can write events under any
 identity, and a forged event is indistinguishable from a real one.
+{{ end }}
+{{- if not .Values.collector.metrics.enabled }}
+NOTE: metrics are off, so nothing reports whether this collector is still receiving
+anything. An agent that cannot export mostly carries on working, which means a
+collector that has gone quiet looks exactly like an organisation with nothing to
+report. Set collector.metrics.enabled=true.
+{{ else }}
+Nothing prunes the event file; it only grows. Watch it through the metrics rather
+than by looking at the file:
 
-{{ end -}}
-Nothing prunes the event file. Watch it:
+  reeve_store_size_bytes
+  time() - reeve_store_modified_timestamp_seconds
 
-  kubectl --namespace {{ .Release.Namespace }} exec {{ include "reeve-collector.fullname" . }}-0 -- \
-    du -h {{ include "reeve-collector.storePath" . }}
+The second is the one that catches a collector that has stopped receiving, which is
+otherwise indistinguishable from a quiet week.
+{{- if not .Values.prometheusRule.enabled }}
+
+Alerts for both, and for four other things worth knowing about, ship with this
+chart: set prometheusRule.enabled=true if you run the Prometheus operator.
+{{- end }}
+{{ end }}

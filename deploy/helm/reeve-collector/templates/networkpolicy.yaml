@@ -13,15 +13,25 @@ spec:
     - Ingress
   ingress:
     {{- if .Values.networkPolicy.ingressFrom }}
+    # May send telemetry.
     - from:
         {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
       ports:
         - port: {{ .Values.collector.port }}
           protocol: TCP
-    {{- else }}
+    {{- end }}
+    {{- if and .Values.collector.metrics.enabled .Values.networkPolicy.scrapeFrom }}
+    # May scrape metrics. Kept as its own rule, because letting Prometheus in is
+    # not a reason to let it write events.
+    - from:
+        {{- toYaml .Values.networkPolicy.scrapeFrom | nindent 8 }}
+      ports:
+        - port: {{ .Values.collector.metrics.port }}
+          protocol: TCP
+    {{- end }}
+    {{- if not (or .Values.networkPolicy.ingressFrom (and .Values.collector.metrics.enabled .Values.networkPolicy.scrapeFrom)) }}
     # No sources permitted, which denies everything. Only reachable this way if
-    # you enabled the policy without an Ingress, so the only senders would have
-    # been in-cluster ones you have not named yet.
+    # you enabled the policy without naming anyone, so there was nothing to admit.
     []
     {{- end }}
 {{- end }}

@@ -32,7 +32,7 @@ func (t *Totals) add(e Event) {
 	case KindSession:
 		t.Sessions++
 	case KindAPIRequest:
-		if e.Source == "otlp-vendor-cost" {
+		if e.VendorReportedCost() {
 			t.VendorCostUSD += e.CostUSD
 			return
 		}
@@ -42,7 +42,7 @@ func (t *Totals) add(e Event) {
 		t.Tokens.CacheRead += e.Tokens.CacheRead
 		t.Tokens.CacheCreation += e.Tokens.CacheCreation
 		t.CostUSD += e.CostUSD
-		if e.CostUSD == 0 && !e.Tokens.Empty() {
+		if e.Unpriced() {
 			t.UnpricedRequests++
 		}
 	case KindToolResult:
