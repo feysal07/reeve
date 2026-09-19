@@ -374,7 +374,7 @@ $compileText = (& $reeve policy compile $policy --out $dist --platform linux 2>&
 Show $compileText
 
 $produced = @(Get-ChildItem $dist -ErrorAction SilentlyContinue)
-Check "configuration produced for all four agents" ($produced.Count -eq 6) "wrote $($produced.Count) files"
+Check "configuration produced for all five agents" ($produced.Count -eq 7) "wrote $($produced.Count) files"
 Check "coverage reported honestly rather than silently dropped" ($compileText -match "guard-only")
 
 # Gemini's policy engine takes a regex, so rules the others can only hand to the
@@ -392,6 +392,13 @@ Check "each pattern is unanchored, so a term is found anywhere in a command" `
     "a commandRegex does not begin with .*"
 
 $claudeCfg = Get-Content (Join-Path $dist "claude-code-managed-settings.json") -Raw | ConvertFrom-Json
+# Cursor's hooks fail open unless told otherwise, and that default is the whole
+# reason this key is written rather than left out.
+$cursorHooks = Get-Content (Join-Path $dist "cursor-hooks.json") -Raw
+Check "Cursor's hook is compiled to fail closed" `
+    ($cursorHooks -match '"failClosed": true') `
+    "a hook that fails open permits the action whenever the guard crashes"
+
 Check "the bypass lock reached the compiled configuration" `
     ($claudeCfg.permissions.disableBypassPermissionsMode -eq "disable")
 
@@ -432,6 +439,20 @@ Try-Action "Gemini CLI running rm -rf is denied" "gemini-cli" `
 # classified as a network fetch, so a rule about reading credentials would not apply.
 Try-Action "Gemini searching inside a credential file is denied" "gemini-cli" `
     '{"session_id":"s6","hook_event_name":"BeforeTool","tool_name":"grep_search","tool_input":{"path":"/repo/backend/.env"}}' 2
+
+# Cursor names no tool for a shell command. The kind comes from the event, and
+# classifying by the absent tool name would file this as "other" and match no rule.
+Try-Action "Cursor running rm -rf is denied, with the kind taken from the event" "cursor" `
+    '{"hook_event_name":"beforeShellExecution","command":"cd /tmp && rm -rf /important","cwd":"/repo","sandbox":false}' 2
+
+# Cursor hands the hook the file's entire contents. The guard writes a decision log,
+# so anything it reads into the action lands on a developer's disk.
+$cursorRead = ('{"hook_event_name":"beforeReadFile","file_path":"/repo/backend/.env","content":"AWS_SECRET=SHOULD-NEVER-BE-LOGGED","user_email":"dev@example.com"}' |
+    & $reeve guard --agent cursor --policy $policy --log $decisions 2>&1 | Out-String)
+$cursorLog = Get-Content $decisions -Raw
+Check "Cursor's file read is denied without the file's contents being logged" `
+    ($cursorLog -notmatch "SHOULD-NEVER-BE-LOGGED" -and $cursorLog -notmatch "dev@example.com") `
+    "the decision log carries content or identity from Cursor's envelope"
 
 $geminiReply = ('{"session_id":"s7","hook_event_name":"BeforeTool","tool_name":"run_shell_command","tool_input":{"command":"cd /tmp && rm -rf /x"}}' |
     & $reeve guard --agent gemini-cli --policy $policy 2>$null | Out-String)
