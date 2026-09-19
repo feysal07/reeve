@@ -1,8 +1,7 @@
 # Publishes the collector image to GitHub Container Registry.
 #
-# It never runs on its own. Pushing an image is a deliberate act, so this is
-# triggered by hand or by tagging a release. If you would rather have a floating
-# build of main, add:
+# It never runs on its own. Pushing an image is a deliberate act. If you would rather
+# have a floating build of main, add:
 #
 #   push:
 #     branches: [main]
@@ -10,17 +9,27 @@
 # and the `type=ref,event=branch` tag below will produce ghcr.io/<owner>/reeve:main.
 name: Publish image
 
-# Both a tag push and a published release, because they are not the same event and
-# only one of them fires depending on how the release was made. A release cut from a
-# tag that already exists fires no push, and a release created by automation using
-# GITHUB_TOKEN fires nothing downstream at all. Listening for both costs nothing; the
-# publish is idempotent because the tags it produces are derived from the version.
+# A published release, and nothing else automatic.
+#
+# This listened for both a tag push and a release, on the reasoning that only one of
+# them fires depending on how the release was made. Both fired on v0.1.0, and each
+# built the image independently: same tags, different digests, with the second
+# silently overwriting the first. Anyone who pulled between the two got an image that
+# no longer exists under that tag. The tags were idempotent; the digests were not,
+# because the build is not bit-reproducible.
+#
+# A missed publish is visible - there is no image. A tag whose digest changed under
+# you is not. So this fires once, on the event that actually means "publish", and
+# workflow_dispatch covers the case where it needs doing by hand.
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
   release:
     types: [published]
+
+# Belt and braces: two runs for one version must never build concurrently.
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
