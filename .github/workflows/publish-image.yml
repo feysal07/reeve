@@ -10,10 +10,17 @@
 # and the `type=ref,event=branch` tag below will produce ghcr.io/<owner>/reeve:main.
 name: Publish image
 
+# Both a tag push and a published release, because they are not the same event and
+# only one of them fires depending on how the release was made. A release cut from a
+# tag that already exists fires no push, and a release created by automation using
+# GITHUB_TOKEN fires nothing downstream at all. Listening for both costs nothing; the
+# publish is idempotent because the tags it produces are derived from the version.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
