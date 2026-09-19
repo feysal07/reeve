@@ -234,4 +234,4 @@ tests:
   # `helm test` needs a client to make a request with, and the collector's own
   # image has no shell to make one from. Point this at your mirror if the
   # cluster cannot pull from Docker Hub.
-  image: busybox:1.37
+  image: busybox:1.38
