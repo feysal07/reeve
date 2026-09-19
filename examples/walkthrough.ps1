@@ -270,15 +270,24 @@ $env:CODEX_HOME = $codexHome
 $env:GEMINI_CLI_SYSTEM_SETTINGS_PATH = Join-Path $geminiSystem "settings.json"
 $env:GEMINI_CLI_SYSTEM_DEFAULTS_PATH = Join-Path $geminiSystem "system-defaults.json"
 
+# The administrator-owned half of the same problem. Every agent's managed file lives
+# under ProgramData on Windows, and for Cursor that is the only administrator-owned
+# file it has. Left pointing at the real one, a machine with a genuine managed
+# deployment would report an extra agent, or a control the sandbox never created.
+$managedRoot = Join-Path $Sandbox "ProgramData"
+New-Item -ItemType Directory -Force -Path $managedRoot | Out-Null
+
 # Saved so they can be put back, in case this is run in an existing session rather
 # than as a script.
 $realUserProfile = $env:USERPROFILE
 $realHome = $env:HOME
+$realProgramData = $env:ProgramData
 $env:USERPROFILE = $sandboxHome
 $env:HOME = $sandboxHome
+$env:ProgramData = $managedRoot
 
 Note "sandbox at $Sandbox"
-Note "home redirected to $sandboxHome for the duration"
+Note "home redirected to $sandboxHome, ProgramData to $managedRoot, for the duration"
 
 # ------------------------------------------------------------ discovery ----
 
@@ -621,6 +630,7 @@ Remove-Item Env:\CODEX_HOME -ErrorAction SilentlyContinue
 Remove-Item Env:\GEMINI_CLI_SYSTEM_SETTINGS_PATH -ErrorAction SilentlyContinue
 Remove-Item Env:\GEMINI_CLI_SYSTEM_DEFAULTS_PATH -ErrorAction SilentlyContinue
 $env:USERPROFILE = $realUserProfile
+$env:ProgramData = $realProgramData
 if ($realHome) { $env:HOME = $realHome } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }
 
 if ($failed -gt 0) { exit 1 }

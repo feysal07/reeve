@@ -117,8 +117,9 @@ func managedPaths(env adapter.Env) []string {
 // Inspect reads configuration and returns the normalised view.
 func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installation, error) {
 	inst := model.Installation{
-		Agent:       model.AgentClaudeCode,
-		DisplayName: a.DisplayName(),
+		Agent:        model.AgentClaudeCode,
+		DisplayName:  a.DisplayName(),
+		Capabilities: model.Capabilities{ManagedSettings: true},
 	}
 
 	var sources []source

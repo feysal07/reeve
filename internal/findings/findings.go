@@ -20,6 +20,8 @@ type Rule func(model.Installation) []model.Finding
 var rules = []Rule{
 	noManagedSettings,
 	adminConfigIsOnlyADefault,
+	managedConfigEnforcesNothing,
+	hookFailsOpen,
 	bypassAvailable,
 	telemetryDisabled,
 	promptContentCaptured,
@@ -49,6 +51,13 @@ func noManagedSettings(inst model.Installation) []model.Finding {
 			return nil
 		}
 	}
+	remedy := "Deploy a managed settings file through MDM or configuration management, " +
+		"owned by root or Administrators."
+	if !inst.Capabilities.ManagedSettings {
+		remedy = "This agent has no administrator-owned settings file to deploy. The only " +
+			"administrator-owned configuration it offers is a hooks file, so deploy one " +
+			"containing a hook that refuses, owned by root or Administrators."
+	}
 	return []model.Finding{{
 		ID:       "policy.no-managed-settings",
 		Severity: model.SeverityHigh,
@@ -57,8 +66,7 @@ func noManagedSettings(inst model.Installation) []model.Finding {
 		Detail: "All of this agent's settings come from files the developer can edit. " +
 			"Any permission rule present is a default, not a control, and can be removed " +
 			"at any time without leaving a trace.",
-		Remedy: "Deploy a managed settings file through MDM or configuration management, " +
-			"owned by root or Administrators.",
+		Remedy: remedy,
 	}}
 }
 
@@ -99,19 +107,125 @@ func adminConfigIsOnlyADefault(inst model.Installation) []model.Finding {
 	}}
 }
 
+// managedConfigEnforcesNothing fires when administrator-owned configuration exists but
+// none of it can refuse anything.
+//
+// Without this, deploying a file that only observes would silence the finding about
+// having no administrator configuration at all, which is worse than either state on its
+// own: the question has been asked, answered, and closed, and the answer is wrong.
+//
+// Cursor makes this easy to reach. Its only administrator-owned file is hooks.json, and
+// a hooks file can perfectly well contain nothing but postToolUse.
+func managedConfigEnforcesNothing(inst model.Installation) []model.Finding {
+	var managedFile string
+	for _, f := range inst.ConfigFiles {
+		if f.Scope == model.ScopeManaged && f.Exists {
+			managedFile = f.Path
+			break
+		}
+	}
+	if managedFile == "" {
+		return nil // the no-managed-settings finding covers this
+	}
+	if inst.Permissions.ManagedLocked {
+		return nil
+	}
+	for _, h := range inst.Hooks {
+		if h.Scope == model.ScopeManaged && h.Blocking {
+			return nil
+		}
+	}
+	for _, m := range inst.Permissions.MCPAllow {
+		if m.Scope == model.ScopeManaged {
+			return nil
+		}
+	}
+	return []model.Finding{{
+		ID:       "policy.managed-config-enforces-nothing",
+		Severity: model.SeverityHigh,
+		Agent:    inst.Agent,
+		Title:    "Administrator configuration exists but refuses nothing",
+		Detail: "An administrator-owned file is deployed, so this agent does not look " +
+			"unmanaged, but nothing in it can stop an action. No rule a developer cannot " +
+			"weaken, and no hook on an event that can deny.",
+		Evidence: managedFile,
+		Remedy: "Put a rule or a blocking hook in the administrator-owned file, so that " +
+			"what is deployed matches what it appears to be.",
+	}}
+}
+
+// hookFailsOpen fires when a hook that can refuse an action lets the action through if
+// the hook itself fails.
+//
+// The failure modes are the ordinary ones: the binary is missing mid-upgrade, the disk
+// is slow enough to trip a timeout, a dependency is unavailable. Those are also the
+// conditions under which a machine is least likely to be in a known state, so a control
+// that stands down exactly then is not a weaker control. On those machines it is not a
+// control at all, and nothing in the agent's own reporting distinguishes a hook that
+// allowed an action from one that was never consulted.
+func hookFailsOpen(inst model.Installation) []model.Finding {
+	var events []string
+	for _, h := range inst.Hooks {
+		if h.Blocking && h.FailOpen != nil && *h.FailOpen {
+			events = append(events, h.Event)
+		}
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	return []model.Finding{{
+		ID:       "policy.hook-fails-open",
+		Severity: model.SeverityHigh,
+		Agent:    inst.Agent,
+		Title:    "A hook that can refuse an action allows it when the hook fails",
+		Detail: "These hooks are consulted before an action and can deny it, but a crash, " +
+			"a timeout or an unexpected exit code is treated as permission to continue. " +
+			"The machines where that happens are the ones where the agent is least likely " +
+			"to be in a state anyone has checked.",
+		Evidence: strings.Join(dedupeStrings(events), ", "),
+		Remedy:   "Set the hook to fail closed, so a hook that cannot answer refuses.",
+	}}
+}
+
+// dedupeStrings keeps evidence readable when the same event is configured more than
+// once, which is normal where hooks merge across scopes.
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := in[:0]
+	for _, v := range in {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
 func bypassAvailable(inst model.Installation) []model.Finding {
 	if !inst.Permissions.BypassAvailable {
 		return nil
+	}
+	remedy := "Disable bypass mode in an administrator-owned settings file."
+	detail := "The agent still offers a mode that skips every permission prompt. " +
+		"Any deny rule configured here can be sidestepped by starting the agent " +
+		"differently, so the rules cannot be relied on as a control."
+	if !inst.Capabilities.ManagedSettings {
+		// Telling someone to edit a file the vendor does not have wastes their time
+		// and costs the rest of the report its credibility.
+		detail += " This agent has no administrator-owned settings file, so there is " +
+			"no configuration that can take the option away."
+		remedy = "There is nothing to configure: this vendor offers no administrator-owned " +
+			"setting for it. Deploy a hook that refuses and that fails closed, and treat " +
+			"that as the only control."
 	}
 	return []model.Finding{{
 		ID:       "policy.bypass-available",
 		Severity: model.SeverityHigh,
 		Agent:    inst.Agent,
 		Title:    "Can be started with all prompting disabled",
-		Detail: "The agent still offers a mode that skips every permission prompt. " +
-			"Any deny rule configured here can be sidestepped by starting the agent " +
-			"differently, so the rules cannot be relied on as a control.",
-		Remedy: "Disable bypass mode in an administrator-owned settings file.",
+		Detail:   detail,
+		Remedy:   remedy,
 	}}
 }
 
@@ -308,6 +422,8 @@ var unattendedModes = map[string]bool{
 	"danger-full-access": true,
 	// Codex spells "do not ask for approval" as never.
 	"never": true,
+	// Cursor spells it unrestricted.
+	"unrestricted": true,
 }
 
 func unattendedApprovalMode(inst model.Installation) []model.Finding {

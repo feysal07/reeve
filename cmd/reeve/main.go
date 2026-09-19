@@ -18,6 +18,7 @@ import (
 	"github.com/feysal07/reeve/internal/adapter/claudecode"
 	"github.com/feysal07/reeve/internal/adapter/codex"
 	"github.com/feysal07/reeve/internal/adapter/copilot"
+	"github.com/feysal07/reeve/internal/adapter/cursor"
 	"github.com/feysal07/reeve/internal/adapter/gemini"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/scan"
@@ -140,6 +141,7 @@ func runScan(args []string) error {
 		copilot.New(),
 		codex.New(),
 		gemini.New(),
+		cursor.New(),
 	)
 
 	report, err := scan.Run(ctx, registry, scan.Options{

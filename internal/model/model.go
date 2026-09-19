@@ -19,17 +19,33 @@ const (
 
 // Installation is one agent found on one machine.
 type Installation struct {
-	Agent       AgentID           `json:"agent"`
-	DisplayName string            `json:"displayName"`
-	Version     string            `json:"version,omitempty"`
-	BinaryPath  string            `json:"binaryPath,omitempty"`
-	ConfigFiles []ConfigFile      `json:"configFiles,omitempty"`
-	Permissions Permissions       `json:"permissions"`
-	MCPServers  []MCPServer       `json:"mcpServers,omitempty"`
-	Hooks       []Hook            `json:"hooks,omitempty"`
-	Telemetry   TelemetryConfig   `json:"telemetry"`
-	Auth        AuthConfig        `json:"auth"`
-	Extra       map[string]string `json:"extra,omitempty"`
+	Agent        AgentID           `json:"agent"`
+	DisplayName  string            `json:"displayName"`
+	Version      string            `json:"version,omitempty"`
+	BinaryPath   string            `json:"binaryPath,omitempty"`
+	ConfigFiles  []ConfigFile      `json:"configFiles,omitempty"`
+	Permissions  Permissions       `json:"permissions"`
+	MCPServers   []MCPServer       `json:"mcpServers,omitempty"`
+	Hooks        []Hook            `json:"hooks,omitempty"`
+	Telemetry    TelemetryConfig   `json:"telemetry"`
+	Auth         AuthConfig        `json:"auth"`
+	Capabilities Capabilities      `json:"capabilities"`
+	Extra        map[string]string `json:"extra,omitempty"`
+}
+
+// Capabilities describes what a vendor's configuration system can express at all, as
+// distinct from what this installation happens to have set.
+//
+// It exists so a finding can recommend something the product actually offers. A remedy
+// naming a file the vendor does not have is worse than no remedy: it sends an operator
+// looking, and when they fail to find it they conclude the tool is wrong rather than
+// the product is limited.
+type Capabilities struct {
+	// ManagedSettings reports whether the vendor provides an administrator-owned
+	// settings file. Cursor does not: its only administrator-owned file is a hooks
+	// file, so every permission rule, the approval mode and the sandbox setting stay
+	// editable by the developer no matter what an organisation deploys.
+	ManagedSettings bool `json:"managedSettings"`
 }
 
 // Scope says who controls a piece of configuration. Enforcement guarantees depend
@@ -121,6 +137,17 @@ type Hook struct {
 	Matcher  string `json:"matcher,omitempty"`
 	Scope    Scope  `json:"scope"`
 	Blocking bool   `json:"blocking"` // can this event deny the action
+
+	// FailOpen says what happens when the hook itself fails: crashes, times out, or
+	// exits in a way the agent does not recognise as a refusal. True means the
+	// action proceeds.
+	//
+	// It is a pointer because most agents do not document this, and an adapter that
+	// has not established the answer must not assert one. A hook that fails open is
+	// not a weaker control than one that fails closed; under the conditions where it
+	// fails it is not a control at all, and that is worth knowing separately from
+	// whether the hook exists.
+	FailOpen *bool `json:"failOpen,omitempty"`
 }
 
 // TelemetryConfig is what the agent exports and to whom.
