@@ -263,6 +263,57 @@ func TestStoreSurvivesATruncatedLine(t *testing.T) {
 	}
 }
 
+// TestADirectoryGivenWhereARecordFileIsExpectedSaysSo. Both readers take the file,
+// not the directory holding it. Passing the directory returned whatever the operating
+// system says about reading one: "is a directory" on Linux, and on Windows the
+// considerably less helpful "Incorrect function." Neither names what was expected, and
+// the Windows wording does not even suggest the path is at fault, so a mistyped
+// argument reads as a broken installation.
+func TestADirectoryGivenWhereARecordFileIsExpectedSaysSo(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, tc := range []struct {
+		name string
+		read func(string) ([]Event, error)
+		want string
+	}{
+		{"events", ReadEvents, "event store"},
+		{"decisions", ReadDecisions, "decision log"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.read(dir)
+			if err == nil {
+				t.Fatal("reading a directory succeeded, so nothing told the caller the path was wrong")
+			}
+			if !strings.Contains(err.Error(), "directory") {
+				t.Errorf("error does not say the path is a directory: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error does not say what was expected instead, %q: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestADirectoryHoldingARecordFileNamesIt. Being told a directory is not a file leaves
+// the reader to guess the filename. When the answer is sitting in the directory they
+// already typed, say it.
+func TestADirectoryHoldingARecordFileNamesIt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ReadEvents(dir)
+	if err == nil {
+		t.Fatal("reading a directory succeeded")
+	}
+	if !strings.Contains(err.Error(), "events.jsonl") {
+		t.Errorf("error does not name the file sitting in that directory: %v", err)
+	}
+}
+
 func TestReportGroupsByTeamAndRepository(t *testing.T) {
 	events := []Event{
 		{Kind: KindAPIRequest, Agent: model.AgentClaudeCode, Identity: Identity{Team: "platform"},
