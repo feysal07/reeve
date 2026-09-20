@@ -820,6 +820,196 @@ if (Test-Path $events) {
         ($ungoverned -match "opencode.*telemetry only, not governed") `
         "the opencode row did not say it is telemetry only"
 
+    # ---------------------------- billing, allowances, and the report as a gate ----
+    #
+    # These twelve checks existed only in the shell walkthrough for four releases,
+    # while docs/QUICKSTART.md said the two scripts assert the same checks and CI ran
+    # both and saw both go green. Windows was the weaker gate, and nothing said so.
+    #
+    # The tiers are deliberately small so the walkthrough's few thousand tokens land
+    # where a real organisation's millions would.
+    $pricesFile = Join-Path $Sandbox "prices.yaml"
+    Write-Text $pricesFile @'
+currency: USD
+models:
+  claude-sonnet: {input: 3, output: 15, cacheRead: 0.30}
+  gpt-5: {input: 1.25, output: 10}
+  gemini-3: {input: 1.25, output: 10}
+
+billing:
+  claude-code:
+    model: subscription
+    overage: credits
+    plans:
+      standard:
+        seats: 24
+        limits:
+          - {unit: tokens, included: 500000, per: seat, period: "168h", label: weekly tokens}
+      premium:
+        seats: 1
+        limits:
+          - {unit: tokens, included: 1000000, per: seat, period: "168h", label: weekly tokens}
+  copilot-cli:
+    model: subscription
+    overage: blocked
+    plans:
+      business:
+        seats: 25
+        limits:
+          - {unit: requests, included: 300, per: seat, period: "720h", label: monthly premium requests}
+  codex-cli:
+    model: metered
+'@
+
+    $billed = (& $reeve report --store $events --prices $pricesFile --top 5 2>&1 | Out-String)
+    Show $billed
+
+    Check "money is reported separately from equivalent cost" `
+        ($billed -match "money spent") `
+        "a subscription customer would read an equivalent figure as a bill"
+
+    # The case a fleet total cannot show: the organisation sits at a few per cent while
+    # one person is past the largest single seat it holds.
+    Check "a person past their seat is found while the organisation looks fine" `
+        (($billed -replace '\s+', ' ') -match "over a seat : 1 person") `
+        "the per-seat figure is the one a fleet total hides"
+
+    # An allowance in requests measured against tokens is wrong by orders of magnitude,
+    # in whichever direction happens to be reassuring.
+    Check "a request allowance counts requests, not tokens" `
+        (($billed -replace '\s+', ' ') -match "monthly premium requests.*of 7.5k used") `
+        "the request allowance was totalled from tokens"
+
+    # A declaration that cannot mean anything must be refused where somebody is looking
+    # at the file, not silently produce an allowance of zero and print nothing. That is
+    # how the whole section was absent once already.
+    Write-Text (Join-Path $Sandbox "broken-prices.yaml") @'
+billing:
+  claude-code:
+    model: subscription
+    plans:
+      standard:
+        seats: 2
+        limits:
+          - {unit: tokens, included: 500000, per: seat}
+'@
+    $broken = (& $reeve report --store $events --prices (Join-Path $Sandbox "broken-prices.yaml") 2>&1 | Out-String)
+    Check "an allowance with no period is refused rather than silently zero" `
+        ($broken -match "period") $broken.Trim()
+
+    # scan and posture both fail a build on what they find. A report only a person can
+    # read is a report nobody reads on the day it matters.
+    $null = (& $reeve report --store $events --prices $pricesFile --fail-on allowance.over-seat 2>&1)
+    Check "a person past their seat fails the gate" `
+        ($LASTEXITCODE -ne 0) `
+        "the report showed it and exited zero, so nothing in CI can act on it"
+
+    # A gate must fail only on what it was asked about, or an organisation that has
+    # decided it does not care about a condition cannot use it at all.
+    $null = (& $reeve report --store $events --prices $pricesFile --fail-on billing.silent 2>&1)
+    Check "the gate passes conditions it was not asked about" `
+        ($LASTEXITCODE -eq 0) "it failed on something other than billing.silent"
+
+    # A gate configured with a typo that silently passes everything is worse than no
+    # gate, because somebody has been told the build is checking.
+    $typo = (& $reeve report --store $events --fail-on allowance.over-sate 2>&1 | Out-String)
+    Check "a misspelled condition is an error, not a no-op" `
+        ($typo -match "not a condition") $typo.Trim()
+
+    # An allowance declared for an agent nothing reports against reads nought per cent
+    # for ever, which on a dashboard is what staying inside the limit looks like.
+    Write-Text (Join-Path $Sandbox "silent-prices.yaml") @'
+billing:
+  cursor:
+    model: subscription
+    plans:
+      team:
+        seats: 3
+        limits:
+          - {unit: tokens, included: 1000000, per: seat, period: "168h"}
+'@
+    $silent = (& $reeve report --store $events --prices (Join-Path $Sandbox "silent-prices.yaml") --fail-on billing.silent 2>&1 | Out-String)
+    Check "an allowance nothing reports against is caught" `
+        ($silent -match "billing.silent") "a permanent zero reads as healthy"
+
+    # --------------------- enforcing on the allowance, not on a copy of it ----
+    #
+    # A token budget is an absolute figure typed into the policy. Upgrade a seat or buy
+    # ten more and it describes an arrangement the organisation no longer has, silently,
+    # and permissively if the plan shrank. These rules say the proportion and let the
+    # price table supply the number.
+    $allowPolicy = Join-Path $Sandbox "allowance-policy.yaml"
+    Write-Text $allowPolicy @'
+version: 1
+default: allow
+rules:
+  - id: near-the-seat-allowance
+    decision: ask
+    match:
+      allowance: {usedAtLeast: 80, of: seat, within: "168h"}
+    reason: Most of the weekly allowance your seat includes has been used.
+'@
+    Write-Text (Join-Path $Sandbox "seat-prices.yaml") @'
+billing:
+  claude-code:
+    model: subscription
+    overage: credits
+    plans:
+      solo:
+        seats: 1
+        limits:
+          - {unit: tokens, included: 1100000, per: seat, period: "168h"}
+'@
+    Write-Text (Join-Path $Sandbox "big-seat-prices.yaml") @'
+billing:
+  claude-code:
+    model: subscription
+    plans:
+      solo:
+        seats: 1
+        limits:
+          - {unit: tokens, included: 11000000, per: seat, period: "168h"}
+'@
+    $allowPayload = '{"session_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}'
+
+    # Both inputs present: 1.0M of a 1.1M seat is 95%, so the rule fires.
+    $out = ($allowPayload | & $reeve guard --agent claude-code --policy $allowPolicy `
+        --store $events --prices (Join-Path $Sandbox "seat-prices.yaml") 2>&1 | Out-String)
+    Check "a rule measured against the declared plan fires at 95% of a seat" `
+        ($out -match "ask") $out.Trim()
+
+    # The same policy, the same consumption, a seat ten times the size. Nothing in the
+    # policy changed and the rule correctly stops firing, which is the whole point.
+    $out = ($allowPayload | & $reeve guard --agent claude-code --policy $allowPolicy `
+        --store $events --prices (Join-Path $Sandbox "big-seat-prices.yaml") 2>&1 | Out-String)
+    Check "the same rule stops firing when the plan grows, with no policy edit" `
+        ($out -notmatch "ask") "it is still matching a figure the plan no longer has"
+
+    # With no price table the rule cannot be evaluated at all. An allowance nobody
+    # could resolve is not an allowance nobody has touched.
+    $out = ($allowPayload | & $reeve guard --agent claude-code --policy $allowPolicy `
+        --store $events 2>&1 | Out-String)
+    Check "an allowance rule with no plan refuses, and says which input is missing" `
+        (($out -match "deny") -and ($out -match "prices")) $out.Trim()
+
+    # A policy carrying only a tokens budget once dereferenced a spend match that was
+    # never set and brought the guard down on every action. A crashed hook is not a
+    # refusal, so the budget stopped enforcing while looking configured.
+    Write-Text (Join-Path $Sandbox "tokens-only.yaml") @'
+version: 1
+default: allow
+rules:
+  - id: weekly-tokens
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 100, scope: machine}
+    reason: past the weekly token budget
+'@
+    $out = ($allowPayload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "tokens-only.yaml") --store $events 2>&1 | Out-String)
+    Check "a tokens budget alone does not bring the guard down" `
+        (($out -notmatch "panic") -and ($out -match "deny")) $out.Trim()
+
     # A rule totalled per person, with nobody to total against.
     #
     # An agent runs on a developer's machine, so an identity it reports is a claim by

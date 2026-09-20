@@ -30,6 +30,12 @@ The two are the same walkthrough in two languages and assert the same checks. CI
 the shell one on Linux and macOS and the PowerShell one on Windows, so neither quietly
 stops working while the other is maintained.
 
+That claim was untrue for four releases. The PowerShell script asserted twelve fewer
+things than the shell one, with no skips accounting for the difference, while both went
+green and the counts here described only one of them. A test that asserts less than it
+is believed to is the same shape as everything else this tool is about, so the two are
+now compared by name and the difference is nil.
+
 Either builds the binary, creates a sandbox with four deliberately badly configured
 agents, and runs all four planes in order: discovery, policy, enforcement, telemetry.
 Add `--keep-sandbox` (or `-KeepSandbox`) to keep the artifacts.
