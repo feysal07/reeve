@@ -181,7 +181,6 @@ func TestEveryCountingMatchHonoursPersonScope(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"spend", `spend: {within: 24h, moreThan: 1, scope: person}`},
 		{"tokens", `tokens: {within: 24h, moreThan: 1, scope: person}`},
-		{"repeated", `repeated: {within: 5m, moreThan: 1, scope: person}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, err := Parse([]byte("version: 1\nrules:\n  - id: r\n    decision: deny\n    match:\n      " + tc.body + "\n"))
@@ -200,5 +199,46 @@ func TestEveryCountingMatchHonoursPersonScope(t *testing.T) {
 				t.Errorf("effect = %q, want deny with no identity resolved", d.Effect)
 			}
 		})
+	}
+}
+
+// TestARepetitionRuleCannotBeScopedPerPersonYet.
+//
+// Found by running it rather than reading it. The decision log records no identity, so
+// History records carry none, so a person-scoped repetition count matches nothing and
+// totals zero — and zero does not fire. Evaluate had no reason to refuse either,
+// because the identity on the action was perfectly good. The result was a loop breaker
+// that returned allow with no reason on every action for ever, accepted by policy
+// check, and impossible to tell apart from a loop breaker that was simply never
+// provoked.
+//
+// Refused at load time, where somebody is looking. Lift this in the same change that
+// makes the log record who, never before it.
+func TestARepetitionRuleCannotBeScopedPerPersonYet(t *testing.T) {
+	_, err := Parse([]byte(`
+version: 1
+rules:
+  - id: loop
+    decision: deny
+    match:
+      repeated: {same: tool, within: 5m, moreThan: 2, scope: person}
+`))
+	if err == nil {
+		t.Fatal("a person-scoped repetition rule was accepted, so it will count " +
+			"nothing and never fire while looking configured")
+	}
+	if !strings.Contains(err.Error(), "does not record who") {
+		t.Errorf("the error does not say why it cannot be honoured: %v", err)
+	}
+
+	// The scopes that do work on a repetition rule must keep working.
+	for _, ok := range []string{"", "session", "machine"} {
+		body := "repeated: {same: tool, within: 5m, moreThan: 2}"
+		if ok != "" {
+			body = "repeated: {same: tool, within: 5m, moreThan: 2, scope: " + ok + "}"
+		}
+		if _, err := Parse([]byte("version: 1\nrules:\n  - id: loop\n    decision: deny\n    match:\n      " + body + "\n")); err != nil {
+			t.Errorf("repetition scope %q was refused: %v", ok, err)
+		}
 	}
 }
