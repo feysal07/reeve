@@ -44,7 +44,7 @@ services:
       - events:/var/lib/reeve
 
   collector:
-    image: ghcr.io/feysal07/reeve:0.3.0
+    image: ghcr.io/feysal07/reeve:0.4.0
     restart: unless-stopped
     command:
       - collect

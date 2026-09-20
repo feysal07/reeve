@@ -64,7 +64,7 @@ release workflow from a named commit.
 
 ```
 gh attestation verify reeve-linux-amd64.tar.gz --repo feysal07/reeve
-gh attestation verify oci://ghcr.io/feysal07/reeve:0.1.0 --repo feysal07/reeve
+gh attestation verify oci://ghcr.io/feysal07/reeve:0.4.0 --repo feysal07/reeve
 ```
 
 `checksums.txt` is still published and still worth checking, but the two answer

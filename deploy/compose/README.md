@@ -99,5 +99,5 @@ behaved the first time it was run, before it was run.
 ## Pinning
 
 Image tags here are pinned to exact versions, including the Reeve image. Change
-`ghcr.io/feysal07/reeve:0.3.0` when you upgrade, so that what you are running is a
+`ghcr.io/feysal07/reeve:0.4.0` when you upgrade, so that what you are running is a
 decision rather than whatever `latest` resolved to this morning.

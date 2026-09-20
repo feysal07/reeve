@@ -18,8 +18,8 @@ PrometheusRule.
 There is no published image yet. Build and push one:
 
 ```bash
-docker build -t ghcr.io/feysal07/reeve:0.1.0 .
-docker push ghcr.io/feysal07/reeve:0.1.0
+docker build -t ghcr.io/feysal07/reeve:0.4.0 .
+docker push ghcr.io/feysal07/reeve:0.4.0
 ```
 
 Or use the floating build from `main` that CI publishes:

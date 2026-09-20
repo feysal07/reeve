@@ -10,8 +10,8 @@
 
 image:
   repository: ghcr.io/feysal07/reeve
-  # Empty means the chart's appVersion. No release is tagged yet, so until one
-  # is, use the floating build from main:
+  # Empty means the chart's appVersion, which is a released tag. To track main
+  # instead of a release:
   #
   #   --set image.tag=main --set image.pullPolicy=Always
   tag: ""

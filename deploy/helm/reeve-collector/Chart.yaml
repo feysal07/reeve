@@ -5,8 +5,8 @@ type: application
 
 # The chart is versioned independently of Reeve itself, because a change to a
 # Kubernetes manifest is not a change to the collector's behaviour.
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.4.0
+appVersion: "0.4.0"
 
 home: https://github.com/feysal07/reeve
 sources:
