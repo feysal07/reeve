@@ -1,0 +1,65 @@
+# Alert rules for the metrics the collector exports.
+#
+# Shipped rather than described, because the conditions that matter most here are the
+# ones nobody notices unaided. An allowance nothing is measured against reads nought
+# per cent for ever, and an allowance being spent too fast reads as a number below its
+# limit right up until it is not. On a graph both look exactly like staying inside the
+# limit.
+#
+# Prometheus loads this through rule_files in prometheus.yml. There is no Alertmanager
+# in this stack, so a firing rule is visible at http://127.0.0.1:9091/alerts and
+# nowhere else. Wire Alertmanager before treating any of this as notification.
+groups:
+  - name: reeve-allowances
+    rules:
+      # billing.silent. An allowance was declared and nothing has ever been measured
+      # against it. Copilot exports no per-token telemetry, so this is not
+      # hypothetical: a declared Copilot allowance sits at zero indefinitely, which is
+      # the same shape on a dashboard as an organisation comfortably inside its limit.
+      - alert: ReeveAllowanceNeverMeasured
+        expr: reeve_allowance_included > 0 and reeve_allowance_used == 0
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: >-
+            Nothing has been measured against the {{ $labels.limit }} allowance for
+            {{ $labels.agent }}
+          description: >-
+            An allowance is declared for {{ $labels.agent }} and consumption against it
+            has been zero for a day. Either nobody is using that agent, or nothing it
+            exports can be attributed to the allowance. The second is the common case,
+            and it is indistinguishable from the first on a dashboard, which is why
+            this is an alert rather than a panel.
+
+      # allowance.pace. The one that fires while there is still time to act: above 1
+      # means consumption is ahead of the rate that would just use the allowance up
+      # over the window, so it will run out before the period resets.
+      - alert: ReeveAllowancePaceWillExhaust
+        expr: reeve_allowance_pace > 1
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: >-
+            The {{ $labels.limit }} allowance for {{ $labels.agent }} will not last the
+            period
+          description: >-
+            Consumption is running at {{ $value | printf "%.2f" }} times the rate that
+            would just use up the {{ $labels.period }} allowance. Run reeve report for
+            who is driving it: the metric deliberately carries no identity.
+
+      # Without this rule the two above cannot fire. When the event store cannot be
+      # read the allowance series go absent rather than stale, because a held-over
+      # figure would look like a healthy organisation. An absent series satisfies no
+      # alert expression either, so the silence has to be alerted on separately.
+      - alert: ReeveAllowancesUnreadable
+        expr: increase(reeve_allowance_read_errors_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: Reeve cannot read the event store to compute allowances
+          description: >-
+            While this is true every other allowance alert here is quiet, and not
+            because the allowances are healthy: the series they match on are absent.

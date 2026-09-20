@@ -143,10 +143,11 @@ rather than different severities:
 no-op: a gate configured with a typo that silently passes everything is worse than no
 gate, because somebody has been told the build is checking.
 
-`billing.silent` is the one worth wiring up first. Copilot exports no per-token
-telemetry; declare an allowance for it, never finish wiring the export, and every
-report and every dashboard says nought per cent for ever — which is exactly what an
-organisation comfortably inside its limits looks like.
+`billing.silent` is the one worth wiring up first, and it ships wired: Copilot exports
+no per-token telemetry, so declare an allowance for it, never finish wiring the export,
+and every report and every dashboard says nought per cent for ever — which is exactly
+what an organisation comfortably inside its limits looks like. See
+[the alerts](#the-alerts-are-shipped-not-described) for the rule that catches it.
 
 ## Watching it, rather than reading it
 
@@ -172,6 +173,27 @@ it would quietly turn a monitoring stack into a second, unmanaged copy of who di
 While the store cannot be read, the allowance series are **absent rather than stale**.
 Held-over figures would draw a healthy line through an outage out of numbers that were
 true an hour ago, and a gap is at least visible.
+
+### The alerts are shipped, not described
+
+Metrics without alerts are a dashboard nobody opens, so the rules come with the
+deployment rather than being left as an exercise:
+
+- **compose** — [`deploy/compose/config/rules.yml`](../deploy/compose/config/rules.yml),
+  loaded through `rule_files`. There is no Alertmanager in that stack, so a firing rule
+  shows at `http://127.0.0.1:9091/alerts` and nowhere else.
+- **Helm** — the same three in the chart's `PrometheusRule`, behind
+  `prometheusRule.enabled`, with `allowanceSilentFor` and `paceAbove` as values.
+
+| alert | condition | why it is an alert and not a panel |
+|---|---|---|
+| `ReeveAllowanceNeverMeasured` | `billing.silent` | Nought per cent for ever is the same shape as staying inside the limit |
+| `ReeveAllowancePaceWillExhaust` | `allowance.pace` | Fires while there is still time to act |
+| `ReeveAllowancesUnreadable` | the store cannot be read | Without it the other two are quiet for the wrong reason: the series they match on are absent |
+
+A test asserts that every metric these name is one this build actually exports. An
+alert querying a renamed series does not fail — it sits there looking like a condition
+that has never been met.
 
 `reeve_cost_usd_total` still exists so that existing dashboards keep working, but it is
 now an alias for `reeve_equivalent_cost_usd_total`. The figure never was money; the

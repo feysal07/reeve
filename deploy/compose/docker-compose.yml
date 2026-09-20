@@ -84,6 +84,10 @@ services:
       - "127.0.0.1:9091:9090"
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Mounted separately rather than as a directory: prometheus.yml names this path
+      # in rule_files, and a missing rules file stops Prometheus at startup instead of
+      # quietly running with no alerts.
+      - ./config/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus:/prometheus
     depends_on:
       - collector

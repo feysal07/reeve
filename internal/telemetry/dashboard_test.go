@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/feysal07/reeve/internal/model"
 )
 
@@ -109,5 +111,82 @@ func TestTheDashboardDoesNotPresentEquivalentCostAsMoney(t *testing.T) {
 	if !strings.Contains(text, "reeve_allowance_used") {
 		t.Error("the dashboard does not show the allowance, which is the figure a " +
 			"seat-based organisation actually acts on")
+	}
+}
+
+// TestTheShippedAlertRulesOnlyUseMetricsThisBuildEmits.
+//
+// An alert whose expression names a metric nobody exports never fires. It is not an
+// error and it is not a red light; it sits there looking like a condition that has
+// never been met, which is the shape of everything being fine. Renaming a series
+// therefore disarms the alerting without breaking a build, unless this test exists.
+//
+// Both deployments are checked. The compose file is plain YAML. The Helm one is a Go
+// template and cannot be parsed as YAML, so its expressions are read by pattern —
+// less precise, but it catches the rename that matters.
+func TestTheShippedAlertRulesOnlyUseMetricsThisBuildEmits(t *testing.T) {
+	exported := exportedNames(t)
+
+	check := func(where, expr string) {
+		for _, name := range metricName.FindAllString(expr, -1) {
+			if !exported[name] {
+				t.Errorf("%s alerts on %q, which this build does not export, so the "+
+					"rule can never fire", where, name)
+			}
+		}
+	}
+
+	composePath := filepath.Join("..", "..", "deploy", "compose", "config", "rules.yml")
+	body, err := os.ReadFile(composePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Groups []struct {
+			Name  string `yaml:"name"`
+			Rules []struct {
+				Alert string `yaml:"alert"`
+				Expr  string `yaml:"expr"`
+				For   string `yaml:"for"`
+			} `yaml:"rules"`
+		} `yaml:"groups"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("the shipped compose alert rules are not valid YAML: %v", err)
+	}
+
+	alerts := 0
+	for _, g := range doc.Groups {
+		for _, r := range g.Rules {
+			alerts++
+			if r.Alert == "" || r.Expr == "" {
+				t.Errorf("a rule in group %q has no alert name or no expression", g.Name)
+			}
+			check("the compose rules file", r.Expr)
+		}
+	}
+	if alerts == 0 {
+		t.Fatal("the shipped compose rules file declares no alerts at all")
+	}
+
+	// The two conditions the documentation singles out must actually be shipped,
+	// not merely described. Both were an exercise for the reader until now.
+	for _, want := range []string{"reeve_allowance_used", "reeve_allowance_pace"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("no shipped alert covers %s", want)
+		}
+	}
+
+	helmPath := filepath.Join("..", "..", "deploy", "helm", "reeve-collector",
+		"templates", "prometheusrule.yaml")
+	helm, err := os.ReadFile(helmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(helm), "\n") {
+		line = strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(line, "expr:"); ok {
+			check("the Helm PrometheusRule", after)
+		}
 	}
 }

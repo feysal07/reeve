@@ -95,4 +95,53 @@ spec:
               Requests from {{ "{{ $labels.agent }}" }} carry tokens for a model with
               no price entry, so their cost is missing from every total. Run
               `reeve report` to see which models, and add them to the price table.
+
+        # An allowance nothing is measured against reads nought per cent for ever,
+        # which is the same shape on a dashboard as an organisation comfortably inside
+        # its limit. Copilot exports no per-token telemetry, so a declared Copilot
+        # allowance does this by default rather than as a fault.
+        - alert: ReeveAllowanceNeverMeasured
+          expr: reeve_allowance_included > 0 and reeve_allowance_used == 0
+          for: {{ .Values.prometheusRule.allowanceSilentFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              Nothing has been measured against the
+              {{ "{{ $labels.limit }}" }} allowance for {{ "{{ $labels.agent }}" }}
+            description: >-
+              An allowance is declared for {{ "{{ $labels.agent }}" }} and consumption
+              against it has been zero throughout. Either nobody is using that agent,
+              or nothing it exports can be attributed to the allowance. The second is
+              the common case and looks identical to the first.
+
+        # The one that fires while there is still time to act.
+        - alert: ReeveAllowancePaceWillExhaust
+          expr: reeve_allowance_pace > {{ .Values.prometheusRule.paceAbove }}
+          for: 2h
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              The {{ "{{ $labels.limit }}" }} allowance for
+              {{ "{{ $labels.agent }}" }} will not last the period
+            description: >-
+              Consumption is running at {{ "{{ $value | printf \"%.2f\" }}" }} times
+              the rate that would just use up the {{ "{{ $labels.period }}" }}
+              allowance. Run `reeve report` for who is driving it; the metric
+              deliberately carries no identity.
+
+        # Without this the two above cannot fire. An unreadable store makes the
+        # allowance series absent rather than stale, because a held-over figure would
+        # look like a healthy organisation — and an absent series matches no alert.
+        - alert: ReeveAllowancesUnreadable
+          expr: increase(reeve_allowance_read_errors_total[15m]) > 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: Reeve cannot read the event store to compute allowances
+            description: >-
+              While this is true every other allowance alert is quiet, and not because
+              the allowances are healthy: the series they match on are absent.
 {{- end }}
