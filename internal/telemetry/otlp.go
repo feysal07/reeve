@@ -172,15 +172,38 @@ func agentFromResource(a map[string]otlpValue) model.AgentID {
 	return ""
 }
 
+// named reports whether the sender said who it was, whatever it said.
+//
+// The distinction the gen_ai fallback below turns on: a payload that named itself and
+// was not recognised is a different thing from one that named nothing at all.
+func named(a map[string]otlpValue) bool {
+	return lookup(a, "service.name").String() != ""
+}
+
 // agentFromName infers the agent from a metric or event name, since each vendor
 // prefixes its own.
-func agentFromName(name string) model.AgentID {
+func agentFromName(name string, senderNamedItself bool) model.AgentID {
 	switch {
 	case strings.HasPrefix(name, "claude_code."), strings.HasPrefix(name, "claude_code_"):
 		return model.AgentClaudeCode
-	case strings.HasPrefix(name, "copilot"), strings.HasPrefix(name, "gen_ai."):
-		// Copilot emits the GenAI semantic conventions rather than a vendor
-		// prefix, so an unprefixed gen_ai metric is attributed to it.
+	case strings.HasPrefix(name, "copilot"):
+		return model.AgentCopilotCLI
+	case strings.HasPrefix(name, "gen_ai."):
+		// The GenAI semantic conventions are not Copilot's. They are the standard,
+		// and Copilot happens to emit them without a vendor prefix.
+		//
+		// So this only means Copilot when nothing else identified the sender. A
+		// payload that named itself something this build does not recognise — an
+		// OpenCode install, or any agent added after this was written — was being
+		// counted as Copilot spend: silently, and in the direction that inflates a
+		// governed agent's figures with an ungoverned agent's usage. Nobody reading
+		// the Copilot row would see a reason to doubt it.
+		//
+		// Unattributed is the honest answer there. It shows up as its own row rather
+		// than swelling somebody else's, which is a question an operator can act on.
+		if senderNamedItself {
+			return ""
+		}
 		return model.AgentCopilotCLI
 	case strings.HasPrefix(name, "codex."):
 		return model.AgentCodexCLI
@@ -274,7 +297,7 @@ func (d *Decoder) metricEvents(m otlpMetric, agent model.AgentID, id Identity, r
 		return nil
 	}
 	if agent == "" {
-		agent = agentFromName(m.Name)
+		agent = agentFromName(m.Name, named(res))
 	}
 
 	var out []Event
@@ -390,7 +413,7 @@ func (d *Decoder) eventsFromLogs(req otlpLogsRequest) []Event {
 
 		for _, sl := range rl.ScopeLogs {
 			for _, rec := range sl.LogRecords {
-				ev, ok := d.logEvent(rec, agent, id, repo)
+				ev, ok := d.logEvent(rec, agent, id, repo, named(res))
 				if ok {
 					out = append(out, ev)
 				}
@@ -400,14 +423,14 @@ func (d *Decoder) eventsFromLogs(req otlpLogsRequest) []Event {
 	return out
 }
 
-func (d *Decoder) logEvent(rec otlpLogRecord, agent model.AgentID, id Identity, repo string) (Event, bool) {
+func (d *Decoder) logEvent(rec otlpLogRecord, agent model.AgentID, id Identity, repo string, senderNamedItself bool) (Event, bool) {
 	a := attrs(rec.Attributes)
 	name := lookup(a, "event.name").String()
 	if name == "" && rec.Body != nil {
 		name = rec.Body.String()
 	}
 	if agent == "" {
-		agent = agentFromName(name)
+		agent = agentFromName(name, senderNamedItself)
 	}
 
 	ev := Event{

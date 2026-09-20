@@ -835,10 +835,10 @@ EOF
     # report has to say what it can and cannot claim about such an agent, rather than
     # printing a row that looks like the four that are fully governed.
     #
-    # Attributed with reeve.agent rather than service.name, because that is the only
-    # mechanism that actually works for it today: agentFromResource has no opencode
-    # case, so a payload naming itself opencode in service.name and using the GenAI
-    # conventions is attributed to Copilot instead. See the note in docs/TELEMETRY.md.
+    # Attributed with reeve.agent, which is the operator's own mechanism for an agent
+    # this build has no adapter for. Named only in service.name it is now left
+    # unattributed instead, which is the honest answer for a sender nothing here knows;
+    # it used to be counted as Copilot spend, and that case is covered by a unit test.
     post /v1/metrics <<'EOF'
 {"resourceMetrics":[{"resource":{"attributes":[
  {"key":"reeve.agent","value":{"stringValue":"opencode"}},

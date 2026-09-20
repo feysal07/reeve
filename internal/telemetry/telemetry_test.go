@@ -376,3 +376,60 @@ func TestWindowFiltersByTime(t *testing.T) {
 		t.Errorf("events in window = %d, want 1", len(got))
 	}
 }
+
+// TestAnUnrecognisedSenderIsNotCountedAsCopilot.
+//
+// The GenAI semantic conventions are the standard, not Copilot's. Copilot merely emits
+// them without a vendor prefix, so an unprefixed gen_ai metric used to be attributed to
+// it — including when the payload had already said, in service.name, that it was
+// something else entirely.
+//
+// An OpenCode install, or any agent added after this was written, therefore arrived as
+// Copilot spend. Silently, and in the direction that inflates a governed agent's
+// figures with an ungoverned agent's usage, so nobody reading the Copilot row had any
+// reason to doubt it.
+func TestAnUnrecognisedSenderIsNotCountedAsCopilot(t *testing.T) {
+	payload := func(service string) string {
+		return `{"resourceMetrics":[{"resource":{"attributes":[
+			{"key":"service.name","value":{"stringValue":"` + service + `"}}]},
+			"scopeMetrics":[{"metrics":[{"name":"gen_ai.client.token.usage","sum":{"dataPoints":[
+				{"asInt":"1000","attributes":[{"key":"gen_ai.token.type","value":{"stringValue":"input"}}]}]}}]}]}]}`
+	}
+
+	// Copilot still works. It names itself, and that name is recognised.
+	events, err := decoder(nil).DecodeMetrics([]byte(payload("copilot")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[0].Agent != model.AgentCopilotCLI {
+		t.Errorf("agent = %q, want copilot-cli: narrowing the fallback must not "+
+			"stop attributing Copilot's own telemetry", events[0].Agent)
+	}
+
+	// A sender that named itself something else is not Copilot, whatever conventions
+	// it emits.
+	events, err = decoder(nil).DecodeMetrics([]byte(payload("opencode")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[0].Agent == model.AgentCopilotCLI {
+		t.Error("a payload naming itself opencode was counted as Copilot spend")
+	}
+	if events[0].Agent != "" {
+		t.Errorf("agent = %q, want unattributed: this build does not know that "+
+			"sender, and guessing is what caused the problem", events[0].Agent)
+	}
+
+	// A sender that named nothing at all keeps the old behaviour: the conventions are
+	// the only evidence there is, and Copilot is the agent known to emit them bare.
+	bare := `{"resourceMetrics":[{"resource":{"attributes":[]},
+		"scopeMetrics":[{"metrics":[{"name":"gen_ai.client.token.usage","sum":{"dataPoints":[
+			{"asInt":"1000","attributes":[]}]}}]}]}]}`
+	events, err = decoder(nil).DecodeMetrics([]byte(bare))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[0].Agent != model.AgentCopilotCLI {
+		t.Errorf("agent = %q, want copilot-cli when nothing named the sender", events[0].Agent)
+	}
+}

@@ -155,7 +155,7 @@ what an organisation comfortably inside its limits looks like. See
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": "1.0",
   "from": "2026-01-02T03:04:05Z",
   "to": "2026-01-09T03:04:05Z",
   "overall": { "sessions": 11, "requests": 22, "tokens": { "input": 41 },
@@ -273,13 +273,16 @@ OpenCode and for any other name the collector accepts that `reeve scan` and
 are fully covered, and the limit is only discovered when somebody goes looking for an
 agent that scan cannot see.
 
-> **Attribute OpenCode with `reeve.agent`, not `service.name`.** The service-name
-> mapping has no OpenCode case, and OpenCode emits the GenAI semantic conventions,
-> which are attributed to Copilot because that is what Copilot emits. So a payload
-> announcing itself as OpenCode in `service.name` alone is currently counted as Copilot
-> spend — silently, and in the direction that inflates a governed agent's figures with
-> an ungoverned agent's usage. Setting the `reeve.agent` resource attribute takes
-> precedence over everything else and is the mechanism to use until that is fixed.
+> **Attribute an agent this build has no adapter for with `reeve.agent`.** That
+> resource attribute takes precedence over everything else and is the operator's own
+> channel for saying who sent a payload.
+>
+> Until v0.6.0 a sender that named itself in `service.name` alone and emitted the GenAI
+> semantic conventions — as OpenCode does — was **counted as Copilot spend**, because an
+> unprefixed `gen_ai.` metric was attributed to Copilot whatever the sender had said
+> about itself. Silently, and in the direction that inflates a governed agent's figures
+> with an ungoverned agent's usage. Such a payload is now left unattributed instead,
+> which shows up as its own row rather than swelling somebody else's.
 
 Anything else that reaches the collector is labelled `other` in the metrics, and
 `unidentified` when the payload said nothing about who sent it. Those are different

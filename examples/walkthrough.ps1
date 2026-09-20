@@ -715,10 +715,9 @@ if ($listening) {
 '@
         # OpenCode, which the collector accepts and nothing else here covers.
         #
-        # Attributed with reeve.agent rather than service.name, because that is the
-        # only mechanism that works for it today: agentFromResource has no opencode
-        # case, so a payload naming itself opencode and using the GenAI conventions
-        # is attributed to Copilot instead. See the note in docs/TELEMETRY.md.
+        # Attributed with reeve.agent, the operator's own mechanism for an agent this
+        # build has no adapter for. Named only in service.name it is now left
+        # unattributed instead; that case is covered by a unit test.
         $opencode = @'
 {"resourceMetrics":[{"resource":{"attributes":[
  {"key":"reeve.agent","value":{"stringValue":"opencode"}},
