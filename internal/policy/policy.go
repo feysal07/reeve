@@ -127,10 +127,19 @@ type Match struct {
 // budget and a repetition count at once, and a person scope on either of them needs the
 // same identity: answering for one and not the other would total a window the rule did
 // not ask for and return it as though it had.
-func (m Match) personScoped() bool {
-	return (m.Spend != nil && m.Spend.Scope == ScopePerson) ||
-		(m.TokenBudget != nil && m.TokenBudget.Scope == ScopePerson) ||
-		(m.Repeated != nil && m.Repeated.Scope == ScopePerson)
+func (m Match) personScoped() bool { return m.scopedBy(ScopePerson) }
+
+// teamScoped reports whether any counting match on this rule is totalled per team.
+func (m Match) teamScoped() bool { return m.scopedBy(ScopeTeam) }
+
+// scopedBy answers for every counting match rather than the first that is set. A rule
+// can carry a token budget and a repetition count at once, and a scope on either needs
+// the same input: answering for one and not the other would total a window the rule did
+// not ask for and return it as though it had.
+func (m Match) scopedBy(scope string) bool {
+	return (m.Spend != nil && m.Spend.Scope == scope) ||
+		(m.TokenBudget != nil && m.TokenBudget.Scope == scope) ||
+		(m.Repeated != nil && m.Repeated.Scope == scope)
 }
 
 // TokenMatch is a budget denominated in tokens rather than money.
@@ -292,12 +301,13 @@ func Parse(b []byte) (*Policy, error) {
 		// because that moment produces no output at all. Lift this once the log
 		// records who, at which point the scope becomes meaningful rather than merely
 		// accepted.
-		if r.Match.Repeated != nil && r.Match.Repeated.Scope == ScopePerson {
+		if r.Match.Repeated != nil &&
+			(r.Match.Repeated.Scope == ScopePerson || r.Match.Repeated.Scope == ScopeTeam) {
 			return nil, fmt.Errorf(
-				"rules[%d] (%s): repeated cannot be scoped per person yet, because the "+
+				"rules[%d] (%s): repeated cannot be scoped per %s yet, because the "+
 					"decision log does not record who. Such a rule would count nothing "+
 					"and never fire rather than refuse. Use scope: session or machine",
-				i, r.ID)
+				i, r.ID, r.Match.Repeated.Scope)
 		}
 		// A scope nobody validated is a scope that silently means "session".
 		//
@@ -315,7 +325,7 @@ func Parse(b []byte) (*Policy, error) {
 		} {
 			if !validScope(s.value) {
 				return nil, fmt.Errorf(
-					"rules[%d] (%s): %s scope %q is not session, machine or person",
+					"rules[%d] (%s): %s scope %q is not session, machine, team or person",
 					i, r.ID, s.field, s.value)
 			}
 		}
@@ -325,7 +335,7 @@ func Parse(b []byte) (*Policy, error) {
 
 func validScope(s string) bool {
 	switch s {
-	case "", ScopeSession, ScopeMachine, ScopePerson:
+	case "", ScopeSession, ScopeMachine, ScopeTeam, ScopePerson:
 		return true
 	}
 	return false
@@ -410,6 +420,26 @@ func (p *Policy) Evaluate(a Action) Decision {
 					"than enforcing a limit anyone here could step around. Give the " +
 					"guard an operator-set identity with --identity or REEVE_IDENTITY."
 			}
+			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+				d.Effect = EffectDeny
+				d.RuleID = r.ID
+				d.Reason = why
+			}
+			continue
+		}
+		// A rule totalled per team needs a team, from the operator's own mapping.
+		//
+		// The same refusal as per person, for the same reason and one step further
+		// out: a team is only meaningful here because the collector resolved it from
+		// a file the developer cannot edit. Without an identity to resolve, or with
+		// one the agent asserted, or with an identity that maps to no team at all,
+		// the rule has nothing to total and totalling nothing would permit.
+		if r.Match.teamScoped() && (!a.Identity.Verified() || a.Identity.teamOf() == "") {
+			why := "This rule is totalled per team, and which team this machine " +
+				"belongs to could not be established from a source outside it. " +
+				"Refusing rather than attributing the action to no team. Give the " +
+				"guard an operator-set identity with --identity or REEVE_IDENTITY, " +
+				"and a team mapping with --teams."
 			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
 				d.Effect = EffectDeny
 				d.RuleID = r.ID

@@ -111,3 +111,18 @@ rules:
       You have used more than this week's per-person token budget. The figure is
       yours rather than the machine's or the team's. If that is expected, the
       budget is in the policy your organisation deploys.
+
+  # Totalled per team. The scope an organisation actually sets, and the one that needs
+  # two operator-owned inputs rather than one: an identity the developer cannot edit,
+  # and a mapping from that identity to a team, which is the same teams.yaml the
+  # collector resolves attribution from when it records an event. Both sides therefore
+  # agree by construction. Missing either, this rule denies and says which.
+  - id: one-teams-weekly-tokens
+    description: Stop a team running through its share of the week
+    decision: deny
+    match:
+      tokens: {within: "168h", moreThan: 200000000, scope: team}
+    reason: >
+      Your team has used more than its weekly token budget. The figure is the
+      team's rather than yours: a colleague's consumption counts towards it,
+      which is the point of a team budget.

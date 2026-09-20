@@ -471,6 +471,27 @@ Two honest limits worth stating:
 - An event in the store that carried no identity is counted towards **no** person, not
   towards whoever is asking.
 
+### `scope: team`
+
+The scope an organisation usually wants, and it needs **two** operator-owned inputs
+rather than one:
+
+```bash
+reeve guard --agent claude-code --identity "$SSO_SUBJECT"   --teams ./teams.yaml --store ./events.jsonl
+```
+
+`--teams` (or `REEVE_TEAMS`) is the same mapping `reeve collect` resolves attribution
+from when it records an event, so both sides agree by construction and neither takes a
+team the agent asserted about itself. That is the only reason a rule is allowed to
+total on one.
+
+It refuses when the identity is missing, when it was asserted, **and** when a verified
+identity maps to no team at all — a mapping that cannot be read leaves the team empty
+rather than guessing, and an empty team is not a team of nobody.
+
+A colleague's consumption counts towards a team budget. That is the point of it: the
+figure is the team's rather than yours.
+
 See [examples/policy/budget.yaml](../examples/policy/budget.yaml). Like the loop
 breaker, it is deliberately not in the baseline.
 

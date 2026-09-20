@@ -1101,7 +1101,7 @@ EOF
     printf 'version: 1\nrules:\n  - id: typo\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 1, scope: persno}\n' > "$SANDBOX/scope-typo.yaml"
     TYPO_SCOPE=$("$REEVE" policy check "$SANDBOX/scope-typo.yaml" 2>&1)
     case "$TYPO_SCOPE" in
-        *"session, machine or person"*)
+        *"session, machine, team or person"*)
             check "a misspelled scope is an error, not a quietly different rule" 1 ;;
         *)  check "a misspelled scope is an error, not a quietly different rule" 0 "$TYPO_SCOPE" ;;
     esac
@@ -1120,6 +1120,36 @@ EOF
             check "a rule that would never fire is refused rather than accepted" 1 ;;
         *)  check "a rule that would never fire is refused rather than accepted" 0 "$LOOP_PERSON" ;;
     esac
+
+    # A team budget needs two operator-owned inputs: an identity the developer cannot
+    # edit, and the mapping from it to a team. With an identity but no mapping there is
+    # nothing to total, and totalling nothing permits - so it refuses and says which
+    # input is missing.
+    printf 'version: 1\nrules:\n  - id: team-budget\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 1, scope: team}\n' > "$SANDBOX/team.yaml"
+    # The guard is the last command in the pipeline, so $? is its status. Squeezing
+    # whitespace afterwards rather than in the pipe: with tr last, $? would be tr's,
+    # which succeeds whatever the guard decided.
+    printf '%s' "$PAYLOAD" | REEVE_IDENTITY=dev@example.com "$REEVE" guard \
+        --agent claude-code --policy "$SANDBOX/team.yaml" --store "$EVENTS" \
+        > "$SANDBOX/team.out" 2>&1
+    TEAM_CODE=$?
+    TEAM_OUT=$(tr -s '[:space:]' ' ' < "$SANDBOX/team.out")
+    case "$TEAM_CODE:$TEAM_OUT" in
+        2:*"could not be established"*)
+            check "a team rule with no team mapping denies rather than guessing" 1 ;;
+        *)  check "a team rule with no team mapping denies rather than guessing" 0 \
+                "exit $TEAM_CODE: $TEAM_OUT" ;;
+    esac
+
+    # The same rule, with the operator's mapping supplied. dev@example.com resolves to
+    # a team, and the budget is high enough that it allows.
+    printf 'version: 1\nrules:\n  - id: team-budget\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 999999999, scope: team}\n' > "$SANDBOX/team-ok.yaml"
+    printf '%s' "$PAYLOAD" | REEVE_IDENTITY=dev@example.com "$REEVE" guard \
+        --agent claude-code --policy "$SANDBOX/team-ok.yaml" --store "$EVENTS" \
+        --teams "$TEAMS" >/dev/null 2>&1
+    [ $? = 0 ] &&
+        check "the same rule allows once the operator's team mapping is given" 1 ||
+        check "the same rule allows once the operator's team mapping is given" 0
 
     # An agent the collector accepts but scan and guard have never heard of appears in
     # the cost report all the same. Unmarked, it reads as one of the governed ones, and
