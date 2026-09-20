@@ -88,10 +88,15 @@ type Options struct {
 	StateDir string
 	// GuardCommand is the path to this binary.
 	GuardCommand string
-	// PolicyPath, LogPath and StorePath are passed to the guard.
+	// PolicyPath, LogPath, StorePath and PricesPath are passed to the guard.
 	PolicyPath string
 	LogPath    string
 	StorePath  string
+	// PricesPath is needed only by a policy measuring against a declared
+	// allowance. Left out otherwise, so the hook command stays as short as the
+	// policy actually requires and a guard that never reads a price table is not
+	// made to open one on every tool call.
+	PricesPath string
 	// Enforce makes the guard block rather than only record. Off by default: a
 	// tool that starts refusing things the moment it is installed is a tool people
 	// uninstall before finding out whether the policy was right.
@@ -143,6 +148,9 @@ func GuardArgs(opts Options, agent model.AgentID) string {
 		opts.GuardCommand, agent, opts.PolicyPath, opts.LogPath)
 	if opts.StorePath != "" {
 		cmd += fmt.Sprintf(` --store "%s"`, opts.StorePath)
+	}
+	if opts.PricesPath != "" {
+		cmd += fmt.Sprintf(` --prices "%s"`, opts.PricesPath)
 	}
 	if !opts.Enforce {
 		cmd += " --dry-run"

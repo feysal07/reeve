@@ -434,6 +434,75 @@ and a repository, and nothing that names a machine.
 See [examples/policy/budget.yaml](../examples/policy/budget.yaml). Like the loop
 breaker, it is deliberately not in the baseline.
 
+## Budgets that read the plan instead of repeating it
+
+A token budget is an absolute figure typed into the policy:
+
+```yaml
+match:
+  tokens: {within: 168h, moreThan: 16000000, scope: machine}
+```
+
+Sixteen million is eighty per cent of a twenty-million seat — on the day it was
+written. Upgrade somebody to a premium seat, buy ten more, move to a plan with a
+shorter window, and that figure is describing an arrangement the organisation no
+longer has. Nothing announces the drift. If the plan *shrank*, the drift is in the
+permissive direction: the rule stops firing exactly when it was needed.
+
+So say the proportion and let the plan supply the number:
+
+```yaml
+- id: near-the-seat-allowance
+  decision: ask
+  match:
+    allowance: {usedAtLeast: 80, of: seat, within: "168h"}
+  reason: >
+    Most of the weekly allowance your seat includes has been used. Past it,
+    consumption draws on credits, which does cost money.
+```
+
+| field | |
+|---|---|
+| `usedAtLeast` | the percentage of the allowance already consumed. 100 means it is gone |
+| `of` | `seat` (what one seat includes) or `organisation` (the whole account). Default `seat` |
+| `within` | which declared window to read. Omit it only when the agent declares exactly one of that unit |
+| `unit` | `tokens` or `requests`. Default `tokens` |
+
+The allowance comes from the `billing` section of your price table, so the guard needs
+`--prices` as well as `--store`. `reeve policy check` says so when a policy contains
+one of these rules.
+
+**Against a seat, this measures against the largest seat the organisation holds.**
+Which tier the person at the keyboard is on is not visible from an action, so the rule
+fires only once consumption has passed even the most generous seat bought — the only
+claim the available evidence supports. It is the conservative direction: somebody on a
+standard seat is past theirs well before this fires.
+
+**It totals the whole store the guard was given, never one session.** A seat's
+allowance does not reset when somebody restarts their agent, and scoping to the session
+would report a fresh one as having used nothing — the most permissive possible answer
+at the exact moment a developer opens a new window because the last one was going
+badly.
+
+Both failure modes refuse, for the same reason the budgets do:
+
+- **no price table, or no plan declared for that agent** — an allowance nobody could
+  resolve is not an allowance nobody has touched;
+- **no event store** — the same;
+- **two windows declared and the rule names neither** — silently choosing one would
+  produce a rule that governs a window its author did not pick, and the short window
+  and the long one run out at very different times;
+- **the store is too large to read the whole window** — a partial window totals low,
+  and a proportion built on a total known to be too low is too small, which permits.
+
+Each refusal explains which input was missing and what to do about it, because the
+person who reads it is a developer who has just been stopped.
+
+See [examples/policy/allowance.yaml](../examples/policy/allowance.yaml). Like the
+budget and the loop breaker, it is deliberately not in the baseline: every rule in the
+baseline is a pure function of the action in front of it, and these need two files the
+baseline must not require.
+
 ## Knowing what an action actually targets
 
 A rule can only be as good as what it can see. Matching the text "--context prod"

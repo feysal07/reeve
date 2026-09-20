@@ -103,6 +103,14 @@ type Action struct {
 	// been spent. A budget that cannot read the record refuses; see Policy.Evaluate.
 	// Not serialised, for the same reason History is not.
 	Spend *Spend `json:"-"`
+
+	// Allowance is what this agent's declared plans include, resolved from the
+	// price table before evaluation.
+	//
+	// Nil means none was resolved, which a rule that needs one treats as a refusal
+	// rather than as an allowance of nothing — the same asymmetry as Spend and
+	// History. Not serialised: it is configuration, not evidence about this action.
+	Allowance *Allowance `json:"-"`
 }
 
 // Spend is a bounded window of recorded cost, most recent first.
@@ -130,6 +138,43 @@ func (s *Spend) Incomplete(a Action, m SpendMatch, now time.Time) bool {
 		return false
 	}
 	return s.Total(a, m, now) <= m.MoreThan
+}
+
+// IncompleteTokens is Incomplete for a budget denominated in tokens.
+//
+// It exists because the money form cannot answer for the token form, and reaching for
+// it anyway was a crash: a policy carrying only a tokens budget dereferenced a spend
+// match that was never set, and brought the guard down on every action as soon as the
+// store became readable. That is the configuration this project recommends under a
+// subscription, so the recommended shape was the one that failed.
+func (s *Spend) IncompleteTokens(a Action, m TokenMatch, now time.Time) bool {
+	if s == nil || !s.Truncated {
+		return false
+	}
+	return s.Tokens(a, m, now) <= m.MoreThan
+}
+
+// Requests counts events in the window under the scope the rule asked for.
+//
+// The numerator for an allowance denominated in requests rather than tokens. Copilot
+// and Cursor meter requests, and totalling their tokens against a request allowance is
+// wrong by several orders of magnitude in whichever direction happens to reassure.
+func (s *Spend) Requests(a Action, m TokenMatch, now time.Time) int64 {
+	if s == nil {
+		return 0
+	}
+	cutoff := now.Add(-time.Duration(m.Within))
+	var n int64
+	for _, r := range s.Records {
+		if r.Time.Before(cutoff) {
+			break
+		}
+		if m.Scope != "machine" && r.SessionID != a.SessionID {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // CostRecord is one earlier priced event, reduced to what a budget can total.

@@ -47,6 +47,12 @@ type Metrics struct {
 	vendorCostUSD    map[string]float64
 	storeWriteErrors int64
 	storeStatErrors  int64
+	billingMissing   map[string]int64
+	billing          BillingTable
+
+	// allowance is recomputed from the store rather than accumulated here. See
+	// allowanceRefresh for why.
+	allowance *allowanceCache
 }
 
 // agentKind labels a counter by agent and by what is being counted. Both
@@ -67,6 +73,7 @@ func NewMetrics(version, storePath string) *Metrics {
 		tokens:          map[agentKind]int64{},
 		costUSD:         map[string]float64{},
 		vendorCostUSD:   map[string]float64{},
+		billingMissing:  map[string]int64{},
 	}
 }
 
@@ -156,6 +163,13 @@ func (m *Metrics) RecordEvents(events []Event) {
 		}
 
 		m.costUSD[agent] += e.CostUSD
+		// An agent nobody declared contributes to no money total at all. Counting
+		// it here rather than folding it into the equivalent figure is what stops a
+		// dashboard summing declared and undeclared arrangements into a number that
+		// is not a bill for anybody.
+		if _, known := m.billing.For(e.Agent).Marginal(e.CostUSD); !known {
+			m.billingMissing[agent]++
+		}
 		if e.Unpriced() {
 			m.unpriced[agent]++
 		}
@@ -212,12 +226,33 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 		"Tokens counted, by agent and token kind.",
 		"counter", countsByAgentKind(m.tokens))
 
+	// Two names for one measurement, on purpose. The figure is EQUIVALENT cost:
+	// what the usage would cost at the configured rates. For an organisation paying
+	// for seats in advance that is not money leaving, and a panel titled "cost" is
+	// the same mislabelling the report was just corrected for. The old name keeps
+	// existing dashboards working; new ones should use the explicit one.
+	equivalent := floatsByLabel(m.costUSD, "agent")
+	equivalentHelp := "What the usage would cost at the configured rates, by agent. This is " +
+		"equivalent cost, not money that left the organisation: under a subscription the " +
+		"seats were bought in advance and consumption inside the included allowance costs " +
+		"nothing further, which is what the reeve_allowance_* series measure. It excludes " +
+		"requests whose model was not in the price table, counted by " +
+		"reeve_events_unpriced_total; treating those as free would understate the total " +
+		"while looking complete."
+
+	family(&b, "reeve_equivalent_cost_usd_total", equivalentHelp, "counter", equivalent)
+
 	family(&b, "reeve_cost_usd_total",
-		"Cost computed here from tokens and the configured price table, by agent. This "+
-			"excludes requests whose model was not in the table, which are counted by "+
-			"reeve_events_unpriced_total; treating those as costing nothing would understate "+
-			"the total while looking complete.",
-		"counter", floatsByLabel(m.costUSD, "agent"))
+		"Deprecated alias for reeve_equivalent_cost_usd_total, kept so existing "+
+			"dashboards keep working. "+equivalentHelp,
+		"counter", equivalent)
+
+	family(&b, "reeve_billing_undeclared_events_total",
+		"Priced requests belonging to an agent whose billing arrangement is not "+
+			"declared in the price table, by agent. No statement about money can be "+
+			"made about these, and a dashboard that sums equivalent cost across them "+
+			"is reporting a number that is not a bill for anybody.",
+		"counter", countsByLabel(m.billingMissing, "agent"))
 
 	family(&b, "reeve_vendor_reported_cost_usd_total",
 		"Cost as the agent itself claimed it, by agent. Kept apart from the computed "+
@@ -269,6 +304,8 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 			"rising, reeve_store_size_bytes and reeve_store_modified_timestamp_seconds are "+
 			"absent rather than stale.",
 		"counter", []sample{{value: float64(statErrors)}})
+
+	m.writeAllowances(&b, time.Now())
 
 	n, err := io.WriteString(w, b.String())
 	return int64(n), err

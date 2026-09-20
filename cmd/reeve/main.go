@@ -90,6 +90,7 @@ Usage:
   reeve audit <cmd>      Seal and verify the decision log (seal, verify)
   reeve mcp <cmd>        Reconcile MCP servers against an approved list (check, list)
   reeve install          Register the guard in every agent on this machine
+                         --policy, --store, --prices, --enforce, --plan
   reeve uninstall        Remove it again, leaving your own hooks alone
   reeve doctor           Check the guard is registered AND actually answering
   reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
@@ -127,6 +128,9 @@ Guard flags (reeve guard is invoked by an agent, not usually by hand):
   --store <file>         Event store from reeve collect. Budget rules total from
                          it; a budget with no store refuses rather than assuming
                          nothing was spent
+  --prices <file>        Price table. Rules measured against a declared allowance
+                         read what your plan includes from it, so the policy says
+                         "80%" and never carries a second figure to keep in step
   --dry-run              Evaluate and log, but always allow
 
 Collect flags:
@@ -144,6 +148,11 @@ Report flags:
                          say what money left, rather than only what the usage
                          would have cost at those rates
   --since <duration>     Only events newer than this, for example 168h
+  --fail-on <conds>      Exit non-zero on any of these, so a report can gate a
+                         build the way scan and posture do. "any", or a list:
+                         allowance.over-seat, allowance.over-total,
+                         allowance.pace, billing.undeclared, billing.silent,
+                         prices.unpriced
   --json, --top <n>
 
 Posture flags:

@@ -21,6 +21,7 @@ func runReport(args []string) error {
 	since := fs.String("since", "", "only events newer than this duration, for example 168h")
 	asJSON := fs.Bool("json", false, "emit the report as JSON")
 	top := fs.Int("top", 10, "rows to show per section")
+	failOn := fs.String("fail-on", "", "exit non-zero if the report contains any of these conditions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -123,14 +124,49 @@ See docs/TELEMETRY.md`)
 
 	rep := telemetry.AggregateWith(events, from, time.Time{}, billing)
 
+	// Parsed before anything is printed, so a typo in a gate is an error about the
+	// gate rather than a clean report followed by an exit code nobody expected.
+	var want map[string]bool
+	if *failOn != "" {
+		w, err := telemetry.ParseConcerns(*failOn)
+		if err != nil {
+			return err
+		}
+		want = w
+	}
+
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(rep)
+		if err := enc.Encode(rep); err != nil {
+			return err
+		}
+		return gate(rep, want)
 	}
 
 	renderReport(rep, *top)
-	return nil
+	return gate(rep, want)
+}
+
+// gate fails the build on the conditions the caller asked about.
+//
+// The conditions are named rather than graded. "Somebody is over their seat" and
+// "nothing has ever been measured against a declared allowance" are not more or less
+// severe than each other; they are different questions, and an organisation gates on
+// whichever it has decided it cares about.
+func gate(rep telemetry.Report, want map[string]bool) error {
+	if len(want) == 0 {
+		return nil
+	}
+	hits := telemetry.Matching(rep.Concerns(), want)
+	if len(hits) == 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "\nFAILED on %d condition(s):\n\n", len(hits))
+	for _, c := range hits {
+		fmt.Fprintf(os.Stderr, "  [%s] %s\n", c.ID, c.Detail)
+	}
+	return fmt.Errorf("report failed its gate")
 }
 
 func renderReport(r telemetry.Report, top int) {

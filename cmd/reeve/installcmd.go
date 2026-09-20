@@ -22,6 +22,7 @@ func runInstall(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	policySrc := fs.String("policy", "", "policy to enforce (default: the built-in baseline)")
 	storePath := fs.String("store", "", "event store, if the policy contains budgets")
+	pricesPath := fs.String("prices", "", "price table, if the policy measures against a declared allowance")
 	enforce := fs.Bool("enforce", false, "block rather than only recording what would have been blocked")
 	plan := fs.Bool("plan", false, "say what would change, and change nothing")
 	asJSON := fs.Bool("json", false, "emit the result as JSON")
@@ -29,7 +30,7 @@ func runInstall(args []string) error {
 		return err
 	}
 
-	opts, err := installOptions(*policySrc, *storePath, *enforce, *plan)
+	opts, err := installOptions(*policySrc, *storePath, *pricesPath, *enforce, *plan)
 	if err != nil {
 		return err
 	}
@@ -55,7 +56,7 @@ func runUninstall(args []string) error {
 		return err
 	}
 
-	opts, err := installOptions("", "", false, *plan)
+	opts, err := installOptions("", "", "", false, *plan)
 	if err != nil {
 		return err
 	}
@@ -66,7 +67,7 @@ func runUninstall(args []string) error {
 	return reportInstall(results, opts, *asJSON, *plan, true)
 }
 
-func installOptions(policySrc, storePath string, enforce, plan bool) (install.Options, error) {
+func installOptions(policySrc, storePath, pricesPath string, enforce, plan bool) (install.Options, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return install.Options{}, err
@@ -87,6 +88,7 @@ func installOptions(policySrc, storePath string, enforce, plan bool) (install.Op
 		PolicyPath: filepath.Join(state, "policy.yaml"),
 		LogPath:    filepath.Join(state, "decisions.jsonl"),
 		StorePath:  storePath,
+		PricesPath: pricesPath,
 		Enforce:    enforce,
 		Plan:       plan,
 	}

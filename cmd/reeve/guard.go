@@ -41,6 +41,7 @@ func runGuard(args []string) error {
 	logPath := fs.String("log", "", "append decisions to this file as JSON lines")
 	resourcesPath := fs.String("resources", "", "resource registry, to resolve which environment an action targets")
 	storePath := fs.String("store", "", "event store written by reeve collect, for budget rules")
+	pricesPath := fs.String("prices", "", "price table, for rules measured against a declared allowance")
 	dryRun := fs.Bool("dry-run", false, "evaluate and log, but always allow")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -102,8 +103,27 @@ func runGuard(args []string) error {
 	if pol.NeedsHistory() {
 		act.History = readHistory(decisionLogPath(*logPath), pol.HistoryWindow())
 	}
+	// The allowance is resolved before the spend window is chosen, because a rule
+	// that leaves its window to the plan cannot say in advance how far back to read,
+	// and reading too little totals low — which, in a proportion, is a figure that
+	// permits.
+	window := pol.SpendWindow()
+	if pol.NeedsAllowance() {
+		al, err := resolveAllowance(*pricesPath, agent)
+		if err != nil {
+			// Not fatal, and deliberately not a warning that scrolls past. The
+			// rule denies with its own explanation of what is missing, which is
+			// the message the person who was stopped actually reads.
+			act.Allowance = nil
+		} else {
+			act.Allowance = al
+			if w := al.LongestPeriod(); w > window {
+				window = w
+			}
+		}
+	}
 	if pol.NeedsSpend() {
-		act.Spend = readSpend(eventStorePath(*storePath), pol.SpendWindow())
+		act.Spend = readSpend(eventStorePath(*storePath), window)
 	}
 
 	decision := pol.Evaluate(act)

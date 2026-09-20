@@ -1,0 +1,90 @@
+# Rules measured against the allowance your plan already includes.
+#
+# The difference from budget.yaml is that nothing here is a number you have to keep
+# in step. A token budget is an absolute figure typed into the policy:
+#
+#   tokens: {within: 168h, moreThan: 16000000, scope: machine}
+#
+# Sixteen million is eighty per cent of a twenty-million seat — on the day it was
+# written. Upgrade somebody to a premium seat, buy ten more, move to a plan with a
+# shorter window, and that line is describing an arrangement you no longer have.
+# Nothing announces the drift. If the plan shrank, the drift is in the permissive
+# direction: the rule stops firing exactly when it was needed.
+#
+# These rules say the proportion and let the price table supply the number, so they
+# stay true across every change to the plan.
+#
+# They need two inputs rather than one:
+#
+#   reeve guard --agent claude-code \
+#     --policy baseline.yaml \
+#     --store  /var/lib/reeve/events.jsonl \
+#     --prices /etc/reeve/prices.yaml
+#
+# Kept out of baseline.yaml for the same reason as budget.yaml and loop-breaker.yaml:
+# every rule in the baseline is a pure function of the action in front of it, so the
+# guard can answer with nothing but the request. These have to read both what has
+# already been consumed and what the plan includes, and a rule that cannot read either
+# refuses — an allowance nobody could resolve is not an allowance nobody has touched.
+#
+# Against a seat, this measures against the LARGEST seat your organisation holds.
+# Which tier the person at the keyboard is on is not visible from an action, so the
+# rule fires only once consumption has passed even the most generous seat bought. That
+# is the conservative direction: somebody on a standard seat is past theirs well
+# before this fires. `reeve report` names who, from the event store, which knows.
+
+version: 1
+name: allowance
+default: allow
+
+rules:
+  # Ask, rather than deny. The allowance is not gone, and stopping work at eighty per
+  # cent of something that has not run out is how a control gets uninstalled. This is
+  # a prompt to think, at the last moment somebody can still choose to.
+  - id: near-the-seat-allowance
+    description: Ask once most of what one seat includes has been used this period
+    decision: ask
+    match:
+      allowance: {usedAtLeast: 80, of: seat, within: "168h"}
+    reason: >
+      Most of the weekly allowance a seat includes has been used. Past it,
+      what happens depends on your plan: drawing on credits costs money,
+      being throttled costs time, being blocked stops work. Continue if this
+      is worth it.
+
+  # The short window, which is the one a developer actually hits. It resets in hours
+  # rather than days, so the answer to "wait, or spend" is a different one.
+  - id: near-the-session-allowance
+    description: Ask when the short rolling window is nearly exhausted
+    decision: ask
+    match:
+      allowance: {usedAtLeast: 90, of: seat, within: "5h"}
+    reason: >
+      The short rolling allowance is nearly used up. It resets within hours,
+      so waiting is usually cheaper than whatever happens past it.
+
+  # The account, not the person. Deliberately higher and deliberately deny: past a
+  # hundred per cent of what the whole organisation has bought, the next request is
+  # somebody else's problem as well as this person's.
+  - id: organisation-allowance-exhausted
+    description: Stop once the whole account has used everything it includes
+    decision: deny
+    match:
+      allowance: {usedAtLeast: 100, of: organisation, within: "168h"}
+    reason: >
+      The organisation has used the whole allowance its plans include for this
+      period. Anything further is outside what was bought. Talk to whoever
+      owns the account before continuing.
+
+  # Metered in requests rather than tokens. Copilot and Cursor count requests, and an
+  # allowance of three hundred measured against token consumption reports several
+  # million per cent — in whichever direction happens to be reassuring.
+  - id: near-the-request-allowance
+    description: Ask once most of a monthly premium-request allowance has gone
+    decision: ask
+    match:
+      agents: [copilot-cli]
+      allowance: {usedAtLeast: 80, of: seat, unit: requests, within: "720h"}
+    reason: >
+      Most of this month's premium requests have been used. They do not reset
+      until the billing period does.

@@ -96,6 +96,11 @@ See docs/TELEMETRY.md`)
 	}
 
 	metrics := telemetry.NewMetrics(version, st.Path())
+	// The allowance is the figure a seat-based organisation acts on, and nobody
+	// runs a report at two in the morning. Exporting it puts it where alerts are.
+	if prices.Billing.Declared() {
+		metrics.WatchAllowances(prices.Billing)
+	}
 	c := &collector{dec: dec, store: st, verbose: *verbose, metrics: metrics}
 
 	// Metrics get their own listener rather than another route on the OTLP mux.

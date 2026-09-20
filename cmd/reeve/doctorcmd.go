@@ -36,7 +36,7 @@ func runDoctor(args []string) error {
 		return err
 	}
 
-	opts, err := installOptions("", "", false, false)
+	opts, err := installOptions("", "", "", false, false)
 	if err != nil {
 		return err
 	}

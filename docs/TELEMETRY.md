@@ -118,6 +118,65 @@ passed even the largest seat you declare — the only claim the evidence support
 your credit balance is left to the vendor's own console. Reading that would mean an
 outbound call to the vendor, which nothing here does.
 
+## Gating on the report
+
+`reeve scan` and `reeve posture` both fail a build on what they find. `reeve report`
+does too:
+
+```bash
+reeve report --store ./events.jsonl --prices ./prices.yaml --fail-on allowance.over-seat
+```
+
+The conditions are named rather than graded, because they are different questions
+rather than different severities:
+
+| condition | what it means |
+|---|---|
+| `allowance.over-seat` | somebody has consumed more than a single seat includes, whatever the organisation total says |
+| `allowance.over-total` | the organisation has used its whole allowance for a window |
+| `allowance.pace` | on course to run out before the period resets — the one that fires while there is still time to act |
+| `billing.undeclared` | priced usage belonging to an agent whose arrangement nobody declared |
+| `billing.silent` | an allowance was declared and **nothing has ever been measured against it** |
+| `prices.unpriced` | requests on a model with no entry in the price table |
+
+`--fail-on any` selects all of them. An unrecognised name is an error rather than a
+no-op: a gate configured with a typo that silently passes everything is worse than no
+gate, because somebody has been told the build is checking.
+
+`billing.silent` is the one worth wiring up first. Copilot exports no per-token
+telemetry; declare an allowance for it, never finish wiring the export, and every
+report and every dashboard says nought per cent for ever — which is exactly what an
+organisation comfortably inside its limits looks like.
+
+## Watching it, rather than reading it
+
+Nobody runs a report at two in the morning. `reeve collect --prices ... --metrics-addr
+...` exports the same figures for Prometheus:
+
+| series | |
+|---|---|
+| `reeve_allowance_included` | what the plans include for one window, in that limit's own unit |
+| `reeve_allowance_used` | consumption inside the current window |
+| `reeve_allowance_per_seat` | the largest single seat's included amount |
+| `reeve_allowance_seats_over` | how many people are past a single seat |
+| `reeve_allowance_pace` | above 1 means it will not last the period |
+| `reeve_allowance_unattributed` | consumption that carried no identity |
+| `reeve_allowance_read_errors_total` | times the store could not be read |
+
+**No series here is labelled by a person.** Who is over their seat is in the event
+store, which is access controlled and kept as an audit record; a metrics endpoint is
+scraped by a different system with much wider read access, and copying identities into
+it would quietly turn a monitoring stack into a second, unmanaged copy of who did what.
+`reeve_allowance_seats_over` is a count; `reeve report` has the names.
+
+While the store cannot be read, the allowance series are **absent rather than stale**.
+Held-over figures would draw a healthy line through an outage out of numbers that were
+true an hour ago, and a gap is at least visible.
+
+`reeve_cost_usd_total` still exists so that existing dashboards keep working, but it is
+now an alias for `reeve_equivalent_cost_usd_total`. The figure never was money; the
+name said otherwise on every panel built from it.
+
 ## Which agents this covers
 
 `reeve scan`, `reeve guard` and `reeve policy compile` cover Claude Code, GitHub

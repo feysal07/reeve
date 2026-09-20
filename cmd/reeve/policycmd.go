@@ -61,6 +61,25 @@ func runPolicyCheck(args []string) error {
 `)
 	}
 
+	// Said before the store advice, and separately from it, because a rule measured
+	// against a declared plan needs two inputs rather than one. Somebody told only
+	// about --store will supply it, watch every action be denied, and have no idea
+	// which of the two was missing.
+	if p.NeedsAllowance() {
+		fmt.Print(`
+  This policy measures consumption against the allowance your plan includes,
+  so the guard needs your price table as well as the event store. Run it with
+  --prices, and declare a billing arrangement for each agent the rule covers.
+  Without one the rules refuse: an allowance nobody could resolve is not an
+  allowance nobody has touched.
+
+  This is the form that does not drift. A budget in tokens is an absolute
+  figure typed here; upgrade a seat or buy ten more and it describes an
+  arrangement you no longer have, silently, and permissively if the plan
+  shrank. A percentage reads the plan, so it stays true.
+`)
+	}
+
 	if p.NeedsSpend() {
 		fmt.Print(`
   This policy contains a budget, so the guard needs the event store that

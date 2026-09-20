@@ -1005,6 +1005,51 @@ EOF
         *period*) check "an allowance with no period is refused rather than silently zero" 1 ;;
         *) check "an allowance with no period is refused rather than silently zero" 0 "$BROKEN" ;;
     esac
+
+    # ---------------------------------------------------- the report as a gate ----
+    #
+    # scan and posture both fail a build on what they find. A report that can only
+    # be read by a person is a report nobody reads on the day it matters, and the
+    # allowance figures are the ones that go wrong quietly and continuously.
+    "$REEVE" report --store "$EVENTS" --prices "$PRICES" --fail-on allowance.over-seat         >/dev/null 2>&1
+    [ $? != 0 ] &&
+        check "a person past their seat fails the gate" 1 ||
+        check "a person past their seat fails the gate" 0             "the report showed it and exited zero, so nothing in CI can act on it"
+
+    # And a gate must only fail on what it was asked about, or an organisation that
+    # has decided it does not care about unpriced models cannot use it at all.
+    "$REEVE" report --store "$EVENTS" --prices "$PRICES" --fail-on billing.silent         >/dev/null 2>&1
+    [ $? = 0 ] &&
+        check "the gate passes conditions it was not asked about" 1 ||
+        check "the gate passes conditions it was not asked about" 0             "it failed on something other than billing.silent"
+
+    # A gate configured with a typo that silently passes everything is worse than no
+    # gate, because somebody has been told the build is checking.
+    TYPO=$("$REEVE" report --store "$EVENTS" --fail-on allowance.over-sate 2>&1)
+    case "$TYPO" in
+        *"not a condition"*) check "a misspelled condition is an error, not a no-op" 1 ;;
+        *) check "a misspelled condition is an error, not a no-op" 0 "$TYPO" ;;
+    esac
+
+    # An allowance declared for an agent nothing reports against reads nought per
+    # cent for ever, which on a dashboard is exactly what staying inside the limit
+    # looks like. Copilot exports no per-token telemetry, so this is not a
+    # hypothetical.
+    write_text "$SANDBOX/silent-prices.yaml" <<'EOF'
+billing:
+  cursor:
+    model: subscription
+    plans:
+      team:
+        seats: 5
+        limits:
+          - {unit: tokens, included: 1000000, per: seat, period: "168h"}
+EOF
+    SILENT=$("$REEVE" report --store "$EVENTS" --prices "$SANDBOX/silent-prices.yaml"         --fail-on billing.silent 2>&1)
+    case "$SILENT" in
+        *"billing.silent"*) check "an allowance nothing reports against is caught" 1 ;;
+        *) check "an allowance nothing reports against is caught" 0             "a permanent zero reads as healthy" ;;
+    esac
 fi
 
 # A rule must match what a command runs, not what it carries.
@@ -1027,6 +1072,95 @@ REAL_OUT=$(printf '%s' "$REAL_PAYLOAD" | "$REEVE" guard --agent claude-code --po
 case "$REAL_OUT" in
     *ask*) check "a real recursive delete still matches" 1 ;;
     *) check "a real recursive delete still matches" 0 "$REAL_OUT" ;;
+esac
+
+# ------------------------------------- enforcing on the allowance, not a copy of it ----
+#
+# A token budget is an absolute figure typed into the policy. Upgrade a seat or buy
+# ten more and it describes an arrangement the organisation no longer has, silently,
+# and permissively if the plan shrank. These rules say the proportion and let the
+# price table supply the number.
+ALLOW_POLICY="$SANDBOX/allowance-policy.yaml"
+write_text "$ALLOW_POLICY" <<'EOF'
+version: 1
+default: allow
+rules:
+  - id: near-the-seat-allowance
+    decision: ask
+    match:
+      allowance: {usedAtLeast: 80, of: seat, within: "168h"}
+    reason: Most of the weekly allowance your seat includes has been used.
+EOF
+
+# A seat small enough that the walkthrough's own events land against it.
+write_text "$SANDBOX/seat-prices.yaml" <<'EOF'
+billing:
+  claude-code:
+    model: subscription
+    overage: credits
+    plans:
+      solo:
+        seats: 1
+        limits:
+          - {unit: tokens, included: 1100000, per: seat, period: "168h"}
+EOF
+
+ALLOW_PAYLOAD='{"session_id":"a1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}'
+
+# Both inputs present: 1.0M of a 1.1M seat is 95%, so the rule fires.
+OUT=$(printf '%s' "$ALLOW_PAYLOAD" | "$REEVE" guard --agent claude-code     --policy "$ALLOW_POLICY" --store "$EVENTS" --prices "$SANDBOX/seat-prices.yaml" 2>&1)
+case "$OUT" in
+    *ask*) check "a rule measured against the declared plan fires at 95% of a seat" 1 ;;
+    *) check "a rule measured against the declared plan fires at 95% of a seat" 0 "$OUT" ;;
+esac
+
+# The same policy, the same consumption, a seat ten times the size. Nothing in the
+# policy changed and the rule correctly stops firing — which is the whole point. A
+# hand-typed budget would still be stopping this person.
+write_text "$SANDBOX/big-seat-prices.yaml" <<'EOF'
+billing:
+  claude-code:
+    model: subscription
+    plans:
+      solo:
+        seats: 1
+        limits:
+          - {unit: tokens, included: 11000000, per: seat, period: "168h"}
+EOF
+OUT=$(printf '%s' "$ALLOW_PAYLOAD" | "$REEVE" guard --agent claude-code     --policy "$ALLOW_POLICY" --store "$EVENTS" --prices "$SANDBOX/big-seat-prices.yaml" 2>&1)
+case "$OUT" in
+    *ask*) check "the same rule stops firing when the plan grows, with no policy edit" 0         "it is still matching a figure the plan no longer has" ;;
+    *) check "the same rule stops firing when the plan grows, with no policy edit" 1 ;;
+esac
+
+# And with no price table the rule cannot be evaluated at all. An allowance nobody
+# could resolve is not an allowance nobody has touched.
+OUT=$(printf '%s' "$ALLOW_PAYLOAD" | "$REEVE" guard --agent claude-code     --policy "$ALLOW_POLICY" --store "$EVENTS" 2>&1)
+case "$OUT" in
+    *deny*prices*) check "an allowance rule with no plan refuses, and says which input is missing" 1 ;;
+    *) check "an allowance rule with no plan refuses, and says which input is missing" 0 "$OUT" ;;
+esac
+
+# A policy carrying only a tokens budget dereferenced a spend match that was never
+# set, and brought the guard down on every action as soon as the store became
+# readable. A crashed hook is not a refusal, so the budget stopped enforcing while
+# appearing to be configured — and a tokens budget is what this project recommends
+# under a subscription.
+write_text "$SANDBOX/tokens-only.yaml" <<'EOF'
+version: 1
+default: allow
+rules:
+  - id: weekly-tokens
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 100, scope: machine}
+    reason: past the weekly token budget
+EOF
+OUT=$(printf '%s' "$ALLOW_PAYLOAD" | "$REEVE" guard --agent claude-code     --policy "$SANDBOX/tokens-only.yaml" --store "$EVENTS" 2>&1)
+case "$OUT" in
+    *panic*) check "a tokens budget alone does not bring the guard down" 0 "$OUT" ;;
+    *deny*) check "a tokens budget alone does not bring the guard down" 1 ;;
+    *) check "a tokens budget alone does not bring the guard down" 0 "$OUT" ;;
 esac
 
 # Replay: run a policy over a log of what happened and say what would differ.

@@ -109,6 +109,16 @@ type Match struct {
 	// budget on such an agent governs a number that is not money; this governs the
 	// quantity the vendor actually meters.
 	TokenBudget *TokenMatch `yaml:"tokens,omitempty"`
+
+	// Allowance matches on a proportion of what the plan already includes, rather
+	// than on an absolute figure typed into the policy.
+	//
+	// The difference matters because the absolute figure drifts. Upgrade a seat or
+	// buy ten more, and a `tokens: {moreThan: 5000000}` rule is describing an
+	// arrangement the organisation no longer has — silently, and permissively if the
+	// plan shrank. This reads the allowance the price table declares, so the policy
+	// says "eighty per cent" and stays true across every change to the plan.
+	Allowance *AllowanceMatch `yaml:"allowance,omitempty"`
 }
 
 // TokenMatch is a budget denominated in tokens rather than money.
@@ -247,6 +257,15 @@ func Parse(b []byte) (*Policy, error) {
 				return nil, fmt.Errorf("rules[%d] (%s): unknown kind %q", i, r.ID, k)
 			}
 		}
+		// An allowance rule that cannot mean anything is refused here rather than
+		// at the moment somebody is stopped by it. A percentage of zero matches
+		// every action including the first of the period, which is a rule whose
+		// author believes it governs excess and which in fact governs everything.
+		if r.Match.Allowance != nil {
+			if err := r.Match.Allowance.validate(r.ID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return &p, nil
 }
@@ -295,7 +314,8 @@ func (p *Policy) Evaluate(a Action) Decision {
 					"could not be read. Refusing rather than assuming nothing has " +
 					"been spent. Give the guard an event store with --store, or set " +
 					"REEVE_EVENT_STORE."
-			case a.Spend.Incomplete(a, *r.Match.Spend, a.now()):
+			case r.Match.Spend != nil && a.Spend.Incomplete(a, *r.Match.Spend, a.now()),
+				r.Match.TokenBudget != nil && a.Spend.IncompleteTokens(a, *r.Match.TokenBudget, a.now()):
 				// A partial window totals low, and a budget compared against a
 				// total that is too low permits. Refusing is the only honest answer
 				// to "I could not see far enough back to know".
@@ -306,6 +326,20 @@ func (p *Policy) Evaluate(a Action) Decision {
 					"Rotate the store, or shorten the rule's window."
 			}
 			if why != "" {
+				if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+					d.Effect = EffectDeny
+					d.RuleID = r.ID
+					d.Reason = why
+				}
+				continue
+			}
+		}
+		// The same asymmetry once more, for a rule measured against a declared
+		// allowance. It needs two inputs — the record of consumption and the plan
+		// that says what is included — and neither absence is an allowance nobody
+		// has touched.
+		if r.Match.Allowance != nil {
+			if why := r.Match.Allowance.unevaluable(a); why != "" {
 				if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
 					d.Effect = EffectDeny
 					d.RuleID = r.ID
@@ -384,6 +418,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if m.TokenBudget != nil && !m.TokenBudget.matches(a) {
+		return false
+	}
+	if m.Allowance != nil && !m.Allowance.matches(a) {
 		return false
 	}
 	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {
@@ -580,7 +617,7 @@ func (m SpendMatch) matches(a Action) bool {
 // NeedsSpend reports whether any rule needs the event store.
 func (p *Policy) NeedsSpend() bool {
 	for _, r := range p.Rules {
-		if r.Match.Spend != nil || r.Match.TokenBudget != nil {
+		if r.Match.Spend != nil || r.Match.TokenBudget != nil || r.Match.Allowance != nil {
 			return true
 		}
 	}
@@ -615,8 +652,30 @@ func (p *Policy) SpendWindow() time.Duration {
 				longest = w
 			}
 		}
+		// An allowance rule that names its window contributes it. One that leaves
+		// the window to the plan cannot be answered here, because the plan is not
+		// in the policy; the caller widens the window once it has resolved it. See
+		// Allowance.LongestPeriod.
+		if r.Match.Allowance != nil {
+			if w := time.Duration(r.Match.Allowance.Within); w > longest {
+				longest = w
+			}
+		}
 	}
 	return longest
+}
+
+// NeedsAllowance reports whether any rule measures against a declared plan.
+//
+// Separate from NeedsSpend because it needs a second input the others do not: the
+// price table. A guard whose policy has no such rule must not be made to read one.
+func (p *Policy) NeedsAllowance() bool {
+	for _, r := range p.Rules {
+		if r.Match.Allowance != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Policy) NeedsHistory() bool {

@@ -73,7 +73,7 @@ Builds for Linux, macOS and Windows on the
 build provenance. One static binary, no runtime, no dependencies.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 96 checks against it. The
+sandbox of four badly configured agents and asserts 104 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 
@@ -226,6 +226,26 @@ team, agent, user, repository and model, joined with the guard's decision log:
 reeve collect --store ./events.jsonl --teams ./teams.yaml
 reeve report  --store ./events.jsonl --decisions ./decisions.jsonl --since 168h
 ```
+
+That cost figure is what the usage **would** cost at your rates. For an organisation
+paying for seats in advance it is not money leaving, so declare how you actually pay
+and the report separates the two — and measures consumption against the allowance your
+plan includes, per seat as well as in total:
+
+```
+  organisation : 323.3M of 580.0M used (56%) across 25 seat(s)
+  over a seat  : 1 person(s) past the 100.0M a single seat includes
+                 heavy@example.com                  288.1M (288%)
+```
+
+The organisation is comfortable. One person is at 288% of the most generous seat it
+holds. A fleet total shows you the first line and stops.
+
+The same figures export to Prometheus from `reeve collect --prices`, because nobody
+reads a report at two in the morning, and `reeve report --fail-on` turns them into a
+build gate the way `scan` and `posture` already are. A policy rule can enforce on them
+directly, reading what the plan includes rather than carrying a copy of the number that
+goes stale the moment somebody upgrades a seat.
 
 The decision log is the half of the record no vendor can supply. An agent reports what
 it did; an action the guard refused never happened as far as the agent is concerned.

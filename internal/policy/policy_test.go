@@ -916,3 +916,62 @@ func TestATruncatedWindowRefusesRatherThanUnderCounting(t *testing.T) {
 		t.Errorf("effect = %q: a complete window under the limit was refused", d.Effect)
 	}
 }
+
+// TestATokenBudgetAloneDoesNotBringTheGuardDown.
+//
+// A policy carrying only a tokens budget reached for a spend match that was never set,
+// and panicked on every action as soon as the event store became readable. The guard
+// runs as a hook: a crashed hook is not a refusal, so the budget stopped enforcing
+// while appearing to be configured. And a tokens budget is exactly what this project
+// recommends under a subscription, so the recommended shape was the broken one.
+func TestATokenBudgetAloneDoesNotBringTheGuardDown(t *testing.T) {
+	p := &Policy{Version: 1, Default: EffectAllow, Rules: []Rule{{
+		ID: "weekly-tokens", Decision: EffectDeny,
+		Match: Match{TokenBudget: &TokenMatch{
+			Within: Duration(168 * time.Hour), MoreThan: 1000, Scope: "machine"}},
+	}}}
+
+	under := Action{Agent: model.AgentClaudeCode, Kind: KindShell, Command: "ls",
+		Spend: &Spend{Records: []CostRecord{{Time: time.Now(), Tokens: 500}}}}
+	if d := p.Evaluate(under); d.Effect != EffectAllow {
+		t.Errorf("under the budget: %v, want allow", d.Effect)
+	}
+
+	over := Action{Agent: model.AgentClaudeCode, Kind: KindShell, Command: "ls",
+		Spend: &Spend{Records: []CostRecord{{Time: time.Now(), Tokens: 5000}}}}
+	if d := p.Evaluate(over); d.Effect != EffectDeny {
+		t.Errorf("over the budget: %v, want deny", d.Effect)
+	}
+}
+
+// TestATruncatedStoreRefusesATokenBudgetToo.
+//
+// The same reasoning as for money. A window read only in part totals low, and a budget
+// compared against a total known to be too low permits. The store busy enough to
+// overrun the reader is the store where consumption is high, so the under-count arrives
+// exactly when the budget was needed.
+func TestATruncatedStoreRefusesATokenBudgetToo(t *testing.T) {
+	p := &Policy{Version: 1, Default: EffectAllow, Rules: []Rule{{
+		ID: "weekly-tokens", Decision: EffectDeny,
+		Match: Match{TokenBudget: &TokenMatch{
+			Within: Duration(168 * time.Hour), MoreThan: 1000, Scope: "machine"}},
+	}}}
+	a := Action{Agent: model.AgentClaudeCode, Kind: KindShell, Command: "ls",
+		Spend: &Spend{Truncated: true, Records: []CostRecord{{Time: time.Now(), Tokens: 500}}}}
+
+	d := p.Evaluate(a)
+	if d.Effect != EffectDeny {
+		t.Fatalf("effect = %v, want deny: what was read is a floor, not the figure", d.Effect)
+	}
+	if !strings.Contains(d.Reason, "too large") {
+		t.Errorf("the reason does not explain what could not be read: %q", d.Reason)
+	}
+
+	// But a visible total already past the limit is an answer, truncated or not:
+	// the unread remainder cannot bring it back down.
+	a.Spend.Records[0].Tokens = 5000
+	if d := p.Evaluate(a); !strings.Contains(d.Reason, "too large") && d.Effect != EffectDeny {
+		t.Errorf("effect = %v reason = %q, want a decision on the known excess",
+			d.Effect, d.Reason)
+	}
+}
