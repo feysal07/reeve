@@ -175,6 +175,48 @@ func forEachKey(v any, path string, fn func(path, key string)) {
 	}
 }
 
+// TestAnEmptyGroupIsAnArrayAndAnUndeclaredAllowanceIsNull.
+//
+// Two different kinds of nothing, and the difference is load-bearing.
+//
+// A grouping with no rows is an empty array, never null, because "nobody on this team
+// did anything" and "there is no such grouping" are the same statement and a consumer
+// iterating the field should not have to handle both spellings of it.
+//
+// An allowance of null is not that. It means no billing arrangement was declared, so
+// nothing can be said about allowances at all — which is a different claim from an
+// allowance that exists and has had nothing measured against it, and that one is an
+// empty array. Collapsing the two would let a report that could not know say the same
+// thing as a report that knew there was nothing, which is the shape of every bug in
+// this codebase.
+func TestAnEmptyGroupIsAnArrayAndAnUndeclaredAllowanceIsNull(t *testing.T) {
+	b, err := json.Marshal(Aggregate(nil, time.Time{}, time.Time{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, k := range []string{"byTeam", "byAgent", "byUser", "byRepo", "byModel", "byRule"} {
+		got, ok := doc[k]
+		if !ok {
+			t.Errorf("%s is absent from the document", k)
+			continue
+		}
+		if string(got) == "null" {
+			t.Errorf("%s is null on an empty report; an empty grouping must be [] so "+
+				"a consumer has one shape to read rather than two", k)
+		}
+	}
+
+	if got := string(doc["allowance"]); got != "null" {
+		t.Errorf("allowance = %s on a report built with no billing table, want null: "+
+			"an allowance nobody declared is not an allowance of nothing", got)
+	}
+}
+
 // TestAReportAlwaysCarriesItsSchemaVersion.
 //
 // The version is stamped in AggregateWith rather than by whatever serialises the

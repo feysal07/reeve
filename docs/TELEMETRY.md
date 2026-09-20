@@ -184,6 +184,12 @@ Three things worth knowing before you build on it:
 - **Durations are nanoseconds**, which is what a Go duration marshals to. The fields
   are named `elapsedNanos` and `periodNanos` so that reading them as seconds is a
   mistake you make once.
+- **`allowance: null` is not `allowance: []`.** Null means no billing arrangement was
+  declared, so nothing can be said about allowances at all. An empty array means one
+  was declared and nothing has been measured against it — which is the `billing.silent`
+  condition, and a thing worth alerting on. The `by*` groupings are the other way
+  round: they are always an array, never null, because a grouping with no rows and no
+  such grouping are the same statement.
 
 Identities appear here — `byUser`, and `over[].who` — and deliberately never in the
 metrics endpoint. This document is produced on demand by somebody who already has
