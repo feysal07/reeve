@@ -414,6 +414,38 @@ func renderDoctor(r doctorReport) {
 		fmt.Println()
 	}
 
+	// Nothing registered is not a clean bill of health, and saying so was the
+	// difference between a script seeing exit 2 and a person reading a green light.
+	//
+	// Worse when the log says the guard was working until minutes ago: that is a
+	// control that has been removed, and it is invisible except here. A user-scope
+	// hook is a file the developer and the agent can both rewrite, and an agent that
+	// serialises its own settings without round-tripping a key it does not own takes
+	// the hook with it. No error, no log entry, and the decision log simply stops.
+	registered := 0
+	for _, a := range r.Agents {
+		if a.Registered {
+			registered++
+		}
+	}
+	if registered == 0 {
+		fmt.Printf("  NO AGENT HAS THE GUARD REGISTERED\n\n")
+		if r.Decisions.Total > 0 && !r.Decisions.Newest.IsZero() {
+			fmt.Printf("  %s\n\n", wrap(fmt.Sprintf(
+				"This machine recorded %d decisions, the most recent %s ago, so the guard "+
+					"was running and is not now. Something rewrote the settings and did not "+
+					"keep the hook. Check whether the agent updated or rewrote its own "+
+					"configuration, then run reeve install again — and deploy the "+
+					"administrator-owned file from reeve policy compile, which a developer "+
+					"and an agent both leave alone.",
+				r.Decisions.Total, humanAge(time.Since(r.Decisions.Newest))), 74, "  "))
+		} else {
+			fmt.Printf("  %s\n\n", wrap("Nothing is deciding any action on this machine. "+
+				"Run reeve install to register the guard.", 74, "  "))
+		}
+		return
+	}
+
 	if len(problems) == 0 {
 		fmt.Printf("  %s\n\n", wrap("Every registered agent answers, and every one of them has "+
 			"recorded at least one decision. The guard is deciding actions on this machine.", 74, "  "))

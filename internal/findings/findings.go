@@ -42,11 +42,22 @@ var rules = []Rule{
 
 // Evaluate runs every rule against every installation.
 func Evaluate(installations []model.Installation) []model.Finding {
+	return EvaluateWith(installations, nil)
+}
+
+// EvaluateWith also considers what the guard's own log says has been happening.
+//
+// Separate from Evaluate because every other rule here reads configuration, and this
+// one reads history. A nil history means that evidence was not available, which is not
+// the same as it saying nothing: the rules that need it simply do not run, rather than
+// concluding from silence.
+func EvaluateWith(installations []model.Installation, h *GuardHistory) []model.Finding {
 	var out []model.Finding
 	for _, inst := range installations {
 		for _, rule := range rules {
 			out = append(out, rule(inst)...)
 		}
+		out = append(out, guardWasRemoved(inst, h)...)
 	}
 	return out
 }

@@ -6,10 +6,13 @@
 package scan
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/findings"
@@ -25,6 +28,12 @@ type Options struct {
 	// WorkDir is the directory to treat as the project root. Defaults to the
 	// process working directory.
 	WorkDir string
+	// DecisionLog is the guard's own log, when the caller knows where it is.
+	//
+	// Read to answer a question configuration cannot: whether a control that is not
+	// there now was there recently. Empty means the caller could not find one, and
+	// the rules that need it do not run rather than concluding from silence.
+	DecisionLog string
 	// IncludeHostname records the machine name in the report. Off by default,
 	// because a report may be shared and the name may identify a person.
 	IncludeHostname bool
@@ -89,7 +98,8 @@ func Run(ctx context.Context, reg *adapter.Registry, opts Options) (model.Report
 		report.Installations = append(report.Installations, inst)
 	}
 
-	report.Findings = append(report.Findings, findings.Evaluate(report.Installations)...)
+	report.Findings = append(report.Findings,
+		findings.EvaluateWith(report.Installations, readGuardHistory(opts.DecisionLog))...)
 	return report, nil
 }
 
@@ -115,4 +125,44 @@ func buildEnv(opts Options) (adapter.Env, error) {
 		Getenv:      os.Getenv,
 		ProgramData: os.Getenv("ProgramData"),
 	}, nil
+}
+
+// readGuardHistory summarises the decision log: which agents it has decided for, how
+// often, and how recently.
+//
+// Read-only, like the rest of a scan, and tolerant: a log that cannot be opened, or a
+// line that does not parse, yields less evidence rather than an error. The scan's job
+// is to describe a machine, and failing it over a malformed line in an optional input
+// would be a worse answer than a partial one.
+func readGuardHistory(path string) *findings.GuardHistory {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	h := &findings.GuardHistory{
+		Path:     path,
+		LastSeen: map[model.AgentID]time.Time{},
+		Total:    map[model.AgentID]int{},
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		var rec struct {
+			Time  time.Time     `json:"time"`
+			Agent model.AgentID `json:"agent"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Agent == "" {
+			continue
+		}
+		h.Total[rec.Agent]++
+		if rec.Time.After(h.LastSeen[rec.Agent]) {
+			h.LastSeen[rec.Agent] = rec.Time
+		}
+	}
+	return h
 }

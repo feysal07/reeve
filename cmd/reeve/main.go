@@ -140,6 +140,9 @@ Collect flags:
 Report flags:
   --store <file>         Event store written by reeve collect
   --decisions <file>     Guard decision log, to include what was refused
+  --prices <file>        Price table. Its billing section is what lets the report
+                         say what money left, rather than only what the usage
+                         would have cost at those rates
   --since <duration>     Only events newer than this, for example 168h
   --json, --top <n>
 
@@ -205,9 +208,21 @@ func runScan(args []string) error {
 		cursor.New(),
 	)
 
+	// Where the guard records what it decided, so the scan can tell a control that
+	// was never there from one that has been taken away. Found the same way
+	// reeve report finds it: from the registered hooks, or from this tool's own
+	// state directory when nothing is registered — which is exactly the case this
+	// evidence is for.
+	inst := discoverInstalled()
+	decisionLog := ""
+	if logs := readable(inst.Logs); len(logs) > 0 {
+		decisionLog = logs[0]
+	}
+
 	report, err := scan.Run(ctx, registry, scan.Options{
 		WorkDir:         *dir,
 		IncludeHostname: *includeHostname,
+		DecisionLog:     decisionLog,
 	})
 	if err != nil {
 		return err

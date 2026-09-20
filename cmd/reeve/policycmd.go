@@ -70,6 +70,20 @@ func runPolicyCheck(args []string) error {
   A budget is soft. Cost reaches the store by each agent's own batched export,
   so the figure the guard reads lags real spend by that interval.
 `)
+		// A dollar budget governs money. Under a subscription the money left when
+		// the seats were bought, and tokens inside the included allowance cost
+		// nothing further — so the figure such a rule compares against is not
+		// spend, and stopping somebody's work on it stops them for the wrong
+		// reason. Saying so at check time is the only moment before deployment.
+		if p.HasDollarBudget() {
+			fmt.Printf("  %s\n\n", wrap(
+				"This policy contains a budget in dollars. If any agent it covers is paid "+
+					"for by subscription, that figure is what the usage would cost at your "+
+					"rates and not money leaving: seats are bought in advance and tokens "+
+					"inside the allowance are already paid for. Declare the billing "+
+					"arrangement in your price table, and use a tokens budget for the "+
+					"agents whose allowance is the thing that runs out.", 74, "  "))
+		}
 		// Naming the agents is the whole point. A budget that cannot bind reads
 		// exactly like a budget that has not been exceeded.
 		var mute []string

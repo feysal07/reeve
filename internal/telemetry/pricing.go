@@ -34,6 +34,14 @@ type PriceTable struct {
 	// Multiplier scales every computed cost, for an organisation that recharges at
 	// something other than the rate it pays.
 	Multiplier float64 `yaml:"multiplier"`
+
+	// Billing says how each agent is actually paid for.
+	//
+	// Without it every figure here is equivalent cost: what this usage would cost
+	// at these rates, which is a real and useful measure of consumption and is not
+	// money leaving the organisation. Most people deploying this pay for seats in
+	// advance, and tokens inside that allowance are prepaid.
+	Billing BillingTable `yaml:"billing"`
 }
 
 // DefaultPrices is a starting table at published list rates.
@@ -70,6 +78,11 @@ func LoadPrices(path string) (PriceTable, error) {
 	}
 	if t.Multiplier == 0 {
 		t.Multiplier = 1
+	}
+	for agent, b := range t.Billing {
+		if err := b.Validate(agent); err != nil {
+			return PriceTable{}, fmt.Errorf("%s: %w", path, err)
+		}
 	}
 	if t.Currency == "" {
 		t.Currency = "USD"

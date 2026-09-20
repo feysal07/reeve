@@ -300,6 +300,7 @@ func (d *Decoder) metricEvents(m otlpMetric, agent model.AgentID, id Identity, r
 			if cost, ok := d.Prices.Cost(modelName, ev.Tokens); ok {
 				ev.CostUSD = cost
 				ev.Estimated = true
+				applyBilling(&ev, d.Prices.Billing)
 			}
 
 		case strings.Contains(m.Name, "cost.usage"), strings.Contains(m.Name, "cost_usage"):
@@ -437,6 +438,7 @@ func (d *Decoder) logEvent(rec otlpLogRecord, agent model.AgentID, id Identity, 
 		if cost, ok := d.Prices.Cost(ev.Model, ev.Tokens); ok {
 			ev.CostUSD = cost
 			ev.Estimated = true
+			applyBilling(&ev, d.Prices.Billing)
 		}
 		ev.DurationMS = lookup(a, "duration_ms").Int()
 

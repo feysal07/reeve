@@ -4,6 +4,66 @@
 follow: what is this costing, per team and per repository, across every agent at once,
 and what did the policy actually stop.
 
+## Cost is not the same as money
+
+Reeve computes cost from tokens and your price table. That figure is **equivalent
+cost**: what the usage would cost at those rates. It is a real measure of consumption,
+comparable across vendors, and the right basis for internal recharge — which is what
+`multiplier` is for.
+
+It is **not money that left the organisation**, and for most people deploying this it
+is nowhere near it. A Claude Teams seat, a Copilot seat and a Cursor seat are all paid
+for in advance and include an allowance. Tokens inside that allowance are already
+bought; their marginal cost is nothing. A report saying "$340 this week" to such an
+organisation is quoting a number that looks like money and is not.
+
+So declare how you actually pay, in the `billing` section of the price table:
+
+```yaml
+billing:
+  claude-code:
+    model: subscription
+    seats: 25
+    includedTokensPerSeat: 20000000
+    period: "168h"
+  codex-cli:
+    model: metered
+```
+
+`reeve report --prices` then separates the two:
+
+```
+  equivalent   : $140.42 at your rates, from tokens
+  money spent  : $0.00
+
+Included allowance
+  claude-code   44.0M of 20.0M tokens used (220%) in the last week
+                running at 2.20x the rate that would just use it up:
+                ON COURSE TO RUN OUT BEFORE THE PERIOD ENDS
+```
+
+The allowance line is the one a seat-based customer can act on. Their outlay was fixed
+when they bought the seats; what varies is whether the included tokens last the period.
+A dollar total never told them that.
+
+**An agent you do not declare is reported as not known, never as zero and never as
+metered.** Assuming metered overstates money for most organisations; assuming
+subscription understates it to nothing for the rest.
+
+**Budgets should follow the same logic.** A `spend` rule in dollars governs money, which
+under a subscription is fixed — so `reeve policy check` warns when it sees one. Use a
+token budget for the quantity that actually runs out:
+
+```yaml
+match:
+  tokens: {within: 168h, moreThan: 5000000, scope: machine}
+```
+
+**What Reeve cannot know.** The telemetry reports tokens; it never says "this request
+drew on credits rather than the allowance". So Reeve measures consumption against the
+allowance *you* declare, and leaves your credit balance to the vendor's own console.
+Reading that would mean an outbound call to the vendor, which nothing here does.
+
 ## Which agents this covers
 
 `reeve scan`, `reeve guard` and `reeve policy compile` cover Claude Code, GitHub

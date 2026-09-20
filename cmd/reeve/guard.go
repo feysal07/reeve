@@ -458,16 +458,19 @@ func readSpend(path string, window time.Duration) *policy.Spend {
 			reachedStartOfWindow = true
 			break
 		}
-		// Events with no cost are most of the file: tool calls, decisions, and
-		// requests whose tokens carried no price. Carrying them would bound the
-		// window far short of what the rule asked for.
-		if e.CostUSD == 0 {
+		// Events with neither a cost nor tokens are most of the file: tool calls
+		// and decisions. Carrying them would bound the window far short of what
+		// the rule asked for. Tokens alone are enough to keep a record, because a
+		// token budget does not need the request to have been priced.
+		tokens := e.Tokens.Total()
+		if e.CostUSD == 0 && tokens == 0 {
 			continue
 		}
 		sp.Records = append(sp.Records, policy.CostRecord{
 			Time:      e.Time,
 			SessionID: e.SessionID,
 			CostUSD:   e.CostUSD,
+			Tokens:    tokens,
 		})
 	}
 

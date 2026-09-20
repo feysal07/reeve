@@ -137,6 +137,9 @@ type CostRecord struct {
 	Time      time.Time
 	SessionID string
 	CostUSD   float64
+	// Tokens is what the vendor actually metered, which is the quantity a
+	// subscription's allowance is denominated in.
+	Tokens int64
 }
 
 // Total returns the cost in the window under the scope the rule asked for.
@@ -252,4 +255,27 @@ func (a Action) now() time.Time {
 		return time.Now()
 	}
 	return a.At
+}
+
+// Tokens returns consumption in the window under the scope the rule asked for.
+//
+// The same shape as Total, on the quantity a vendor meters rather than on a figure
+// derived from it. Under a subscription the derived figure is not money, and a budget
+// built on it governs the wrong thing.
+func (s *Spend) Tokens(a Action, m TokenMatch, now time.Time) int64 {
+	if s == nil {
+		return 0
+	}
+	cutoff := now.Add(-time.Duration(m.Within))
+	var total int64
+	for _, r := range s.Records {
+		if r.Time.Before(cutoff) {
+			break
+		}
+		if m.Scope != "machine" && r.SessionID != a.SessionID {
+			continue
+		}
+		total += r.Tokens
+	}
+	return total
 }

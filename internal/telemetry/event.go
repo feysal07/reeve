@@ -86,11 +86,35 @@ type Event struct {
 	Model  string `json:"model,omitempty"`
 	Tokens Tokens `json:"tokens,omitempty"`
 
-	// CostUSD is computed here from tokens and a price table. It is an estimate,
-	// and Estimated says so rather than letting a number of unclear provenance
-	// reach a chargeback report.
+	// CostUSD is what this usage would cost at the configured rates.
+	//
+	// Equivalent cost, not money that left. It is computed from tokens and a price
+	// table, and it says nothing about how the organisation is billed: a Claude
+	// Teams seat, a Copilot seat and a Cursor seat are paid for in advance and
+	// include an allowance, so tokens inside that allowance are prepaid and their
+	// marginal cost is nothing. Read MarginalUSD for money, and only when
+	// BillingKnown is set.
+	//
+	// It remains a useful figure. It measures how much work an agent did,
+	// comparably across vendors, and it is the right basis for internal recharge —
+	// which is what Multiplier in the price table is for.
 	CostUSD   float64 `json:"costUsd,omitempty"`
 	Estimated bool    `json:"estimated,omitempty"`
+
+	// MarginalUSD is money that leaves the organisation because of this usage.
+	//
+	// Zero under a subscription, where the seats are already bought. Equal to
+	// CostUSD when metered or drawing on credits. Meaningless unless BillingKnown
+	// is set, because an undeclared arrangement is not an assumption this is
+	// entitled to make in either direction: assuming metered overstates it for
+	// most organisations, and assuming subscription understates it to nothing for
+	// the rest.
+	MarginalUSD float64 `json:"marginalUsd,omitempty"`
+	// Billing records the declared arrangement, empty when nobody has said.
+	Billing string `json:"billing,omitempty"`
+	// BillingKnown distinguishes a marginal cost of zero from no answer, which
+	// omitempty on a float cannot.
+	BillingKnown bool `json:"billingKnown,omitempty"`
 
 	ToolName   string `json:"toolName,omitempty"`
 	Success    *bool  `json:"success,omitempty"`

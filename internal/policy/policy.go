@@ -100,6 +100,34 @@ type Match struct {
 	// Nothing about it is refusable on its own terms, which is why no permission
 	// rule anywhere catches the case.
 	Spend *SpendMatch `yaml:"spend,omitempty"`
+
+	// TokenBudget matches on tokens already consumed in a window.
+	//
+	// The budget that means something under a subscription. Seats are bought in
+	// advance and include an allowance, so the money left when the seats were
+	// bought and what varies is whether the allowance lasts the period. A dollar
+	// budget on such an agent governs a number that is not money; this governs the
+	// quantity the vendor actually meters.
+	TokenBudget *TokenMatch `yaml:"tokens,omitempty"`
+}
+
+// TokenMatch is a budget denominated in tokens rather than money.
+type TokenMatch struct {
+	// Within is how far back to total, as a Go duration such as "168h".
+	Within Duration `yaml:"within"`
+	// MoreThan is the token count the window must exceed.
+	MoreThan int64 `yaml:"moreThan"`
+	// Scope limits the total to this agent session, or opens it to everything in
+	// the store. Empty means session. See SpendMatch.Scope.
+	Scope string `yaml:"scope,omitempty"`
+}
+
+// matches reports whether consumption in the window already exceeds the budget.
+func (m TokenMatch) matches(a Action) bool {
+	if m.MoreThan < 0 || m.Within <= 0 {
+		return false
+	}
+	return a.Spend.Tokens(a, m, a.now()) > m.MoreThan
 }
 
 // SpendMatch is a budget: the rule applies once this much has already been spent.
@@ -258,7 +286,8 @@ func (p *Policy) Evaluate(a Action) Decision {
 		// be read, denies.
 		// Same asymmetry as below, for the other input a rule can depend on. An
 		// unreadable event store is not a spend of zero.
-		if r.Match.Spend != nil {
+		// Both budgets read the same store and fail closed the same way.
+		if r.Match.Spend != nil || r.Match.TokenBudget != nil {
 			var why string
 			switch {
 			case a.Spend == nil:
@@ -352,6 +381,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if m.Spend != nil && !m.Spend.matches(a) {
+		return false
+	}
+	if m.TokenBudget != nil && !m.TokenBudget.matches(a) {
 		return false
 	}
 	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {
@@ -548,6 +580,20 @@ func (m SpendMatch) matches(a Action) bool {
 // NeedsSpend reports whether any rule needs the event store.
 func (p *Policy) NeedsSpend() bool {
 	for _, r := range p.Rules {
+		if r.Match.Spend != nil || r.Match.TokenBudget != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// HasDollarBudget reports whether any rule governs money rather than tokens.
+//
+// Asked so that policy check can say what a dollar figure means for an organisation
+// that pays for seats: nothing left when those tokens were used, so a rule comparing
+// against it is governing the wrong quantity.
+func (p *Policy) HasDollarBudget() bool {
+	for _, r := range p.Rules {
 		if r.Match.Spend != nil {
 			return true
 		}
@@ -559,11 +605,15 @@ func (p *Policy) NeedsSpend() bool {
 func (p *Policy) SpendWindow() time.Duration {
 	var longest time.Duration
 	for _, r := range p.Rules {
-		if r.Match.Spend == nil {
-			continue
+		if r.Match.Spend != nil {
+			if w := time.Duration(r.Match.Spend.Within); w > longest {
+				longest = w
+			}
 		}
-		if w := time.Duration(r.Match.Spend.Within); w > longest {
-			longest = w
+		if r.Match.TokenBudget != nil {
+			if w := time.Duration(r.Match.TokenBudget.Within); w > longest {
+				longest = w
+			}
 		}
 	}
 	return longest

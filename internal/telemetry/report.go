@@ -25,6 +25,12 @@ type Totals struct {
 	// VendorCostUSD is what the agents themselves claimed, kept separate from the
 	// computed figure so the two can be compared rather than conflated.
 	VendorCostUSD float64
+	// MarginalUSD is money that left, summed only over events whose billing was
+	// declared. MarginalKnown and BillingUndeclared say how much of the window that
+	// covers, so a small number can be told from a number nobody could compute.
+	MarginalUSD       float64
+	MarginalKnown     int
+	BillingUndeclared int
 }
 
 func (t *Totals) add(e Event) {
@@ -42,6 +48,16 @@ func (t *Totals) add(e Event) {
 		t.Tokens.CacheRead += e.Tokens.CacheRead
 		t.Tokens.CacheCreation += e.Tokens.CacheCreation
 		t.CostUSD += e.CostUSD
+		// Money and equivalent cost are accumulated separately, and an event whose
+		// billing nobody declared contributes to neither: a marginal total built
+		// partly from declared arrangements and partly from assumptions about the
+		// rest is a number with no meaning at all.
+		if e.BillingKnown {
+			t.MarginalUSD += e.MarginalUSD
+			t.MarginalKnown++
+		} else {
+			t.BillingUndeclared++
+		}
 		if e.Unpriced() {
 			t.UnpricedRequests++
 		}
@@ -71,6 +87,13 @@ type Report struct {
 	From, To time.Time
 	Overall  Totals
 
+	// Allowance is how much of each subscription's included tokens has gone.
+	//
+	// The figure a seat-based customer can act on, and the one a dollar total never
+	// gave them: their outlay was fixed when they bought the seats, and what varies
+	// is whether the included allowance will last the period.
+	Allowance []AllowanceUse
+
 	ByTeam  []Group
 	ByAgent []Group
 	ByUser  []Group
@@ -96,7 +119,33 @@ func Window(events []Event, from, to time.Time) []Event {
 
 // Aggregate builds a report from events.
 func Aggregate(events []Event, from, to time.Time) Report {
+	return AggregateWith(events, from, to, nil)
+}
+
+// AggregateWith also reports how much of each subscription allowance has been used.
+//
+// Separate entry point because the billing arrangement is something an operator
+// declares, and a report built without it is still correct — it simply cannot talk
+// about allowances, and says so rather than inventing one.
+func AggregateWith(events []Event, from, to time.Time, billing BillingTable) Report {
+	// Marginal cost is derived here rather than read off the events.
+	//
+	// The store holds facts — tokens, and what they would cost at the rates in
+	// force — and this derives what those facts mean for money under the
+	// arrangement the operator declares. Stamping it at collection time would fix
+	// yesterday's answer into the record and make a corrected declaration unable
+	// to correct anything, which is the opposite of what somebody who has just
+	// discovered they were reading the wrong number needs.
+	if len(billing) > 0 {
+		events = withBilling(events, billing)
+	}
+
 	r := Report{From: from, To: to}
+	// Set here, not in a defer. This function returns by value, so a deferred
+	// assignment lands after the copy and is lost — which is exactly how the
+	// allowance section printed nothing at all, and the second time today I have
+	// made that mistake in this codebase.
+	r.Allowance = allowanceUse(events, billing, from, to)
 
 	team := map[string]*Totals{}
 	agent := map[string]*Totals{}
@@ -197,4 +246,68 @@ func AgentDisplayName(id model.AgentID) string {
 	default:
 		return strings.ReplaceAll(string(id), "-", " ")
 	}
+}
+
+// allowanceUse totals tokens per agent against its declared allowance.
+//
+// Only the most recent period is measured, because an allowance resets: summing a
+// fortnight of consumption against one week's allowance would report two hundred per
+// cent on a fleet that never exceeded it.
+func allowanceUse(events []Event, billing BillingTable, from, to time.Time) []AllowanceUse {
+	if len(billing) == 0 {
+		return nil
+	}
+	end := to
+	if end.IsZero() {
+		end = time.Now()
+	}
+
+	var out []AllowanceUse
+	for agent, b := range billing {
+		allowance := b.Allowance()
+		if allowance <= 0 {
+			continue
+		}
+		period := time.Duration(b.Period)
+		if period <= 0 {
+			// An allowance with no period is an allowance with no meaning: there
+			// is nothing to measure it against and nothing to reset.
+			continue
+		}
+		start := end.Add(-period)
+
+		use := AllowanceUse{Agent: agent, Allowance: allowance, Period: period}
+		for _, e := range events {
+			if e.Agent != agent || e.Kind != KindAPIRequest || e.Time.Before(start) {
+				continue
+			}
+			use.Used += e.Tokens.Total()
+		}
+		// How far into the period the data actually reaches, not how far into it
+		// the clock is: a report over three days of logs cannot say anything about
+		// the pace of a week.
+		if !from.IsZero() && from.After(start) {
+			use.Elapsed = end.Sub(from)
+		} else {
+			use.Elapsed = period
+		}
+		out = append(out, use)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Agent < out[j].Agent })
+	return out
+}
+
+// withBilling restates each event's marginal cost under a declared arrangement.
+//
+// A copy: the caller's events are the record and are not rewritten by having been
+// looked at.
+func withBilling(events []Event, billing BillingTable) []Event {
+	out := make([]Event, len(events))
+	copy(out, events)
+	for i := range out {
+		b := billing.For(out[i].Agent)
+		out[i].Billing = string(b.Model)
+		out[i].MarginalUSD, out[i].BillingKnown = b.Marginal(out[i].CostUSD)
+	}
+	return out
 }

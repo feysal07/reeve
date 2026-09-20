@@ -775,7 +775,7 @@ if (Test-Path $events) {
     $reportText = (& $reeve report --store $events --decisions $decisions --top 5 2>&1 | Out-String)
     Write-Host $reportText
 
-    Check "cost computed from tokens across four vendors" ($reportText -match "estimated from tokens")
+    Check "consumption priced from tokens across four vendors" ($reportText -match "at your rates, from tokens")
     Check "the vendors' own figure shown separately, not merged" ($reportText -match "vendor cost")
     Check "spend attributed by team" ($reportText -match "By team")
     Check "refusals appear, which no vendor telemetry can report" ($reportText -match "blocked")

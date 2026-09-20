@@ -30,3 +30,45 @@ models:
     input: 1.25
     output: 10
     cacheRead: 0.125
+
+# ---------------------------------------------------------------------------
+# How this organisation actually pays.
+#
+# Without this section every figure computed above is EQUIVALENT COST: what the
+# usage would cost at these rates. That is a real measure of consumption and a
+# sound basis for internal recharge, and it is not money leaving the
+# organisation.
+#
+# Most people deploying this pay for seats in advance. A Claude Teams seat, a
+# Copilot seat and a Cursor seat all include an allowance, so tokens inside that
+# allowance are already paid for and their marginal cost is nothing. A report
+# that says "$340 this week" to such an organisation is quoting a number that
+# looks like money and is not — and a budget rule that stops somebody's work on
+# the strength of it stops them for the wrong reason.
+#
+#   metered       every token is billed; consumption is marginal cost
+#   subscription  seats bought in advance, with an included allowance
+#   credits       a prepaid balance drawn down
+#
+# Leave an agent out and Reeve reports its marginal cost as not known, rather
+# than assuming: metered overstates it for most organisations, and subscription
+# understates it to nothing for the rest.
+#
+# What Reeve cannot know: the telemetry reports tokens, never "this request drew
+# on credits rather than the allowance". So it reports consumption against the
+# allowance you declare, and leaves the vendor's own console to say what your
+# credit balance is.
+billing:
+  claude-code:
+    model: subscription
+    seats: 1
+    # Per seat, per period, in tokens — which is what the vendor meters and what
+    # the telemetry reports. Converting it to money would put the guess back in.
+    includedTokensPerSeat: 20000000
+    period: "168h"
+    notes: Replace with your own seat count and allowance.
+
+  # An agent bought by the token. Here consumption really is spend.
+  codex-cli:
+    model: metered
+

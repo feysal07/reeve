@@ -903,8 +903,8 @@ if [ -f "$EVENTS" ]; then
     printf '%s\n' "$REPORT"
 
     case "$REPORT" in
-        *"estimated from tokens"*) check "cost computed from tokens across four vendors" 1 ;;
-        *) check "cost computed from tokens across four vendors" 0 ;;
+        *"at your rates, from tokens"*) check "consumption priced from tokens across four vendors" 1 ;;
+        *) check "consumption priced from tokens across four vendors" 0 ;;
     esac
     case "$REPORT" in
         *"vendor cost"*) check "the vendors' own figure shown separately, not merged" 1 ;;

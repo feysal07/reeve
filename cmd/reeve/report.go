@@ -17,13 +17,45 @@ func runReport(args []string) error {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	storePath := fs.String("store", "", "event store written by reeve collect")
 	decisionsPath := fs.String("decisions", "", "guard decision log, to include refusals")
+	pricesPath := fs.String("prices", "", "price table, for the billing arrangement it declares")
 	since := fs.String("since", "", "only events newer than this duration, for example 168h")
 	asJSON := fs.Bool("json", false, "emit the report as JSON")
 	top := fs.Int("top", 10, "rows to show per section")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Nothing named: read what the installed hooks are actually writing.
+	//
+	// The paths come from the hooks rather than from this build's defaults, and
+	// which files were used is printed, because a report is read as a statement
+	// about a machine. One assembled from files the reader did not name has to say
+	// which files those were, or "nothing happened" and "I looked in the wrong
+	// place" produce the same page.
+	var foundLogs, foundStores []string
 	if *storePath == "" && *decisionsPath == "" {
+		inst := discoverInstalled()
+		foundLogs = readable(inst.Logs)
+		foundStores = readable(inst.Stores)
+		if len(foundLogs) > 0 || len(foundStores) > 0 {
+			if !*asJSON {
+				agents := inst.Agents
+				if inst.FromStateDir {
+					// Found where this tool keeps its own files, which means no
+					// hook names it. The log is still the record of what
+					// happened, and saying where it came from is the difference
+					// between reading history and believing it is current.
+					agents = nil
+				}
+				announce("decisions", foundLogs, agents)
+				announce("store", foundStores, agents)
+				if inst.FromStateDir {
+					fmt.Printf("\nNothing has the guard registered right now, so this is what was recorded\nbefore that stopped. Run reeve doctor.\n")
+				}
+			}
+		}
+	}
+
+	if *storePath == "" && *decisionsPath == "" && len(foundLogs) == 0 && len(foundStores) == 0 {
 		return fmt.Errorf(`give --store, --decisions, or both.
 
   --store      events written by reeve collect: cost, tokens, models, repositories
@@ -33,13 +65,20 @@ Together they cover both what the agents did and what they were stopped from doi
 
   reeve report --store ./events.jsonl --decisions ./decisions.jsonl --since 168h
 
+Nothing was installed on this machine either, so there was nowhere to look on
+your behalf. "reeve install" registers the guard and gives it a log to write.
+
 See docs/TELEMETRY.md`)
 	}
 
 	var events []telemetry.Event
 
+	stores := foundStores
 	if *storePath != "" {
-		e, err := telemetry.ReadEvents(*storePath)
+		stores = []string{*storePath}
+	}
+	for _, path := range stores {
+		e, err := telemetry.ReadEvents(path)
 		if err != nil {
 			return err
 		}
@@ -48,8 +87,12 @@ See docs/TELEMETRY.md`)
 
 	// The decision log is the half of the record no vendor can supply. An agent
 	// reports what it did; a refusal never happened as far as it is concerned.
+	logs := foundLogs
 	if *decisionsPath != "" {
-		d, err := telemetry.ReadDecisions(*decisionsPath)
+		logs = []string{*decisionsPath}
+	}
+	for _, path := range logs {
+		d, err := telemetry.ReadDecisions(path)
 		if err != nil {
 			return err
 		}
@@ -66,7 +109,19 @@ See docs/TELEMETRY.md`)
 		events = telemetry.Window(events, from, time.Time{})
 	}
 
-	rep := telemetry.Aggregate(events, from, time.Time{})
+	// The price table carries how this organisation is billed, which is what turns
+	// an equivalent figure into a statement about money. Without it the report says
+	// what the usage would have cost and declines to call it spend.
+	var billing telemetry.BillingTable
+	if *pricesPath != "" {
+		prices, err := telemetry.LoadPrices(*pricesPath)
+		if err != nil {
+			return err
+		}
+		billing = prices.Billing
+	}
+
+	rep := telemetry.AggregateWith(events, from, time.Time{}, billing)
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -90,7 +145,23 @@ func renderReport(r telemetry.Report, top int) {
 	fmt.Printf("  tools run    : %d\n", o.Tools)
 	fmt.Printf("  tokens       : %s in, %s out, %s cache read\n",
 		humanInt(o.Tokens.Input), humanInt(o.Tokens.Output), humanInt(o.Tokens.CacheRead))
-	fmt.Printf("  cost         : %s (estimated from tokens)\n", money(o.CostUSD))
+	// Equivalent cost, and labelled as such. It is what this usage would cost at
+	// the configured rates, which is a real measure of consumption and is not
+	// money leaving an organisation that pays for seats in advance.
+	fmt.Printf("  equivalent   : %s at your rates, from tokens\n", money(o.CostUSD))
+
+	switch {
+	case o.MarginalKnown > 0 && o.BillingUndeclared == 0:
+		fmt.Printf("  money spent  : %s\n", money(o.MarginalUSD))
+	case o.MarginalKnown > 0:
+		// Partly declared. Saying the total without saying what it covers would
+		// present a fraction of the window as the whole of it.
+		fmt.Printf("  money spent  : %s, over the %d of %d priced requests whose billing\n",
+			money(o.MarginalUSD), o.MarginalKnown, o.MarginalKnown+o.BillingUndeclared)
+		fmt.Printf("                 arrangement is declared\n")
+	case o.CostUSD > 0:
+		fmt.Printf("  money spent  : not known\n")
+	}
 
 	if o.VendorCostUSD > 0 {
 		// Showing both is the point. A gap between them usually means a model is
@@ -98,6 +169,30 @@ func renderReport(r telemetry.Report, top int) {
 		// organisation pays something else.
 		fmt.Printf("  vendor cost  : %s (as reported by the agents, at list price)\n", money(o.VendorCostUSD))
 	}
+
+	// The allowance, which for a seat-based subscription is the only number that
+	// varies. The outlay was fixed when the seats were bought; what is in question
+	// is whether the included tokens last the period.
+	if len(r.Allowance) > 0 {
+		fmt.Printf("\nIncluded allowance\n")
+		for _, a := range r.Allowance {
+			fmt.Printf("  %-18s %s of %s tokens used (%.0f%%) in the last %s\n",
+				a.Agent, humanInt(a.Used), humanInt(a.Allowance), a.Percent(),
+				shortDuration(a.Period))
+			if pace := a.Pace(); pace > 0 {
+				note := "on course to last the period"
+				if pace > 1 {
+					note = "ON COURSE TO RUN OUT BEFORE THE PERIOD ENDS"
+				}
+				fmt.Printf("  %-18s running at %.2fx the rate that would just use it up: %s\n",
+					"", pace, note)
+			}
+		}
+		fmt.Printf("\n  %s\n", wrap("Tokens inside this allowance are already paid for, so "+
+			"they cost nothing further. That is why the equivalent figure above is not "+
+			"money, and why a budget in dollars would govern the wrong quantity here.", 74, "  "))
+	}
+
 	if o.UnpricedRequests > 0 {
 		fmt.Printf("\n  warning: %d request(s) used a model with no entry in the price table,\n", o.UnpricedRequests)
 		fmt.Printf("           so their cost is missing from the total above rather than estimated.\n")
@@ -179,4 +274,20 @@ func trim(s string, n int) string {
 		return s[:n]
 	}
 	return s[:n-3] + "..."
+}
+
+// shortDuration renders a period the way somebody would say it.
+func shortDuration(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour && d%(24*time.Hour) == 0:
+		days := int(d.Hours()) / 24
+		if days == 7 {
+			return "week"
+		}
+		return fmt.Sprintf("%d days", days)
+	case d >= time.Hour:
+		return fmt.Sprintf("%d hours", int(d.Hours()))
+	default:
+		return d.String()
+	}
 }
