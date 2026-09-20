@@ -121,6 +121,18 @@ type Match struct {
 	Allowance *AllowanceMatch `yaml:"allowance,omitempty"`
 }
 
+// personScoped reports whether any counting match on this rule is totalled per person.
+//
+// Every one of them is checked, not the first that is set. A rule can carry a token
+// budget and a repetition count at once, and a person scope on either of them needs the
+// same identity: answering for one and not the other would total a window the rule did
+// not ask for and return it as though it had.
+func (m Match) personScoped() bool {
+	return (m.Spend != nil && m.Spend.Scope == ScopePerson) ||
+		(m.TokenBudget != nil && m.TokenBudget.Scope == ScopePerson) ||
+		(m.Repeated != nil && m.Repeated.Scope == ScopePerson)
+}
+
 // TokenMatch is a budget denominated in tokens rather than money.
 type TokenMatch struct {
 	// Within is how far back to total, as a Go duration such as "168h".
@@ -266,8 +278,57 @@ func Parse(b []byte) (*Policy, error) {
 				return nil, err
 			}
 		}
+		// A scope nobody validated is a scope that silently means "session".
+		//
+		// Nothing checked this until person scope was added, so a rule written
+		// "scope: machien" totalled one agent session and reported a number, and the
+		// number looked exactly like a machine total that happened to be small. With
+		// person scope the same typo is worse: the rule stops being person-scoped, so
+		// the refusal that protects it from an unverifiable identity never fires and
+		// the limit quietly becomes a per-session one anybody can reset by starting a
+		// new session.
+		for _, s := range []struct{ field, value string }{
+			{"spend", scopeOf(r.Match.Spend)},
+			{"tokens", scopeOfTokens(r.Match.TokenBudget)},
+			{"repeated", scopeOfRepeated(r.Match.Repeated)},
+		} {
+			if !validScope(s.value) {
+				return nil, fmt.Errorf(
+					"rules[%d] (%s): %s scope %q is not session, machine or person",
+					i, r.ID, s.field, s.value)
+			}
+		}
 	}
 	return &p, nil
+}
+
+func validScope(s string) bool {
+	switch s {
+	case "", ScopeSession, ScopeMachine, ScopePerson:
+		return true
+	}
+	return false
+}
+
+func scopeOf(m *SpendMatch) string {
+	if m == nil {
+		return ""
+	}
+	return m.Scope
+}
+
+func scopeOfTokens(m *TokenMatch) string {
+	if m == nil {
+		return ""
+	}
+	return m.Scope
+}
+
+func scopeOfRepeated(m *RepeatedMatch) string {
+	if m == nil {
+		return ""
+	}
+	return m.Scope
 }
 
 func validEffect(e Effect) bool {
@@ -306,6 +367,35 @@ func (p *Policy) Evaluate(a Action) Decision {
 		// Same asymmetry as below, for the other input a rule can depend on. An
 		// unreadable event store is not a spend of zero.
 		// Both budgets read the same store and fail closed the same way.
+		// A rule totalled per person needs to know which person, from a source the
+		// person cannot edit.
+		//
+		// The same asymmetry again, and the one place it is easiest to get wrong. An
+		// agent runs on a developer's machine, so an identity in its hook payload is
+		// asserted by the party the rule is about to constrain: anyone who can edit
+		// their own settings can claim to be somebody else. Treating that as good
+		// enough would produce a per-seat limit bypassable by exactly the person it
+		// limits, while reading as enforced on every dashboard — which is worse than
+		// having no rule, because somebody has been told there is one.
+		if r.Match.personScoped() && !a.Identity.Verified() {
+			why := "This rule is totalled per person, and who is at the keyboard " +
+				"could not be established from a source outside this machine. " +
+				"Refusing rather than attributing the action to nobody."
+			if a.Identity != nil && a.Identity.Asserted {
+				why = "This rule is totalled per person, and the only identity " +
+					"available was asserted by the agent itself. An agent runs on " +
+					"the machine the rule governs, so that is a claim by the party " +
+					"being limited rather than evidence about them. Refusing rather " +
+					"than enforcing a limit anyone here could step around. Give the " +
+					"guard an operator-set identity with --identity or REEVE_IDENTITY."
+			}
+			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+				d.Effect = EffectDeny
+				d.RuleID = r.ID
+				d.Reason = why
+			}
+			continue
+		}
 		if r.Match.Spend != nil || r.Match.TokenBudget != nil {
 			var why string
 			switch {

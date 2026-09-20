@@ -104,6 +104,16 @@ type Action struct {
 	// Not serialised, for the same reason History is not.
 	Spend *Spend `json:"-"`
 
+	// Identity is who is at the keyboard, resolved by the guard before evaluation.
+	//
+	// Nil means none could be established, which a rule that needs one treats as a
+	// refusal rather than as an action belonging to nobody — the same asymmetry as
+	// Spend, History and Allowance. An identity that is present but Asserted is
+	// treated the same way, because it was supplied by the machine the rule governs.
+	// Not serialised: it is resolved per action and writing it into the decision log
+	// is the log's own business.
+	Identity *Identity `json:"-"`
+
 	// Allowance is what this agent's declared plans include, resolved from the
 	// price table before evaluation.
 	//
@@ -111,6 +121,40 @@ type Action struct {
 	// rather than as an allowance of nothing — the same asymmetry as Spend and
 	// History. Not serialised: it is configuration, not evidence about this action.
 	Allowance *Allowance `json:"-"`
+}
+
+// The scopes a counting rule can be totalled over.
+const (
+	// ScopeSession is the default: only this agent session.
+	ScopeSession = "session"
+	// ScopeMachine is every record in the store the guard was given.
+	ScopeMachine = "machine"
+	// ScopePerson is every record attributed to the identity behind this action.
+	//
+	// It needs an identity the person it governs cannot edit, so a rule using it
+	// refuses when none was resolved or when the one resolved was asserted by the
+	// agent. See Policy.Evaluate.
+	ScopePerson = "person"
+)
+
+// inScope reports whether one recorded event counts towards the rule being evaluated.
+//
+// One function rather than the same condition written at each of the four call sites,
+// because a scope understood by three of them and not the fourth would silently total
+// a different window for one kind of budget than for another — and the two answers
+// would both look like a number.
+func inScope(scope string, a Action, session, who string) bool {
+	switch scope {
+	case ScopeMachine:
+		return true
+	case ScopePerson:
+		// An event nobody could attribute is nobody's, so it is not this person's.
+		// Evaluate refuses the rule outright when the action has no usable identity,
+		// so reaching here with one means the comparison is meaningful.
+		return who != "" && who == a.Identity.Key()
+	default:
+		return session == a.SessionID
+	}
 }
 
 // Spend is a bounded window of recorded cost, most recent first.
@@ -169,7 +213,7 @@ func (s *Spend) Requests(a Action, m TokenMatch, now time.Time) int64 {
 		if r.Time.Before(cutoff) {
 			break
 		}
-		if m.Scope != "machine" && r.SessionID != a.SessionID {
+		if !inScope(m.Scope, a, r.SessionID, r.Who) {
 			continue
 		}
 		n++
@@ -185,6 +229,53 @@ type CostRecord struct {
 	// Tokens is what the vendor actually metered, which is the quantity a
 	// subscription's allowance is denominated in.
 	Tokens int64
+	// Who is the identity this event was attributed to, empty when none was. It is
+	// the key a person-scoped budget totals on; an event with none is nobody's and
+	// is counted towards no person.
+	Who string
+}
+
+// Identity is who is at the keyboard, when that can be established at all.
+//
+// Vendor-neutral, like everything else here: the guard resolves it and this package
+// only reads it. Nil on an Action means none was resolved, which is not the same as
+// nobody being there.
+//
+// Asserted is the field that matters. An agent runs on a developer's machine, so an
+// identity taken from the agent's own hook payload is a claim made by the party the
+// rule is about to constrain — anyone who can edit their settings can claim to be
+// somebody else. A per-seat limit keyed on that is bypassable by exactly the person it
+// limits, while looking enforced, which is the worst of both. So a rule that needs to
+// know who somebody is refuses an identity that is merely asserted, in the same way a
+// budget refuses an unreadable store. See Policy.Evaluate.
+type Identity struct {
+	// Subject is the identity provider's subject, which survives an email change.
+	Subject string
+	// Email is the address, when that is what the source gave.
+	Email string
+	// Team is the operator's own attribution, never one the client sent.
+	Team string
+	// Asserted records that this came from the agent rather than from a source the
+	// person it describes cannot edit.
+	Asserted bool
+}
+
+// Key is what a person-scoped rule totals on: the subject when there is one, because
+// it survives somebody changing their address, and the email otherwise.
+func (i *Identity) Key() string {
+	if i == nil {
+		return ""
+	}
+	if i.Subject != "" {
+		return i.Subject
+	}
+	return i.Email
+}
+
+// Verified reports an identity a rule may rely on: one that exists and did not come
+// from the machine being governed.
+func (i *Identity) Verified() bool {
+	return i != nil && !i.Asserted && i.Key() != ""
 }
 
 // Total returns the cost in the window under the scope the rule asked for.
@@ -199,7 +290,7 @@ func (s *Spend) Total(a Action, m SpendMatch, now time.Time) float64 {
 			// Records are newest first, so the first one outside the window ends it.
 			break
 		}
-		if m.Scope != "machine" && r.SessionID != a.SessionID {
+		if !inScope(m.Scope, a, r.SessionID, r.Who) {
 			continue
 		}
 		total += r.CostUSD
@@ -218,6 +309,14 @@ type RecentAction struct {
 	SessionID string
 	Tool      string
 	Command   string
+	// Who is the identity this action was attributed to, empty when none was.
+	//
+	// The decision log does not carry one today, so this is empty in practice and a
+	// person-scoped repetition rule counts nothing. That is why Evaluate refuses such
+	// a rule outright rather than letting it total zero and permit: a count of zero
+	// from a log that never records who is not evidence that nobody repeated
+	// anything.
+	Who string
 }
 
 // Count returns how many records in the window look like this action, under the
@@ -233,7 +332,7 @@ func (h *History) Count(a Action, m RepeatedMatch, now time.Time) int {
 			// Records are newest first, so the first one outside the window ends it.
 			break
 		}
-		if m.Scope != "machine" && r.SessionID != a.SessionID {
+		if !inScope(m.Scope, a, r.SessionID, r.Who) {
 			continue
 		}
 		switch m.Same {
@@ -317,7 +416,7 @@ func (s *Spend) Tokens(a Action, m TokenMatch, now time.Time) int64 {
 		if r.Time.Before(cutoff) {
 			break
 		}
-		if m.Scope != "machine" && r.SessionID != a.SessionID {
+		if !inScope(m.Scope, a, r.SessionID, r.Who) {
 			continue
 		}
 		total += r.Tokens

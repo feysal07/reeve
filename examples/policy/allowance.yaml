@@ -88,3 +88,26 @@ rules:
     reason: >
       Most of this month's premium requests have been used. They do not reset
       until the billing period does.
+
+  # Totalled per person rather than per machine or per session.
+  #
+  # The scope that needs to know who is at the keyboard, and the one that refuses
+  # rather than guess. An agent runs on a developer's machine, so an identity the
+  # agent reports is asserted by the party this rule constrains: anyone who can edit
+  # their own settings can claim to be somebody else, and a limit keyed on that is
+  # bypassable by exactly the person it limits while reading as enforced.
+  #
+  # So the guard takes the identity from --identity or REEVE_IDENTITY, set by whatever
+  # deploys it alongside the managed configuration a developer cannot remove. With
+  # neither set, this rule denies and says why. That is deliberate: a per-person limit
+  # nobody can attribute is not a limit, and quietly falling back to the machine total
+  # would answer a different question in the same shape.
+  - id: one-persons-weekly-tokens
+    description: Stop one person running through a week of tokens on their own
+    decision: deny
+    match:
+      tokens: {within: "168h", moreThan: 20000000, scope: person}
+    reason: >
+      You have used more than this week's per-person token budget. The figure is
+      yours rather than the machine's or the team's. If that is expected, the
+      budget is in the policy your organisation deploys.
