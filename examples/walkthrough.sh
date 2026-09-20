@@ -1041,6 +1041,16 @@ EOF
         *) check "a directory given as the store says a file was wanted" 0 "$ASDIR" ;;
     esac
 
+    # --json is an interface, so it says which shape it is. Without a version a
+    # consumer cannot tell a document whose fields moved from one written before
+    # anybody thought of them as a wire format, and the failure it gets is a missing
+    # key rather than a refusal it could act on.
+    "$REEVE" report --store "$EVENTS" --json > "$SANDBOX/report.json" 2>/dev/null
+    SCHEMA=$(json_get "$SANDBOX/report.json" '.schemaVersion' 'd["schemaVersion"]')
+    [ "$SCHEMA" = "1" ] &&
+        check "the JSON report declares its schema version" 1 ||
+        check "the JSON report declares its schema version" 0 "schemaVersion was '$SCHEMA'"
+
     # An allowance declared for an agent nothing reports against reads nought per
     # cent for ever, which on a dashboard is exactly what staying inside the limit
     # looks like. Copilot exports no per-token telemetry, so this is not a

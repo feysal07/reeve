@@ -788,6 +788,15 @@ if (Test-Path $events) {
     $asDir = (& $reeve report --store (Split-Path -Parent $events) 2>&1 | Out-String)
     Check "a directory given as the store says a file was wanted" `
         ($asDir -match "is a directory") $asDir.Trim()
+
+    # --json is an interface, so it says which shape it is. Without a version a
+    # consumer cannot tell a document whose fields moved from one written before
+    # anybody thought of them as a wire format.
+    $reportJson = Join-Path $Sandbox "report.json"
+    & $reeve report --store $events --json 2>$null | Set-Content -Path $reportJson -Encoding utf8
+    $schema = (Get-Content $reportJson -Raw | ConvertFrom-Json).schemaVersion
+    Check "the JSON report declares its schema version" `
+        ($schema -eq 1) "schemaVersion was '$schema'"
 }
 
 # A rule must match what a command runs, not what it carries.

@@ -79,16 +79,16 @@ const (
 // that is not the one about to run out.
 type Limit struct {
 	// Unit is what this limit counts.
-	Unit Unit `yaml:"unit"`
+	Unit Unit `yaml:"unit" json:"unit"`
 	// Included is how much of it the plan includes.
-	Included int64 `yaml:"included"`
+	Included int64 `yaml:"included" json:"included"`
 	// Per says whether Included is per seat or for the whole organisation.
-	Per Scope `yaml:"per"`
+	Per Scope `yaml:"per" json:"per"`
 	// Period is how often it resets, as a Go duration such as "168h".
-	Period Duration `yaml:"period"`
+	Period Duration `yaml:"period" json:"periodNanos"`
 	// Label names this limit when a plan has several, so a report can say which one
 	// is about to be exhausted rather than which row of a table it was.
-	Label string `yaml:"label,omitempty"`
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // Name renders a limit for a report.
@@ -400,22 +400,26 @@ func (t BillingTable) Declared() bool {
 
 // AllowanceUse is consumption against one limit.
 type AllowanceUse struct {
-	Agent model.AgentID
-	Limit Limit
+	Agent model.AgentID `json:"agent"`
+	Limit Limit         `json:"limit"`
 	// Allowance is the total for the organisation across every plan.
-	Allowance int64
+	Allowance int64 `json:"allowance"`
 	// Used is consumption inside the window, in the limit's own unit.
-	Used int64
+	Used int64 `json:"used"`
 	// Seats is how many are on a tier declaring this limit, and SeatsHeld is how
 	// many are held in total. When they differ, the consumption measured includes
 	// people whose tier does not declare this window at all, and the comparison is
 	// correspondingly conservative.
-	Seats     int
-	SeatsHeld int
+	Seats     int `json:"seats"`
+	SeatsHeld int `json:"seatsHeld"`
 	// Overage is what happens past the allowance, when declared.
-	Overage Overage
+	Overage Overage `json:"overage,omitempty"`
 	// Elapsed is how much of the period the data actually covers.
-	Elapsed time.Duration
+	//
+	// Emitted as nanoseconds, which is what a Go duration marshals to. A consumer
+	// reading it as seconds would be out by a factor of a billion, so the field is
+	// named for its unit in the schema documentation.
+	Elapsed time.Duration `json:"elapsedNanos"`
 
 	// PerSeat is the largest single-seat allowance, and Over lists the people who
 	// have exceeded it.
@@ -423,18 +427,20 @@ type AllowanceUse struct {
 	// The number a fleet total cannot give. A per-seat limit is about a person, and
 	// an organisation can be at forty per cent of its total while somebody is at
 	// three hundred per cent of theirs.
-	PerSeat int64
-	Over    []SeatUse
+	PerSeat int64     `json:"perSeat"`
+	Over    []SeatUse `json:"over"`
 	// Attributed and Unattributed say how much of the consumption could be put to a
 	// person at all, so a short list of names is not mistaken for a full one.
-	Attributed   int64
-	Unattributed int64
+	Attributed   int64 `json:"attributed"`
+	Unattributed int64 `json:"unattributed"`
 }
 
 // SeatUse is one person's consumption against a single seat's allowance.
 type SeatUse struct {
-	Who  string
-	Used int64
+	// Who is a person. This is the report, not the metrics endpoint: identities
+	// belong here, where access is controlled, and never in Prometheus.
+	Who  string `json:"who"`
+	Used int64  `json:"used"`
 }
 
 // Percent is how much of the organisation's allowance has gone.

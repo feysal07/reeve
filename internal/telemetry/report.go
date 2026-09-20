@@ -10,27 +10,27 @@ import (
 
 // Totals is what a group of events adds up to.
 type Totals struct {
-	Sessions  int
-	Requests  int
-	Tools     int
-	Tokens    Tokens
-	CostUSD   float64
-	Blocked   int
-	Asked     int
-	Decisions int
+	Sessions  int     `json:"sessions"`
+	Requests  int     `json:"requests"`
+	Tools     int     `json:"tools"`
+	Tokens    Tokens  `json:"tokens"`
+	CostUSD   float64 `json:"equivalentCostUSD"`
+	Blocked   int     `json:"blocked"`
+	Asked     int     `json:"asked"`
+	Decisions int     `json:"decisions"`
 	// UnpricedRequests counts requests whose model was not in the price table, so
 	// a report can say how much of the total it could not account for rather than
 	// presenting an incomplete figure as a complete one.
-	UnpricedRequests int
+	UnpricedRequests int `json:"unpricedRequests"`
 	// VendorCostUSD is what the agents themselves claimed, kept separate from the
 	// computed figure so the two can be compared rather than conflated.
-	VendorCostUSD float64
+	VendorCostUSD float64 `json:"vendorCostUSD"`
 	// MarginalUSD is money that left, summed only over events whose billing was
 	// declared. MarginalKnown and BillingUndeclared say how much of the window that
 	// covers, so a small number can be told from a number nobody could compute.
-	MarginalUSD       float64
-	MarginalKnown     int
-	BillingUndeclared int
+	MarginalUSD       float64 `json:"marginalUSD"`
+	MarginalKnown     int     `json:"marginalKnown"`
+	BillingUndeclared int     `json:"billingUndeclared"`
 }
 
 func (t *Totals) add(e Event) {
@@ -78,28 +78,50 @@ func (t *Totals) add(e Event) {
 
 // Group is one row of a report.
 type Group struct {
-	Key string
+	Key string `json:"key"`
 	Totals
 }
 
+// SchemaVersion identifies the shape of a --json report.
+//
+// It is emitted on every report so a consumer can refuse a document it does not
+// understand instead of silently reading a field that has moved. Raise it whenever a
+// field is renamed or removed; adding one is not a break.
+//
+// Version 1 is the first documented shape. What --json emitted before it was whatever
+// Go made of the field names, which was never chosen and could be changed by a rename
+// nobody thought of as a wire change.
+const SchemaVersion = 1
+
 // Report is an aggregation of events over a window.
+//
+// Every field here is tagged. Before they were, the JSON was the struct's Go field
+// names — Overall, ByTeam, UnpricedRequests — mixed with the few types that did carry
+// tags, so half the document was lowerCamelCase and half was not. Nobody chose that
+// format, and renaming a field in Go silently rewrote the output of a documented flag
+// without failing a build or a test. See TestTheJSONReportShapeIsStable.
 type Report struct {
-	From, To time.Time
-	Overall  Totals
+	// Schema is the version of this document's shape, not of Reeve.
+	Schema int `json:"schemaVersion"`
+
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+
+	Overall Totals `json:"overall"`
 
 	// Allowance is how much of each subscription's included tokens has gone.
 	//
 	// The figure a seat-based customer can act on, and the one a dollar total never
 	// gave them: their outlay was fixed when they bought the seats, and what varies
 	// is whether the included allowance will last the period.
-	Allowance []AllowanceUse
+	Allowance []AllowanceUse `json:"allowance"`
 
-	ByTeam  []Group
-	ByAgent []Group
-	ByUser  []Group
-	ByRepo  []Group
-	ByModel []Group
-	ByRule  []Group
+	ByTeam  []Group `json:"byTeam"`
+	ByAgent []Group `json:"byAgent"`
+	ByUser  []Group `json:"byUser"`
+	ByRepo  []Group `json:"byRepo"`
+	ByModel []Group `json:"byModel"`
+	ByRule  []Group `json:"byRule"`
 }
 
 // Window filters events to a time range. A zero bound means unbounded.
@@ -127,6 +149,9 @@ func Aggregate(events []Event, from, to time.Time) Report {
 // Separate entry point because the billing arrangement is something an operator
 // declares, and a report built without it is still correct — it simply cannot talk
 // about allowances, and says so rather than inventing one.
+// Stamped here rather than by the caller that serialises it, because a report built
+// one way and encoded another would carry no version at all, and a document whose
+// schemaVersion is absent is indistinguishable from one written before versioning.
 func AggregateWith(events []Event, from, to time.Time, billing BillingTable) Report {
 	// Marginal cost is derived here rather than read off the events.
 	//
@@ -140,7 +165,7 @@ func AggregateWith(events []Event, from, to time.Time, billing BillingTable) Rep
 		events = withBilling(events, billing)
 	}
 
-	r := Report{From: from, To: to}
+	r := Report{Schema: SchemaVersion, From: from, To: to}
 	// Set here, not in a defer. This function returns by value, so a deferred
 	// assignment lands after the copy and is lost — which is exactly how the
 	// allowance section printed nothing at all, and the second time today I have

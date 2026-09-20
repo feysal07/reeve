@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "from": "2026-01-02T03:04:05Z",
+  "to": "2026-01-09T03:04:05Z",
+  "overall": {
+    "sessions": 11,
+    "requests": 22,
+    "tools": 33,
+    "tokens": {
+      "input": 41,
+      "output": 42,
+      "cacheRead": 43,
+      "cacheCreation": 44
+    },
+    "equivalentCostUSD": 5.5,
+    "blocked": 66,
+    "asked": 77,
+    "decisions": 88,
+    "unpricedRequests": 99,
+    "vendorCostUSD": 10.1,
+    "marginalUSD": 11.2,
+    "marginalKnown": 12,
+    "billingUndeclared": 13
+  },
+  "allowance": [
+    {
+      "agent": "claude-code",
+      "limit": {
+        "unit": "tokens",
+        "included": 1000,
+        "per": "seat",
+        "periodNanos": 604800000000000,
+        "label": "weekly"
+      },
+      "allowance": 2000,
+      "used": 1500,
+      "seats": 2,
+      "seatsHeld": 3,
+      "overage": "blocked",
+      "elapsedNanos": 302400000000000,
+      "perSeat": 1000,
+      "over": [
+        {
+          "who": "dev@example.com",
+          "used": 1400
+        }
+      ],
+      "attributed": 1450,
+      "unattributed": 50
+    }
+  ],
+  "byTeam": [
+    {
+      "key": "platform",
+      "sessions": 11,
+      "requests": 22,
+      "tools": 33,
+      "tokens": {
+        "input": 41,
+        "output": 42,
+        "cacheRead": 43,
+        "cacheCreation": 44
+      },
+      "equivalentCostUSD": 5.5,
+      "blocked": 66,
+      "asked": 77,
+      "decisions": 88,
+      "unpricedRequests": 99,
+      "vendorCostUSD": 10.1,
+      "marginalUSD": 11.2,
+      "marginalKnown": 12,
+      "billingUndeclared": 13
+    }
+  ],
+  "byAgent": [
+    {
+      "key": "claude-code",
+      "sessions": 11,
+      "requests": 22,
+      "tools": 33,
+      "tokens": {
+        "input": 41,
+        "output": 42,
+        "cacheRead": 43,
+        "cacheCreation": 44
+      },
+      "equivalentCostUSD": 5.5,
+      "blocked": 66,
+      "asked": 77,
+      "decisions": 88,
+      "unpricedRequests": 99,
+      "vendorCostUSD": 10.1,
+      "marginalUSD": 11.2,
+      "marginalKnown": 12,
+      "billingUndeclared": 13
+    }
+  ],
+  "byUser": [
+    {
+      "key": "dev@example.com",
+      "sessions": 11,
+      "requests": 22,
+      "tools": 33,
+      "tokens": {
+        "input": 41,
+        "output": 42,
+        "cacheRead": 43,
+        "cacheCreation": 44
+      },
+      "equivalentCostUSD": 5.5,
+      "blocked": 66,
+      "asked": 77,
+      "decisions": 88,
+      "unpricedRequests": 99,
+      "vendorCostUSD": 10.1,
+      "marginalUSD": 11.2,
+      "marginalKnown": 12,
+      "billingUndeclared": 13
+    }
+  ],
+  "byRepo": [
+    {
+      "key": "payments",
+      "sessions": 11,
+      "requests": 22,
+      "tools": 33,
+      "tokens": {
+        "input": 41,
+        "output": 42,
+        "cacheRead": 43,
+        "cacheCreation": 44
+      },
+      "equivalentCostUSD": 5.5,
+      "blocked": 66,
+      "asked": 77,
+      "decisions": 88,
+      "unpricedRequests": 99,
+      "vendorCostUSD": 10.1,
+      "marginalUSD": 11.2,
+      "marginalKnown": 12,
+      "billingUndeclared": 13
+    }
+  ],
+  "byModel": [
+    {
+      "key": "claude-sonnet-5",
+      "sessions": 11,
+      "requests": 22,
+      "tools": 33,
+      "tokens": {
+        "input": 41,
+        "output": 42,
+        "cacheRead": 43,
+        "cacheCreation": 44
+      },
+      "equivalentCostUSD": 5.5,
+      "blocked": 66,
+      "asked": 77,
+      "decisions": 88,
+      "unpricedRequests": 99,
+      "vendorCostUSD": 10.1,
+      "marginalUSD": 11.2,
+      "marginalKnown": 12,
+      "billingUndeclared": 13
+    }
+  ],
+  "byRule": [
+    {
+      "key": "no-rm-rf",
+      "sessions": 11,
+      "requests": 22,
+      "tools": 33,
+      "tokens": {
+        "input": 41,
+        "output": 42,
+        "cacheRead": 43,
+        "cacheCreation": 44
+      },
+      "equivalentCostUSD": 5.5,
+      "blocked": 66,
+      "asked": 77,
+      "decisions": 88,
+      "unpricedRequests": 99,
+      "vendorCostUSD": 10.1,
+      "marginalUSD": 11.2,
+      "marginalKnown": 12,
+      "billingUndeclared": 13
+    }
+  ]
+}
