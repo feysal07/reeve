@@ -38,7 +38,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 106 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 107 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -60,7 +60,7 @@ Expect roughly this:
   than guessing at the shape of a reply.
 - **Two assertions that must pass**: a prompt sent to the collector does not reach the
   store, and a client-asserted team attribute is ignored.
-- **A cost report** showing $1.31 computed from tokens against the agents' own claim of
+- **A cost report** showing $1.34 computed from tokens against the agents' own claim of
   $1.42, broken down by team, agent, user, repository and model.
 
 If a check fails, the summary names it and prints why. Send that block along with the

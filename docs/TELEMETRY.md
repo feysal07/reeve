@@ -256,12 +256,25 @@ name said otherwise on every panel built from it.
 `reeve scan`, `reeve guard` and `reeve policy compile` cover Claude Code, GitHub
 Copilot CLI, Codex CLI, Gemini CLI and Cursor.
 
-The collector accepts telemetry from one more, OpenCode, and attributes it by name
-rather than lumping it in with everything unrecognised. There is no adapter for it, so
+The collector accepts telemetry from one more, OpenCode. There is no adapter for it, so
 a report can show an OpenCode row for an agent `reeve scan` will never find and
 `reeve guard` will refuse to answer for. That is deliberate: writing an adapter from
 documentation nobody here has checked against a real installation would be exactly the
 kind of confident wrongness this tool is built to catch.
+
+`reeve report` now says so on the row itself — **telemetry only, not governed** — for
+OpenCode and for any other name the collector accepts that `reeve scan` and
+`reeve guard` do not cover. Without it the row is indistinguishable from the five that
+are fully covered, and the limit is only discovered when somebody goes looking for an
+agent that scan cannot see.
+
+> **Attribute OpenCode with `reeve.agent`, not `service.name`.** The service-name
+> mapping has no OpenCode case, and OpenCode emits the GenAI semantic conventions,
+> which are attributed to Copilot because that is what Copilot emits. So a payload
+> announcing itself as OpenCode in `service.name` alone is currently counted as Copilot
+> spend — silently, and in the direction that inflates a governed agent's figures with
+> an ungoverned agent's usage. Setting the `reeve.agent` resource attribute takes
+> precedence over everything else and is the mechanism to use until that is fixed.
 
 Anything else that reaches the collector is labelled `other` in the metrics, and
 `unidentified` when the payload said nothing about who sent it. Those are different

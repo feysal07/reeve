@@ -50,6 +50,26 @@ func AllAgents() []AgentID {
 	}
 }
 
+// HasAdapter says whether scan, guard and policy compile know this agent at all.
+//
+// Derived from AllAgents rather than listed again, so the two cannot drift. An agent
+// added to one and forgotten in the other would be reported as understood by a build
+// that cannot read its configuration.
+//
+// It exists because the collector accepts telemetry from agents nothing else here
+// covers. Such an agent appears in a cost report looking exactly like the five with
+// adapters, and then cannot be found by scan and is refused by guard, with nothing in
+// any of those three outputs explaining why. Saying so where the row is printed is the
+// difference between a documented limit and an apparent fault.
+func HasAdapter(id AgentID) bool {
+	for _, a := range AllAgents() {
+		if a == id {
+			return true
+		}
+	}
+	return false
+}
+
 // ExportsCostTelemetry reports whether this product can be configured to send its
 // own usage and cost to an endpoint the operator chooses.
 //
