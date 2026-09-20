@@ -88,6 +88,50 @@ Included allowance
                    heavy@example.com                  288.1M (288%)
 ```
 
+### What each vendor calls a person
+
+Every agent invents its own identifier. Anthropic reports an account UUID, Copilot a
+GitHub login, Cursor its own user id, and none of them is the subject your identity
+provider issues. A budget written per person compares the identity the guard resolved
+against subjects recorded by four different vendors, and matches none of them.
+
+It fails quietly: the window totals zero, and a budget compared against zero permits.
+Measured, not supposed — nine million tokens against a thousand-token budget, allowed,
+with no reason given. So map them, in `teams.yaml`:
+
+```yaml
+aliases:
+  "acct_01HXY9Z-anthropic-account-uuid": "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b"
+  "octocat": "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b"
+  "dev@example.com": "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b"
+```
+
+Applied where the event is recorded, so the report, the metrics and a person-scoped
+budget in the guard all agree by construction. An alias that points at another alias is
+refused when the file is read, because resolving one hop into a chain gives an answer
+that depends on how many times the mapping ran. Addresses are matched in lower case, and
+a key written with capitals is refused for the same reason: an alias that never matches
+looks exactly like one nobody needed.
+
+> **This makes a per-person budget work. It does not make it evidence.**
+>
+> The alias key is matched against `user.id` and `user.email`, which the agent puts in
+> its own export, from the machine being governed. That is why every identity on a
+> stored event is marked as asserted. Setting `user.id` to a colleague's subject already
+> filed spend under that colleague before aliases existed and still does; an alias adds
+> a more guessable handle for the same thing rather than a new weakness.
+>
+> A person-scoped budget is therefore worth whatever your collector's ingest controls
+> are worth, and the collector has none — it accepts what it is sent, on a port bound to
+> localhost. Treat these budgets as a guardrail against a runaway, which is what they
+> are good at, and not as an audit trail for a chargeback dispute. The guard's decision
+> log is the half nobody can forge from the agent side.
+
+**Upgrading:** if you already key `subjects:` on a vendor's identifier rather than on
+your identity provider's, adding an `aliases:` section will rewrite the subject before
+that lookup runs and the old entry will stop matching. Move those entries to `aliases:`
+and key `subjects:` on the canonical subject.
+
 **Read the second row before the first.** The organisation is at 56% of its weekly
 allowance — comfortable, and the only figure a fleet total would have given you. One
 person is at 288% of the most generous seat the organisation holds. A per-seat

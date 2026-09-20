@@ -215,6 +215,72 @@ type TeamMap struct {
 	// Subjects maps an identity provider subject to a team, which is the form that
 	// survives someone changing their email address.
 	Subjects map[string]string `yaml:"subjects"`
+
+	// Aliases maps an identifier a vendor uses to the one the organisation uses.
+	//
+	// Every agent invents its own id for a person. Anthropic reports an account UUID,
+	// Copilot a GitHub login, Cursor its own user id, and none of them is the subject
+	// an identity provider issues. So a person-scoped budget compares the identity the
+	// guard resolved against subjects recorded by four different vendors, and matches
+	// none of them.
+	//
+	// It matches nothing quietly. The window totals zero, and a budget compared
+	// against zero permits — so somebody nine million tokens over their limit is
+	// allowed, with a verified identity, and the rule that should have stopped them
+	// reports nothing at all. Measured, not supposed: allow, empty reason, against a
+	// thousand-token budget.
+	//
+	// Keyed by whatever the vendor sent, valued by the canonical subject. Operator
+	// owned, like everything else in this file, because a mapping the developer could
+	// edit would let them file their consumption under somebody else.
+	//
+	// What this does NOT do, and must not be read as doing: make attribution
+	// trustworthy. The key is matched against user.id and user.email, which the agent
+	// puts in its own export from the machine being governed — the identity on every
+	// stored event is marked Asserted for exactly that reason. Setting user.id to a
+	// colleague's subject already filed spend under that colleague before any of this
+	// existed, and still does; an alias adds a second, more guessable handle for the
+	// same thing rather than a new weakness.
+	//
+	// So a person-scoped budget is worth what the collector's ingest controls are
+	// worth, and the collector has none: it accepts what it is sent. This mapping
+	// makes such a budget *work*; it does not make it *evidence*. See docs/TELEMETRY.md.
+	Aliases map[string]string `yaml:"aliases,omitempty"`
+}
+
+// Canonical rewrites an identity's subject to the organisation's own, when a mapping
+// says what that is.
+//
+// Applied where the event is recorded rather than where it is read, so everything
+// downstream — the report, the metrics, a person-scoped budget in the guard — agrees
+// by construction rather than by each of them remembering to map. The same reason
+// TeamMap resolves the team once, here, instead of at every consumer.
+//
+// Idempotent: a canonical subject maps to itself, so applying it twice is safe and an
+// alias may be listed on either side of the arrow without changing the answer.
+func (t *TeamMap) Canonical(id Identity) Identity {
+	if t == nil || len(t.Aliases) == 0 {
+		return id
+	}
+	if to, ok := t.Aliases[id.Subject]; ok && id.Subject != "" {
+		id.Subject = to
+		return id
+	}
+	// An email is the other thing a vendor sends, and the only handle some of them
+	// send at all, so it is worth mapping too. The subject is rewritten rather than
+	// the email, because the subject is what a person-scoped rule keys on.
+	//
+	// Folded before lookup, matching Team's treatment of Emails. Unfolded, an alias
+	// written for dev@example.com would not fire for Dev@Example.com, and the window
+	// would total zero — which permits, and is precisely the failure this mapping was
+	// added to remove. Load-time validation refuses an email key that is not already
+	// lower case, so the two halves cannot disagree.
+	if id.Email != "" {
+		if to, ok := t.Aliases[strings.ToLower(id.Email)]; ok {
+			id.Subject = to
+		}
+	}
+	return id
 }
 
 // LoadTeams reads a team mapping.
@@ -231,6 +297,44 @@ func LoadTeams(path string) (*TeamMap, error) {
 	}
 	if t.Default == "" {
 		t.Default = "unattributed"
+	}
+
+	// An alias that points at another alias is refused here, where somebody is looking
+	// at the file.
+	//
+	// Canonical resolves one hop, because that is all a mapping from a vendor's id to
+	// the organisation's own should ever need. Given a chain it stops in the middle,
+	// and the answer then depends on how many times it happened to run: with A to B and
+	// B to C, one application gives B and two give C, and neither is canonical in any
+	// sense. Two consumers applying it a different number of times would attribute the
+	// same person's consumption to two different subjects, and both would look like an
+	// answer.
+	//
+	// Chains arrive by accident rather than by design — two teams' alias lists merged,
+	// or a retired canonical subject reused as somebody's new vendor id. Refusing is
+	// cheap and a fixed point with a cycle guard is a loop nobody needs.
+	for from, to := range t.Aliases {
+		if to == "" {
+			return nil, fmt.Errorf("aliases: %q maps to nothing", from)
+		}
+		// An email key is compared folded, because that is how Team treats Emails and
+		// how an address behaves. A key written with a capital would then never match
+		// anything, and an alias that never fires is indistinguishable from one nobody
+		// needed: the window totals zero and the budget permits.
+		if strings.Contains(from, "@") && from != strings.ToLower(from) {
+			return nil, fmt.Errorf(
+				"aliases: %q is an address written with capitals, and addresses are "+
+					"matched in lower case. Written this way it would never match, and "+
+					"an alias that never matches looks exactly like one nobody needed",
+				from)
+		}
+		if _, chained := t.Aliases[to]; chained {
+			return nil, fmt.Errorf(
+				"aliases: %q maps to %q, which is itself an alias. An alias names the "+
+					"identifier your organisation uses, so it must be the end of the "+
+					"chain; otherwise the answer depends on how many times the mapping "+
+					"is applied", from, to)
+		}
 	}
 	return &t, nil
 }

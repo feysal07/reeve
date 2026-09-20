@@ -433,3 +433,69 @@ func TestAnUnrecognisedSenderIsNotCountedAsCopilot(t *testing.T) {
 		t.Errorf("agent = %q, want copilot-cli when nothing named the sender", events[0].Agent)
 	}
 }
+
+// TestAVendorsIdentifierIsMappedToTheOrganisationsOwn.
+//
+// Every agent invents its own id for a person, and none of them is the subject an
+// identity provider issues. Without a mapping, a person-scoped budget compares the
+// identity the guard resolved against subjects recorded by four different vendors and
+// matches none of them — which totals zero, and a budget compared against zero permits.
+//
+// Measured before this existed: nine million tokens against a thousand-token budget,
+// allowed, with a verified identity, and no reason given. The rule was not wrong and
+// the identity was not wrong; they were about different people who are the same person.
+func TestAVendorsIdentifierIsMappedToTheOrganisationsOwn(t *testing.T) {
+	// The team is keyed on the canonical subject and nothing else — no domain, no
+	// email. Ordering then has to be right for the team to resolve at all: mapped
+	// after the lookup, the subject asked about is still the vendor's and the team
+	// falls through to the default. An earlier version of this fixture resolved the
+	// team from the email domain, so the order made no difference and the test passed
+	// with canonicalisation moved after it.
+	tm := &TeamMap{
+		Default:  "unattributed",
+		Subjects: map[string]string{"8f14e45f-okta-subject": "platform"},
+		Aliases: map[string]string{
+			"acct_01HXY-anthropic-account-uuid": "8f14e45f-okta-subject",
+			"dev@example.com":                   "8f14e45f-okta-subject",
+		},
+	}
+	payload := `{"resourceMetrics":[{"resource":{"attributes":[
+		{"key":"service.name","value":{"stringValue":"claude-code"}},
+		{"key":"user.id","value":{"stringValue":"acct_01HXY-anthropic-account-uuid"}},
+		{"key":"user.email","value":{"stringValue":"dev@example.com"}}]},
+		"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"dataPoints":[
+			{"asInt":"10","attributes":[{"key":"type","value":{"stringValue":"input"}}]}]}}]}]}]}`
+
+	events, err := decoder(tm).DecodeMetrics([]byte(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := events[0].Identity.Subject; got != "8f14e45f-okta-subject" {
+		t.Errorf("subject = %q, want the organisation's own: a person-scoped budget "+
+			"keyed on the identity provider's subject will not match a vendor's", got)
+	}
+	// The team must still resolve. Canonicalising after the team lookup would fix the
+	// budget and leave attribution asking about an id nobody maps.
+	if got := events[0].Identity.Team; got != "platform" {
+		t.Errorf("team = %q, want platform", got)
+	}
+}
+
+// TestCanonicalisingTwiceChangesNothing. An alias may be listed on either side of the
+// arrow, and the same map is applied wherever an identity is read, so the operation has
+// to be idempotent or a second application would map a canonical subject to nothing.
+func TestCanonicalisingTwiceChangesNothing(t *testing.T) {
+	tm := &TeamMap{Aliases: map[string]string{"vendor-id": "canonical"}}
+	once := tm.Canonical(Identity{Subject: "vendor-id"})
+	twice := tm.Canonical(once)
+	if once.Subject != "canonical" || twice.Subject != "canonical" {
+		t.Errorf("subject = %q then %q, want canonical both times", once.Subject, twice.Subject)
+	}
+
+	// An identity nothing maps is left exactly as it was, rather than emptied.
+	untouched := tm.Canonical(Identity{Subject: "nobody-maps-this", Email: "x@y.z"})
+	if untouched.Subject != "nobody-maps-this" {
+		t.Errorf("subject = %q, want it unchanged: an unmapped identity is not an "+
+			"absent one", untouched.Subject)
+	}
+}
