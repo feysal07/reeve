@@ -17,34 +17,86 @@ for in advance and include an allowance. Tokens inside that allowance are alread
 bought; their marginal cost is nothing. A report saying "$340 this week" to such an
 organisation is quoting a number that looks like money and is not.
 
-So declare how you actually pay, in the `billing` section of the price table:
+So declare how you actually pay, in the `billing` section of the price table. An
+organisation of any size mixes tiers, so it is a list of plans rather than one seat
+count, and each tier lists what it includes:
 
 ```yaml
 billing:
   claude-code:
     model: subscription
-    seats: 25
-    includedTokensPerSeat: 20000000
-    period: "168h"
+    overage: credits          # credits | throttled | blocked
+    plans:
+      teams-standard:
+        seats: 24
+        limits:
+          - {unit: tokens, included: 20000000,  per: seat, period: "168h", label: weekly tokens}
+      teams-premium:
+        seats: 1
+        limits:
+          - {unit: tokens, included: 100000000, per: seat, period: "168h", label: weekly tokens}
+          - {unit: tokens, included: 2000000,   per: seat, period: "5h",   label: session tokens}
+
+  copilot-cli:                # metered in requests, not tokens
+    model: subscription
+    overage: blocked
+    plans:
+      business:
+        seats: 25
+        limits:
+          - {unit: requests, included: 300, per: seat, period: "720h", label: monthly premium requests}
+
   codex-cli:
     model: metered
 ```
 
-`reeve report --prices` then separates the two:
+Four things that single number could not say, and each of them changes the answer:
+
+| field | why it is not optional |
+|---|---|
+| `plans` | Tiers are held side by side. Averaging them produces an allowance nobody has. |
+| `unit` | Copilot meters premium requests, Anthropic meters tokens. Comparing one against the other is wrong by orders of magnitude, not by a rounding error. |
+| `per` | `seat` or `organisation`. A per-seat limit reported only as a fleet total is a green light with somebody already over the line behind it. |
+| `period` | Several windows run at once and they run out at different times. Declare the short one and the long one; the short one is what a developer actually hits. |
+
+`overage` is optional and says what running out costs: `credits` is a bill,
+`throttled` is lost time, `blocked` is an outage. "110% of allowance" is not
+actionable without it.
+
+`reeve report --prices` then separates money from consumption:
 
 ```
   equivalent   : $140.42 at your rates, from tokens
   money spent  : $0.00
 
 Included allowance
-  claude-code   44.0M of 20.0M tokens used (220%) in the last week
-                running at 2.20x the rate that would just use it up:
-                ON COURSE TO RUN OUT BEFORE THE PERIOD ENDS
+
+  claude-code, session tokens
+    organisation : 2.1M of 2.0M used (104%) across 1 seat(s)
+    scope        : only 1 of the 25 seats held are on a tier declaring this limit, but
+                   consumption from all of them is counted against it, because the
+                   telemetry does not say who is on which tier. Read this row as an
+                   upper bound.
+    pace         : 1.04x the rate that would just use it up, ON COURSE TO RUN OUT
+    over a seat  : 1 person(s) past the 2.0M a single seat includes
+                   heavy@example.com                  2.1M (104%)
+    past it      : draws on credits, so past this point consumption does cost money
+
+  claude-code, weekly tokens
+    organisation : 323.3M of 580.0M used (56%) across 25 seat(s)
+    over a seat  : 1 person(s) past the 100.0M a single seat includes
+                   heavy@example.com                  288.1M (288%)
 ```
 
-The allowance line is the one a seat-based customer can act on. Their outlay was fixed
-when they bought the seats; what varies is whether the included tokens last the period.
-A dollar total never told them that.
+**Read the second row before the first.** The organisation is at 56% of its weekly
+allowance — comfortable, and the only figure a fleet total would have given you. One
+person is at 288% of the most generous seat the organisation holds. A per-seat
+allowance is a statement about a person, and reporting it only in aggregate hides
+exactly the case worth knowing about.
+
+The allowance lines are the ones a seat-based customer can act on. Their outlay was
+fixed when they bought the seats; what varies is whether the included consumption
+lasts the period. A dollar total never told them that.
 
 **An agent you do not declare is reported as not known, never as zero and never as
 metered.** Assuming metered overstates money for most organisations; assuming
@@ -59,10 +111,12 @@ match:
   tokens: {within: 168h, moreThan: 5000000, scope: machine}
 ```
 
-**What Reeve cannot know.** The telemetry reports tokens; it never says "this request
-drew on credits rather than the allowance". So Reeve measures consumption against the
-allowance *you* declare, and leaves your credit balance to the vendor's own console.
-Reading that would mean an outbound call to the vendor, which nothing here does.
+**What Reeve cannot know.** The telemetry reports consumption; it never says "this
+request drew on credits rather than the allowance", and it never says which tier the
+person at the keyboard is on. So an individual is reported as over only once they have
+passed even the largest seat you declare — the only claim the evidence supports — and
+your credit balance is left to the vendor's own console. Reading that would mean an
+outbound call to the vendor, which nothing here does.
 
 ## Which agents this covers
 

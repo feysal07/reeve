@@ -918,6 +918,93 @@ if [ -f "$EVENTS" ]; then
         *blocked*) check "refusals appear, which no vendor telemetry can report" 1 ;;
         *) check "refusals appear, which no vendor telemetry can report" 0 ;;
     esac
+
+    # ------------------------------------------------------- billing ----
+    #
+    # The figure above is what the usage WOULD cost at these rates. For most
+    # organisations deploying this it is not money that left, because the seats
+    # were bought in advance. Declaring how you actually pay separates the two,
+    # and turns the question from "what did this cost" into "is the included
+    # allowance going to last the period".
+    #
+    # The tiers here are deliberately small so the walkthrough's few thousand
+    # tokens land where a real organisation's millions would.
+    PRICES="$SANDBOX/prices.yaml"
+    write_text "$PRICES" <<'EOF'
+currency: USD
+models:
+  claude-sonnet: {input: 3, output: 15, cacheRead: 0.30}
+  gpt-5: {input: 1.25, output: 10}
+  gemini-3: {input: 1.25, output: 10}
+
+billing:
+  claude-code:
+    model: subscription
+    overage: credits
+    plans:
+      standard:
+        seats: 24
+        limits:
+          - {unit: tokens, included: 500000, per: seat, period: "168h", label: weekly tokens}
+      premium:
+        seats: 1
+        limits:
+          - {unit: tokens, included: 1000000, per: seat, period: "168h", label: weekly tokens}
+  copilot-cli:
+    model: subscription
+    overage: blocked
+    plans:
+      business:
+        seats: 25
+        limits:
+          - {unit: requests, included: 300, per: seat, period: "720h", label: monthly premium requests}
+  codex-cli:
+    model: metered
+EOF
+
+    BILLED=$("$REEVE" report --store "$EVENTS" --prices "$PRICES" --top 5 2>&1)
+    printf '%s
+' "$BILLED"
+
+    case "$BILLED" in
+        *"money spent"*) check "money is reported separately from equivalent cost" 1 ;;
+        *) check "money is reported separately from equivalent cost" 0             "a subscription customer would read an equivalent figure as a bill" ;;
+    esac
+
+    # The case a fleet total cannot show. The organisation is at a few per cent
+    # of 13M; one person is past the largest single seat it holds. Reporting only
+    # the total is a green light with somebody already over the line behind it.
+    case "$BILLED" in
+        *"over a seat  : 1 person"*)
+            check "a person past their seat is found while the organisation looks fine" 1 ;;
+        *) check "a person past their seat is found while the organisation looks fine" 0             "the per-seat figure is the one a fleet total hides" ;;
+    esac
+
+    # An allowance in requests measured against tokens is wrong by orders of
+    # magnitude, in whichever direction happens to be reassuring.
+    case "$BILLED" in
+        *"monthly premium requests"*"of 7.5k used"*) check "a request allowance counts requests, not tokens" 1 ;;
+        *) check "a request allowance counts requests, not tokens" 0             "$(printf '%s' "$BILLED" | grep -A1 'premium requests' || true)" ;;
+    esac
+
+    # A declaration that cannot mean anything must be refused where somebody is
+    # looking at the file, not silently produce an allowance of zero and print
+    # nothing. That is how the whole section was absent once already.
+    write_text "$SANDBOX/broken-prices.yaml" <<'EOF'
+billing:
+  claude-code:
+    model: subscription
+    plans:
+      standard:
+        seats: 2
+        limits:
+          - {unit: tokens, included: 500000, per: seat}
+EOF
+    BROKEN=$("$REEVE" report --store "$EVENTS" --prices "$SANDBOX/broken-prices.yaml" 2>&1)
+    case "$BROKEN" in
+        *period*) check "an allowance with no period is refused rather than silently zero" 1 ;;
+        *) check "an allowance with no period is refused rather than silently zero" 0 "$BROKEN" ;;
+    esac
 fi
 
 # A rule must match what a command runs, not what it carries.

@@ -248,11 +248,11 @@ func AgentDisplayName(id model.AgentID) string {
 	}
 }
 
-// allowanceUse totals tokens per agent against its declared allowance.
+// allowanceUse measures consumption against every limit an agent's plans declare.
 //
 // Only the most recent period is measured, because an allowance resets: summing a
-// fortnight of consumption against one week's allowance would report two hundred per
-// cent on a fleet that never exceeded it.
+// fortnight against one week's allowance would report two hundred per cent on a fleet
+// that never exceeded it.
 func allowanceUse(events []Event, billing BillingTable, from, to time.Time) []AllowanceUse {
 	if len(billing) == 0 {
 		return nil
@@ -264,43 +264,111 @@ func allowanceUse(events []Event, billing BillingTable, from, to time.Time) []Al
 
 	var out []AllowanceUse
 	for agent, b := range billing {
-		allowance := b.Allowance()
-		if allowance <= 0 {
+		if b.Model != BillingSubscription {
 			continue
 		}
-		period := time.Duration(b.Period)
-		if period <= 0 {
-			// An allowance with no period is an allowance with no meaning: there
-			// is nothing to measure it against and nothing to reset.
-			continue
-		}
-		start := end.Add(-period)
-
-		use := AllowanceUse{Agent: agent, Allowance: allowance, Period: period}
-		for _, e := range events {
-			if e.Agent != agent || e.Kind != KindAPIRequest || e.Time.Before(start) {
+		for _, limit := range b.DistinctLimits() {
+			period := time.Duration(limit.Period)
+			total := b.Total(limit.Unit, period)
+			if total <= 0 || period <= 0 {
 				continue
 			}
-			use.Used += e.Tokens.Total()
+			start := end.Add(-period)
+
+			use := AllowanceUse{
+				Agent:     agent,
+				Limit:     limit,
+				Allowance: total,
+				Seats:     b.SeatsWith(limit.Unit, period),
+				SeatsHeld: b.Seats(),
+				Overage:   b.Overage,
+				PerSeat:   b.LargestSeatLimit(limit.Unit, period),
+			}
+
+			// Per person as well as in total. A per-seat limit is a statement
+			// about one person, and an organisation can be well inside its total
+			// while somebody is far past theirs.
+			bySeat := map[string]int64{}
+			for _, e := range events {
+				if e.Agent != agent || e.Kind != KindAPIRequest || e.Time.Before(start) {
+					continue
+				}
+				n := consumed(e, limit.Unit)
+				use.Used += n
+				if who := seatOf(e); who != "" {
+					bySeat[who] += n
+					use.Attributed += n
+				} else {
+					use.Unattributed += n
+				}
+			}
+
+			if use.PerSeat > 0 {
+				for who, used := range bySeat {
+					if used > use.PerSeat {
+						use.Over = append(use.Over, SeatUse{Who: who, Used: used})
+					}
+				}
+				sort.Slice(use.Over, func(i, j int) bool { return use.Over[i].Used > use.Over[j].Used })
+			}
+
+			// How much of the period the data reaches, not how far into it the
+			// clock is: a report over three days of logs says nothing about the
+			// pace of a week.
+			if !from.IsZero() && from.After(start) {
+				use.Elapsed = end.Sub(from)
+			} else {
+				use.Elapsed = period
+			}
+			out = append(out, use)
 		}
-		// How far into the period the data actually reaches, not how far into it
-		// the clock is: a report over three days of logs cannot say anything about
-		// the pace of a week.
-		if !from.IsZero() && from.After(start) {
-			use.Elapsed = end.Sub(from)
-		} else {
-			use.Elapsed = period
-		}
-		out = append(out, use)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Agent < out[j].Agent })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Agent != out[j].Agent {
+			return out[i].Agent < out[j].Agent
+		}
+		return out[i].Limit.Period < out[j].Limit.Period
+	})
 	return out
+}
+
+// consumed returns what one event used, in the unit a limit is denominated in.
+func consumed(e Event, unit Unit) int64 {
+	switch unit {
+	case UnitRequests:
+		return 1
+	default:
+		return e.Tokens.Total()
+	}
+}
+
+// seatOf names the person an event belongs to, or "" when nothing does.
+//
+// Subject before email, because a subject comes from a token and an email is more
+// often asserted by the client. An event nobody can attribute is counted in the total
+// and left out of the per-person figures, and the report says how much that was: a
+// short list of people over their allowance must not be mistaken for a complete one.
+func seatOf(e Event) string {
+	switch {
+	case e.Identity.Subject != "":
+		return e.Identity.Subject
+	case e.Identity.Email != "":
+		return e.Identity.Email
+	default:
+		return ""
+	}
 }
 
 // withBilling restates each event's marginal cost under a declared arrangement.
 //
-// A copy: the caller's events are the record and are not rewritten by having been
-// looked at.
+// Derived here rather than stamped on at collection time. The store holds facts —
+// consumption, and what it would cost at the rates in force — and this derives what
+// those facts mean for money under an arrangement the operator declares and may
+// correct. Fixing it into the record would leave a corrected declaration unable to
+// correct anything, which is exactly what somebody who has just discovered they were
+// reading the wrong number needs to do.
+//
+// A copy: the caller's events are the record and are not rewritten by being read.
 func withBilling(events []Event, billing BillingTable) []Event {
 	out := make([]Event, len(events))
 	copy(out, events)

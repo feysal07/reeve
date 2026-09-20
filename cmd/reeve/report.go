@@ -172,25 +172,76 @@ func renderReport(r telemetry.Report, top int) {
 
 	// The allowance, which for a seat-based subscription is the only number that
 	// varies. The outlay was fixed when the seats were bought; what is in question
-	// is whether the included tokens last the period.
+	// is whether the included consumption lasts the period.
 	if len(r.Allowance) > 0 {
 		fmt.Printf("\nIncluded allowance\n")
 		for _, a := range r.Allowance {
-			fmt.Printf("  %-18s %s of %s tokens used (%.0f%%) in the last %s\n",
-				a.Agent, humanInt(a.Used), humanInt(a.Allowance), a.Percent(),
-				shortDuration(a.Period))
+			fmt.Printf("\n  %s, %s\n", a.Agent, a.Limit.Name())
+			fmt.Printf("    organisation : %s of %s used (%.0f%%) across %d seat(s)\n",
+				humanInt(a.Used), humanInt(a.Allowance), a.Percent(), a.Seats)
+
+			// When only some tiers declare this window, everybody's consumption is
+			// still being measured against it, because which tier a person is on is
+			// not in the telemetry. Saying so is the difference between a
+			// conservative figure and a wrong one.
+			if a.SeatsHeld > a.Seats {
+				fmt.Printf("    %-13s: %s\n", "scope", wrap(fmt.Sprintf(
+					"only %d of the %d seats held are on a tier declaring "+
+						"this limit, but consumption from all of them is counted against "+
+						"it, because the telemetry does not say who is on which tier. "+
+						"Read this row as an upper bound.", a.Seats, a.SeatsHeld),
+					68, "                   "))
+			}
+
 			if pace := a.Pace(); pace > 0 {
 				note := "on course to last the period"
 				if pace > 1 {
 					note = "ON COURSE TO RUN OUT BEFORE THE PERIOD ENDS"
 				}
-				fmt.Printf("  %-18s running at %.2fx the rate that would just use it up: %s\n",
-					"", pace, note)
+				fmt.Printf("    pace         : %.2fx the rate that would just use it up, %s\n", pace, note)
+			}
+
+			// The number a fleet total hides. A per-seat limit is about a person,
+			// and an organisation can sit at forty per cent of its total while
+			// somebody is at three hundred per cent of theirs.
+			switch {
+			case a.PerSeat <= 0:
+				// No per-seat limit declared for this one, so there is nothing to
+				// judge an individual against and no claim is made.
+			case len(a.Over) > 0:
+				fmt.Printf("    over a seat  : %d person(s) past the %s a single seat includes\n",
+					len(a.Over), humanInt(a.PerSeat))
+				for i, s := range a.Over {
+					if i == 3 {
+						fmt.Printf("                   ... and %d more\n", len(a.Over)-3)
+						break
+					}
+					fmt.Printf("                   %-34s %s (%.0f%%)\n",
+						s.Who, humanInt(s.Used), float64(s.Used)/float64(a.PerSeat)*100)
+				}
+			default:
+				fmt.Printf("    over a seat  : nobody, against the %s a single seat includes\n",
+					humanInt(a.PerSeat))
+			}
+
+			if a.Unattributed > 0 {
+				fmt.Printf("    %-13s: %s\n", "unattributed", wrap(fmt.Sprintf(
+					"%s of this could not be put to a person, so the "+
+						"per-seat figures above cover %s of %s. Anyone whose usage is in "+
+						"the unattributed part is not in that list.",
+					humanInt(a.Unattributed), humanInt(a.Attributed), humanInt(a.Used)),
+					68, "                   "))
+			}
+
+			if a.Overage != "" {
+				fmt.Printf("    past it      : %s\n", overageMeaning(a.Overage))
 			}
 		}
-		fmt.Printf("\n  %s\n", wrap("Tokens inside this allowance are already paid for, so "+
-			"they cost nothing further. That is why the equivalent figure above is not "+
-			"money, and why a budget in dollars would govern the wrong quantity here.", 74, "  "))
+
+		fmt.Printf("\n  %s\n", wrap("Consumption inside these allowances is already paid "+
+			"for, so it costs nothing further. That is why the equivalent figure above is "+
+			"not money, and why a budget in dollars would govern the wrong quantity here.",
+			74, "  "))
 	}
 
 	if o.UnpricedRequests > 0 {
@@ -276,18 +327,20 @@ func trim(s string, n int) string {
 	return s[:n-3] + "..."
 }
 
-// shortDuration renders a period the way somebody would say it.
-func shortDuration(d time.Duration) string {
-	switch {
-	case d >= 24*time.Hour && d%(24*time.Hour) == 0:
-		days := int(d.Hours()) / 24
-		if days == 7 {
-			return "week"
-		}
-		return fmt.Sprintf("%d days", days)
-	case d >= time.Hour:
-		return fmt.Sprintf("%d hours", int(d.Hours()))
+// overageMeaning says what running out actually costs.
+//
+// "110% of allowance" is not actionable on its own: drawing on credits is a bill,
+// throttling is lost time, and being blocked is an outage. Which of the three it is
+// decides whether anybody needs to do anything today.
+func overageMeaning(o telemetry.Overage) string {
+	switch o {
+	case telemetry.OverageCredits:
+		return "draws on credits, so past this point consumption does cost money"
+	case telemetry.OverageBlocked:
+		return "blocked until the period resets"
+	case telemetry.OverageThrottled:
+		return "throttled, so work continues more slowly"
 	default:
-		return d.String()
+		return ""
 	}
 }

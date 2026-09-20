@@ -54,21 +54,77 @@ models:
 # than assuming: metered overstates it for most organisations, and subscription
 # understates it to nothing for the rest.
 #
-# What Reeve cannot know: the telemetry reports tokens, never "this request drew
-# on credits rather than the allowance". So it reports consumption against the
-# allowance you declare, and leaves the vendor's own console to say what your
-# credit balance is.
+# What Reeve cannot know: the telemetry reports consumption, never "this request
+# drew on credits rather than the allowance", and never which tier the person
+# sitting at the keyboard is on. So an individual is reported as over only when
+# they have passed even the largest seat you declare — the only claim the
+# evidence supports — and the vendor's own console remains the place to read a
+# credit balance.
 billing:
   claude-code:
     model: subscription
-    seats: 1
-    # Per seat, per period, in tokens — which is what the vendor meters and what
-    # the telemetry reports. Converting it to money would put the guess back in.
-    includedTokensPerSeat: 20000000
-    period: "168h"
-    notes: Replace with your own seat count and allowance.
+
+    # What happens once an allowance is exhausted. This changes what being over
+    # means: credits is a bill, throttled is lost time, blocked is an outage.
+    #   credits | throttled | blocked
+    overage: credits
+
+    # The tiers you hold. Plural, because organisations mix them — most people
+    # on a standard seat, a few on premium. One seats figure cannot say that,
+    # and averaging the tiers produces an allowance nobody actually has.
+    #
+    # Name them whatever your purchase order calls them; the names are only
+    # used to tell the tiers apart in this file.
+    plans:
+      teams-standard:
+        seats: 24
+        limits:
+          # unit     what the vendor meters: tokens or requests
+          # included how much of it this tier includes
+          # per      seat, or organisation for a shared pool
+          # period   how often it resets, as a Go duration
+          # label    what to call it in the report, when a tier has several
+          - unit: tokens
+            included: 20000000
+            per: seat
+            period: "168h"
+            label: weekly tokens
+
+      teams-premium:
+        seats: 1
+        limits:
+          - unit: tokens
+            included: 100000000
+            per: seat
+            period: "168h"
+            label: weekly tokens
+          # A second window on the same tier. Several apply at once in practice,
+          # and they run out at different times — declaring only the long one
+          # means reporting comfortably on the window that is not the problem.
+          - unit: tokens
+            included: 2000000
+            per: seat
+            period: "5h"
+            label: session tokens
+
+    notes: Replace with your own tiers, seat counts and allowances.
+
+  # An agent metered in requests rather than tokens. An allowance of 300
+  # requests measured against token consumption reports several million per
+  # cent; measured the other way it reports nothing. Declare what is metered.
+  copilot-cli:
+    model: subscription
+    overage: blocked
+    plans:
+      business:
+        seats: 25
+        limits:
+          - unit: requests
+            included: 300
+            per: seat
+            period: "720h"
+            label: monthly premium requests
 
   # An agent bought by the token. Here consumption really is spend.
   codex-cli:
     model: metered
-
