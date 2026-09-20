@@ -779,6 +779,15 @@ if (Test-Path $events) {
     Check "the vendors' own figure shown separately, not merged" ($reportText -match "vendor cost")
     Check "spend attributed by team" ($reportText -match "By team")
     Check "refusals appear, which no vendor telemetry can report" ($reportText -match "blocked")
+
+    # --store takes the events file, not the directory holding it. Given a directory,
+    # the only thing that came back was the operating system's word for reading one,
+    # which on Windows is "Incorrect function." and names neither the path nor what was
+    # wanted instead. This is the platform the bad message appeared on, so this is the
+    # platform the check matters most on.
+    $asDir = (& $reeve report --store (Split-Path -Parent $events) 2>&1 | Out-String)
+    Check "a directory given as the store says a file was wanted" `
+        ($asDir -match "is a directory") $asDir.Trim()
 }
 
 # A rule must match what a command runs, not what it carries.
