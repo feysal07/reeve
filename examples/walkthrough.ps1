@@ -873,6 +873,25 @@ rules:
     $typoScope = (& $reeve policy check (Join-Path $Sandbox "scope-typo.yaml") 2>&1 | Out-String)
     Check "a misspelled scope is an error, not a quietly different rule" `
         ($typoScope -match "session, machine or person") $typoScope.Trim()
+
+    # A repetition rule scoped per person would count nothing and never fire, because
+    # the decision log records no identity. Accepted, it is a loop breaker that cannot
+    # trigger: allow, no reason, for ever, and indistinguishable from one never
+    # provoked. Refused where somebody is looking instead.
+    Write-Text (Join-Path $Sandbox "loop-person.yaml") @'
+version: 1
+rules:
+  - id: loop
+    decision: deny
+    match:
+      repeated: {same: tool, within: 5m, moreThan: 2, scope: person}
+'@
+    # Whitespace squeezed before matching: the CLI wraps its explanations to the
+    # terminal width, so a phrase can fall across a line break and a literal match
+    # would fail for a reason that has nothing to do with the behaviour.
+    $loopPerson = (& $reeve policy check (Join-Path $Sandbox "loop-person.yaml") 2>&1 | Out-String)
+    Check "a rule that would never fire is refused rather than accepted" `
+        (($loopPerson -replace '\s+', ' ') -match "does not record who") $loopPerson.Trim()
 }
 
 # A rule must match what a command runs, not what it carries.

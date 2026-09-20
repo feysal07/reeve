@@ -311,11 +311,17 @@ type RecentAction struct {
 	Command   string
 	// Who is the identity this action was attributed to, empty when none was.
 	//
-	// The decision log does not carry one today, so this is empty in practice and a
-	// person-scoped repetition rule counts nothing. That is why Evaluate refuses such
-	// a rule outright rather than letting it total zero and permit: a count of zero
-	// from a log that never records who is not evidence that nobody repeated
-	// anything.
+	// The decision log does not carry one today, so this is empty in practice.
+	//
+	// An earlier version of this comment claimed Evaluate refused a person-scoped
+	// repetition rule, and it did not. Evaluate refuses only when the identity on the
+	// action is missing or asserted; given a verified one it had no reason to, so the
+	// rule counted nothing, totalled zero, and quietly never fired — allow, with no
+	// reason, on every action for ever. A loop breaker that cannot trigger, accepted
+	// by policy check, is worse than no loop breaker at all.
+	//
+	// Parse now refuses the combination outright. Populate this and lift that refusal
+	// together, in one change, or the scope becomes accepted before it is meaningful.
 	Who string
 }
 

@@ -278,6 +278,27 @@ func Parse(b []byte) (*Policy, error) {
 				return nil, err
 			}
 		}
+		// A repetition rule cannot be totalled per person yet, and saying so here is
+		// the difference between a rule that refuses and a rule that never fires.
+		//
+		// The decision log carries no identity, so History records have none, so a
+		// person-scoped repetition count matches nothing and totals zero — and a
+		// count of zero does not fire. With a verified identity Evaluate has no
+		// reason to refuse, so the rule is simply quiet: effect allow, no reason, on
+		// every action for ever. An operator would see a loop breaker in their policy,
+		// see it accepted by policy check, and never learn it cannot trigger.
+		//
+		// Refused at load time rather than at the moment somebody is not stopped,
+		// because that moment produces no output at all. Lift this once the log
+		// records who, at which point the scope becomes meaningful rather than merely
+		// accepted.
+		if r.Match.Repeated != nil && r.Match.Repeated.Scope == ScopePerson {
+			return nil, fmt.Errorf(
+				"rules[%d] (%s): repeated cannot be scoped per person yet, because the "+
+					"decision log does not record who. Such a rule would count nothing "+
+					"and never fire rather than refuse. Use scope: session or machine",
+				i, r.ID)
+		}
 		// A scope nobody validated is a scope that silently means "session".
 		//
 		// Nothing checked this until person scope was added, so a rule written

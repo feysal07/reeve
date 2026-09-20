@@ -1106,6 +1106,21 @@ EOF
         *)  check "a misspelled scope is an error, not a quietly different rule" 0 "$TYPO_SCOPE" ;;
     esac
 
+    # A repetition rule scoped per person would count nothing and never fire, because
+    # the decision log records no identity. Accepted, it is a loop breaker that cannot
+    # trigger: allow, no reason, for ever, and indistinguishable from one never
+    # provoked. Refused where somebody is looking instead.
+    printf 'version: 1\nrules:\n  - id: loop\n    decision: deny\n    match:\n      repeated: {same: tool, within: 5m, moreThan: 2, scope: person}\n' > "$SANDBOX/loop-person.yaml"
+    # Whitespace squeezed before matching: the CLI wraps its explanations to the
+    # terminal width, so a phrase can fall across a line break and a literal match
+    # would fail for a reason that has nothing to do with the behaviour.
+    LOOP_PERSON=$("$REEVE" policy check "$SANDBOX/loop-person.yaml" 2>&1 | tr -s '[:space:]' ' ')
+    case "$LOOP_PERSON" in
+        *"does not record who"*)
+            check "a rule that would never fire is refused rather than accepted" 1 ;;
+        *)  check "a rule that would never fire is refused rather than accepted" 0 "$LOOP_PERSON" ;;
+    esac
+
     # An agent the collector accepts but scan and guard have never heard of appears in
     # the cost report all the same. Unmarked, it reads as one of the governed ones, and
     # the reader only discovers otherwise when scan cannot find it.
