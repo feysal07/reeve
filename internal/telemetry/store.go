@@ -74,11 +74,48 @@ func (s *Store) Close() error {
 // Path returns where events are being written.
 func (s *Store) Path() string { return s.path }
 
+// openRecordFile opens a line-delimited record file, refusing a directory with an
+// error that says what was expected instead.
+//
+// Both readers below take a file. Passing the directory that holds it produced only
+// whatever the operating system says about reading a directory: "is a directory" on
+// Linux, and on Windows "Incorrect function.", which does not mention the path at all.
+// A mistyped argument then reads as a broken build, and the one thing the caller
+// needed to know — that a file was wanted, and very often which one — was the thing
+// missing from the message.
+func openRecordFile(path, want string) (*os.File, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return os.Open(path)
+	}
+	if found := recordFilesIn(path); found != "" {
+		return nil, fmt.Errorf("%s is a directory: the %s is a file, such as %s", path, want, found)
+	}
+	return nil, fmt.Errorf("%s is a directory: the %s is a file of newline-delimited JSON, and that directory holds none", path, want)
+}
+
+// recordFilesIn names the line-delimited files in a directory, so somebody who gave
+// the directory is told the answer already sitting in it rather than left to guess a
+// filename. Three is enough to be a hint; more would be a listing.
+func recordFilesIn(dir string) string {
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	if len(matches) > 3 {
+		matches = matches[:3]
+	}
+	return strings.Join(matches, " or ")
+}
+
 // ReadEvents reads a store file. Malformed lines are skipped rather than aborting the
 // read, because a truncated final line from an interrupted write must not make the
 // entire history unreadable.
 func ReadEvents(path string) ([]Event, error) {
-	f, err := os.Open(path)
+	f, err := openRecordFile(path, "event store")
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +162,7 @@ type decisionRecord struct {
 // describes what it did; a refusal is, from the agent's point of view, something that
 // never happened. Only the guard saw it.
 func ReadDecisions(path string) ([]Event, error) {
-	f, err := os.Open(path)
+	f, err := openRecordFile(path, "decision log")
 	if err != nil {
 		return nil, err
 	}

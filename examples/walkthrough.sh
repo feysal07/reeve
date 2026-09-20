@@ -1031,6 +1031,16 @@ EOF
         *) check "a misspelled condition is an error, not a no-op" 0 "$TYPO" ;;
     esac
 
+    # --store takes the events file, not the directory holding it. Given a directory,
+    # the only thing that came back was the operating system's word for reading one:
+    # "is a directory" here, and "Incorrect function." on Windows, which names neither
+    # the path nor what was wanted instead. A wrong argument read as a broken build.
+    ASDIR=$("$REEVE" report --store "$(dirname "$EVENTS")" 2>&1)
+    case "$ASDIR" in
+        *"is a directory"*) check "a directory given as the store says a file was wanted" 1 ;;
+        *) check "a directory given as the store says a file was wanted" 0 "$ASDIR" ;;
+    esac
+
     # An allowance declared for an agent nothing reports against reads nought per
     # cent for ever, which on a dashboard is exactly what staying inside the limit
     # looks like. Copilot exports no per-token telemetry, so this is not a
