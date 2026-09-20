@@ -12,6 +12,7 @@ vendor/
 # Local config / secrets
 .env
 *.local.yaml
+CLAUDE.local.md
 /tmp/
 
 # IDE
