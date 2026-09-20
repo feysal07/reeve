@@ -129,6 +129,12 @@ const (
 	ScopeSession = "session"
 	// ScopeMachine is every record in the store the guard was given.
 	ScopeMachine = "machine"
+	// ScopeTeam is every record attributed to the team behind this action.
+	//
+	// The team comes from the operator's own mapping on both sides — resolved by the
+	// collector when the event was recorded, and by the guard for the action being
+	// decided — never from anything the agent said about itself.
+	ScopeTeam = "team"
 	// ScopePerson is every record attributed to the identity behind this action.
 	//
 	// It needs an identity the person it governs cannot edit, so a rule using it
@@ -143,7 +149,7 @@ const (
 // because a scope understood by three of them and not the fourth would silently total
 // a different window for one kind of budget than for another — and the two answers
 // would both look like a number.
-func inScope(scope string, a Action, session, who string) bool {
+func inScope(scope string, a Action, session, who, team string) bool {
 	switch scope {
 	case ScopeMachine:
 		return true
@@ -152,6 +158,11 @@ func inScope(scope string, a Action, session, who string) bool {
 		// Evaluate refuses the rule outright when the action has no usable identity,
 		// so reaching here with one means the comparison is meaningful.
 		return who != "" && who == a.Identity.Key()
+	case ScopeTeam:
+		// Likewise: an event with no team belongs to no team, rather than to
+		// whichever one happens to be asking. Evaluate refuses a team-scoped rule
+		// with no team on the action, so the comparison here is meaningful.
+		return team != "" && team == a.Identity.teamOf()
 	default:
 		return session == a.SessionID
 	}
@@ -213,7 +224,7 @@ func (s *Spend) Requests(a Action, m TokenMatch, now time.Time) int64 {
 		if r.Time.Before(cutoff) {
 			break
 		}
-		if !inScope(m.Scope, a, r.SessionID, r.Who) {
+		if !inScope(m.Scope, a, r.SessionID, r.Who, r.Team) {
 			continue
 		}
 		n++
@@ -233,6 +244,11 @@ type CostRecord struct {
 	// the key a person-scoped budget totals on; an event with none is nobody's and
 	// is counted towards no person.
 	Who string
+	// Team is the operator's attribution for that identity, empty when none was
+	// resolved. Never a team the client asserted: the collector resolves it from a
+	// mapping the developer cannot edit, which is the only reason a rule may rely
+	// on it.
+	Team string
 }
 
 // Identity is who is at the keyboard, when that can be established at all.
@@ -272,6 +288,14 @@ func (i *Identity) Key() string {
 	return i.Email
 }
 
+// teamOf is the operator's attribution for this identity, empty when there is none.
+func (i *Identity) teamOf() string {
+	if i == nil {
+		return ""
+	}
+	return i.Team
+}
+
 // Verified reports an identity a rule may rely on: one that exists and did not come
 // from the machine being governed.
 func (i *Identity) Verified() bool {
@@ -290,7 +314,7 @@ func (s *Spend) Total(a Action, m SpendMatch, now time.Time) float64 {
 			// Records are newest first, so the first one outside the window ends it.
 			break
 		}
-		if !inScope(m.Scope, a, r.SessionID, r.Who) {
+		if !inScope(m.Scope, a, r.SessionID, r.Who, r.Team) {
 			continue
 		}
 		total += r.CostUSD
@@ -323,6 +347,9 @@ type RecentAction struct {
 	// Parse now refuses the combination outright. Populate this and lift that refusal
 	// together, in one change, or the scope becomes accepted before it is meaningful.
 	Who string
+	// Team is the operator's attribution for that identity, and is empty for exactly
+	// the same reason Who is.
+	Team string
 }
 
 // Count returns how many records in the window look like this action, under the
@@ -338,7 +365,7 @@ func (h *History) Count(a Action, m RepeatedMatch, now time.Time) int {
 			// Records are newest first, so the first one outside the window ends it.
 			break
 		}
-		if !inScope(m.Scope, a, r.SessionID, r.Who) {
+		if !inScope(m.Scope, a, r.SessionID, r.Who, r.Team) {
 			continue
 		}
 		switch m.Same {
@@ -422,7 +449,7 @@ func (s *Spend) Tokens(a Action, m TokenMatch, now time.Time) int64 {
 		if r.Time.Before(cutoff) {
 			break
 		}
-		if !inScope(m.Scope, a, r.SessionID, r.Who) {
+		if !inScope(m.Scope, a, r.SessionID, r.Who, r.Team) {
 			continue
 		}
 		total += r.Tokens

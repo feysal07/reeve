@@ -857,7 +857,6 @@ rules:
         --policy (Join-Path $Sandbox "person-ok.yaml") --store $events 2>&1)
     Check "the same rule allows once the operator says who this machine is" `
         ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
-    $env:REEVE_IDENTITY = $prevIdentity
 
     # A scope nobody validated silently means session, which is a per-person limit
     # anyone resets by starting a new session.
@@ -871,7 +870,7 @@ rules:
 '@
     $typoScope = (& $reeve policy check (Join-Path $Sandbox "scope-typo.yaml") 2>&1 | Out-String)
     Check "a misspelled scope is an error, not a quietly different rule" `
-        ($typoScope -match "session, machine or person") $typoScope.Trim()
+        ($typoScope -match "session, machine, team or person") $typoScope.Trim()
 
     # A repetition rule scoped per person would count nothing and never fire, because
     # the decision log records no identity. Accepted, it is a loop breaker that cannot
@@ -891,6 +890,39 @@ rules:
     $loopPerson = (& $reeve policy check (Join-Path $Sandbox "loop-person.yaml") 2>&1 | Out-String)
     Check "a rule that would never fire is refused rather than accepted" `
         (($loopPerson -replace '\s+', ' ') -match "does not record who") $loopPerson.Trim()
+
+    # A team budget needs two operator-owned inputs: an identity the developer cannot
+    # edit, and the mapping from it to a team. With an identity but no mapping there is
+    # nothing to total, and totalling nothing permits.
+    Write-Text (Join-Path $Sandbox "team.yaml") @'
+version: 1
+rules:
+  - id: team-budget
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 1, scope: team}
+'@
+    $env:REEVE_IDENTITY = "dev@example.com"
+    $teamOut = ($payload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "team.yaml") --store $events 2>&1 | Out-String)
+    $teamCode = $LASTEXITCODE
+    Check "a team rule with no team mapping denies rather than guessing" `
+        (($teamCode -eq 2) -and (($teamOut -replace '\s+', ' ') -match "could not be established")) `
+        "exit $teamCode`: $($teamOut.Trim())"
+
+    Write-Text (Join-Path $Sandbox "team-ok.yaml") @'
+version: 1
+rules:
+  - id: team-budget
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 999999999, scope: team}
+'@
+    $null = ($payload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "team-ok.yaml") --store $events --teams $teams 2>&1)
+    Check "the same rule allows once the operator's team mapping is given" `
+        ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
+    $env:REEVE_IDENTITY = $prevIdentity
 }
 
 # A rule must match what a command runs, not what it carries.

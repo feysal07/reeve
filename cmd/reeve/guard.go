@@ -43,6 +43,7 @@ func runGuard(args []string) error {
 	storePath := fs.String("store", "", "event store written by reeve collect, for budget rules")
 	pricesPath := fs.String("prices", "", "price table, for rules measured against a declared allowance")
 	identityFlag := fs.String("identity", "", "who this machine belongs to, for rules totalled per person")
+	teamsPath := fs.String("teams", "", "team mapping, for rules totalled per team")
 	dryRun := fs.Bool("dry-run", false, "evaluate and log, but always allow")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -126,7 +127,7 @@ func runGuard(args []string) error {
 	if pol.NeedsSpend() {
 		act.Spend = readSpend(eventStorePath(*storePath), window)
 	}
-	act.Identity = resolveIdentity(*identityFlag)
+	act.Identity = resolveIdentity(*identityFlag, *teamsPath)
 
 	decision := pol.Evaluate(act)
 	elapsed := time.Since(start)
@@ -431,7 +432,7 @@ func readHistory(path string, window time.Duration) *policy.History {
 // Nothing here parses the value into a subject and an email. An operator sets one
 // string, and guessing which kind of identifier it is from whether it contains an @
 // would make the meaning of a policy depend on the shape of somebody's username.
-func resolveIdentity(flag string) *policy.Identity {
+func resolveIdentity(flag, teamsPath string) *policy.Identity {
 	v := flag
 	if v == "" {
 		v = os.Getenv("REEVE_IDENTITY")
@@ -439,7 +440,25 @@ func resolveIdentity(flag string) *policy.Identity {
 	if v == "" {
 		return nil
 	}
-	return &policy.Identity{Subject: v}
+	id := &policy.Identity{Subject: v}
+
+	// The team is resolved from the operator's own mapping, the same file the
+	// collector resolves it from when it records an event. Both sides therefore agree
+	// by construction, and neither takes a team the agent asserted about itself —
+	// which is the only reason a rule is allowed to total on one.
+	//
+	// A mapping that cannot be read leaves the team empty rather than guessing, and a
+	// team-scoped rule then refuses. That is the same asymmetry as everywhere else: a
+	// mapping nobody could read is not evidence that this machine belongs to no team.
+	if teamsPath == "" {
+		teamsPath = os.Getenv("REEVE_TEAMS")
+	}
+	if teamsPath != "" {
+		if tm, err := telemetry.LoadTeams(teamsPath); err == nil {
+			id.Team = tm.Team(telemetry.Identity{Subject: v, Email: v})
+		}
+	}
+	return id
 }
 
 func eventStorePath(flag string) string {
@@ -534,6 +553,10 @@ func readSpend(path string, window time.Duration) *policy.Spend {
 			CostUSD:   e.CostUSD,
 			Tokens:    tokens,
 			Who:       who,
+			// The team the collector resolved when it recorded this event, from the
+			// operator's mapping. Carried rather than recomputed here: recomputed, a
+			// mapping edited since would silently re-attribute history.
+			Team: e.Identity.Team,
 		})
 	}
 

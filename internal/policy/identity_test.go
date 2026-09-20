@@ -147,7 +147,7 @@ func TestAMisspelledScopeIsRefusedAtLoadTime(t *testing.T) {
 	for _, tc := range []struct{ name, scope string }{
 		{"a misspelled person", "persno"},
 		{"a misspelled machine", "machien"},
-		{"something invented", "team"},
+		{"something invented", "squad"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Parse([]byte(`
@@ -161,13 +161,13 @@ rules:
 			if err == nil {
 				t.Fatalf("scope %q was accepted, so the rule silently means session", tc.scope)
 			}
-			if !strings.Contains(err.Error(), "session, machine or person") {
+			if !strings.Contains(err.Error(), "session, machine, team or person") {
 				t.Errorf("the error does not say what a scope may be: %v", err)
 			}
 		})
 	}
 
-	for _, ok := range []string{"", "session", "machine", "person"} {
+	for _, ok := range []string{"", "session", "machine", "team", "person"} {
 		if !validScope(ok) {
 			t.Errorf("scope %q should be accepted", ok)
 		}
@@ -240,5 +240,92 @@ rules:
 		if _, err := Parse([]byte("version: 1\nrules:\n  - id: loop\n    decision: deny\n    match:\n      " + body + "\n")); err != nil {
 			t.Errorf("repetition scope %q was refused: %v", ok, err)
 		}
+	}
+}
+
+// TestATeamScopedRuleRefusesWhenTheTeamIsNotKnown.
+//
+// The same asymmetry as per person, one step further out. A team is only usable here
+// because the collector resolved it from a file the developer cannot edit. Without an
+// identity to resolve, with one the agent asserted, or with an identity that maps to no
+// team at all, the rule has nothing to total — and totalling nothing permits.
+func TestATeamScopedRuleRefusesWhenTheTeamIsNotKnown(t *testing.T) {
+	p, err := Parse([]byte(`
+version: 1
+default: allow
+rules:
+  - id: team-weekly-tokens
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 1000, scope: team}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := Action{Agent: "claude-code", Kind: KindShell, SessionID: "s1", Spend: &Spend{}}
+
+	for _, tc := range []struct {
+		name string
+		id   *Identity
+		want Effect
+	}{
+		{"no identity", nil, EffectDeny},
+		{"asserted identity, even with a team", &Identity{Subject: "d", Team: "platform", Asserted: true}, EffectDeny},
+		{"verified identity that maps to no team", &Identity{Subject: "d"}, EffectDeny},
+		{"verified identity with a team, under the budget", &Identity{Subject: "d", Team: "platform"}, EffectAllow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := base
+			a.Identity = tc.id
+			if d := p.Evaluate(a); d.Effect != tc.want {
+				t.Errorf("effect = %q, want %q (%s)", d.Effect, tc.want, d.Reason)
+			}
+		})
+	}
+}
+
+// TestATeamBudgetCountsTheTeamAndNotTheMachine. The point of the scope: one team's
+// consumption is neither one person's nor everything the machine has done.
+func TestATeamBudgetCountsTheTeamAndNotTheMachine(t *testing.T) {
+	now := time.Now()
+	p, err := Parse([]byte(`
+version: 1
+default: allow
+rules:
+  - id: team-weekly-tokens
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 1000, scope: team}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := Action{
+		Agent: "claude-code", Kind: KindShell, SessionID: "s1", At: now,
+		Identity: &Identity{Subject: "quiet@example.com", Team: "platform"},
+		Spend: &Spend{Records: []CostRecord{
+			// Another team, well over. Must not count.
+			{Time: now.Add(-time.Hour), SessionID: "s2", Tokens: 9000, Who: "x@example.com", Team: "data"},
+			// No team at all. Belongs to no team, not to this one.
+			{Time: now.Add(-time.Hour), SessionID: "s3", Tokens: 9000, Who: "y@example.com"},
+			// This team, a different person. Must count: the scope is the team.
+			{Time: now.Add(-time.Hour), SessionID: "s4", Tokens: 10, Who: "z@example.com", Team: "platform"},
+		}},
+	}
+	if d := p.Evaluate(a); d.Effect != EffectAllow {
+		t.Errorf("effect = %q, want allow: another team's consumption was counted "+
+			"against this one (%s)", d.Effect, d.Reason)
+	}
+
+	// A colleague on the same team pushes it over, and that is the intended meaning:
+	// a team budget is about the team, not the person who happens to be asking.
+	a.Spend.Records = append(a.Spend.Records, CostRecord{
+		Time: now.Add(-time.Hour), SessionID: "s5", Tokens: 9000,
+		Who: "busy@example.com", Team: "platform",
+	})
+	if d := p.Evaluate(a); d.Effect != EffectDeny {
+		t.Errorf("effect = %q, want deny: a colleague's consumption counts towards "+
+			"a team budget", d.Effect)
 	}
 }
