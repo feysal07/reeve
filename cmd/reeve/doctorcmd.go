@@ -16,6 +16,10 @@ import (
 	"github.com/feysal07/reeve/internal/policy"
 )
 
+// schemaVersion is the shape of the JSON this command emits, in the one form every
+// other command here uses: a string such as "1.0". See internal/posture.
+const schemaVersion = "1.0"
+
 // runDoctor answers the question `reeve install` cannot: is any of this working.
 //
 // Registered is not firing. A hook in a settings file is a claim that an agent will
@@ -42,8 +46,9 @@ func runDoctor(args []string) error {
 	}
 
 	rep := doctorReport{
-		StateDir: opts.StateDir,
-		Agents:   []agentHealth{},
+		SchemaVersion: schemaVersion,
+		StateDir:      opts.StateDir,
+		Agents:        []agentHealth{},
 	}
 
 	registered := install.Registered(opts)
@@ -99,11 +104,15 @@ func runDoctor(args []string) error {
 }
 
 type doctorReport struct {
-	StateDir  string        `json:"stateDir"`
-	LogPath   string        `json:"decisionLog"`
-	Decisions decisionStats `json:"decisions"`
-	Policy    policyHealth  `json:"policy"`
-	Agents    []agentHealth `json:"agents"`
+	// SchemaVersion is the shape of this document, following the same convention
+	// as scan, posture and report. A consumer that cannot tell which shape it is
+	// reading has to guess, and a field that moved looks like a field that is absent.
+	SchemaVersion string        `json:"schemaVersion"`
+	StateDir      string        `json:"stateDir"`
+	LogPath       string        `json:"decisionLog"`
+	Decisions     decisionStats `json:"decisions"`
+	Policy        policyHealth  `json:"policy"`
+	Agents        []agentHealth `json:"agents"`
 }
 
 type agentHealth struct {

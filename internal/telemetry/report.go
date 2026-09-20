@@ -91,7 +91,7 @@ type Group struct {
 // Version 1 is the first documented shape. What --json emitted before it was whatever
 // Go made of the field names, which was never chosen and could be changed by a rename
 // nobody thought of as a wire change.
-const SchemaVersion = 1
+const SchemaVersion = "1.0"
 
 // Report is an aggregation of events over a window.
 //
@@ -102,7 +102,7 @@ const SchemaVersion = 1
 // without failing a build or a test. See TestTheJSONReportShapeIsStable.
 type Report struct {
 	// Schema is the version of this document's shape, not of Reeve.
-	Schema int `json:"schemaVersion"`
+	Schema string `json:"schemaVersion"`
 
 	From time.Time `json:"from"`
 	To   time.Time `json:"to"`

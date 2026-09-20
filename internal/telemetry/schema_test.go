@@ -241,7 +241,7 @@ func TestAReportAlwaysCarriesItsSchemaVersion(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.rep.Schema != SchemaVersion {
-				t.Errorf("schemaVersion = %d, want %d: a report that does not say "+
+				t.Errorf("schemaVersion = %q, want %q: a report that does not say "+
 					"which shape it is cannot be read safely by anything",
 					tc.rep.Schema, SchemaVersion)
 			}

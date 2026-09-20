@@ -812,7 +812,7 @@ if (Test-Path $events) {
     & $reeve report --store $events --json 2>$null | Set-Content -Path $reportJson -Encoding utf8
     $schema = (Get-Content $reportJson -Raw | ConvertFrom-Json).schemaVersion
     Check "the JSON report declares its schema version" `
-        ($schema -eq 1) "schemaVersion was '$schema'"
+        ($schema -eq "1.0") "schemaVersion was '$schema'"
 
     # An agent the collector accepts but scan and guard have never heard of appears in
     # the cost report all the same. Unmarked, it reads as one of the governed ones.
