@@ -37,6 +37,7 @@ var rules = []Rule{
 	unrecognisedConfig,
 	lenientConfig,
 	agentNewerThanVerified,
+	telemetryCannotArrive,
 }
 
 // Evaluate runs every rule against every installation.
@@ -616,4 +617,47 @@ func majorMinor(v string) ([2]int, bool) {
 		out[i] = n
 	}
 	return out, true
+}
+
+// telemetryCannotArrive fires when an agent exports over a transport this collector
+// cannot receive.
+//
+// Found on the first machine anybody pointed this tool at outside its own tests. The
+// agent was exporting OpenTelemetry over gRPC, `reeve collect` speaks OTLP over HTTP
+// and nothing else, and the scan reported "telemetry: enabled" with an endpoint —
+// which reads as working.
+//
+// It is the same shape as every other finding here: a control that is configured, that
+// looks configured, and that delivers nothing. Without this, the only symptom is a
+// report with no usage in it, and an empty report looks exactly like an agent nobody
+// used.
+func telemetryCannotArrive(inst model.Installation) []model.Finding {
+	t := inst.Telemetry
+	if !t.Enabled || t.Protocol == "" {
+		return nil
+	}
+	p := strings.ToLower(strings.TrimSpace(t.Protocol))
+	if p != "grpc" {
+		return nil
+	}
+	where := t.Endpoint
+	if where == "" {
+		where = "an endpoint this scan could not read"
+	}
+	return []model.Finding{{
+		ID:       "audit.telemetry-protocol-unreceivable",
+		Severity: model.SeverityMedium,
+		Agent:    inst.Agent,
+		Title:    "Telemetry is exported over a protocol Reeve cannot receive",
+		Detail: "This agent is configured to export over gRPC. `reeve collect` accepts " +
+			"OTLP over HTTP only, in either encoding, so if this endpoint is a Reeve " +
+			"collector nothing has ever arrived at it. Telemetry reads as enabled here " +
+			"and in the agent's own settings, and the only symptom is a report with no " +
+			"usage in it — which looks the same as an agent nobody used.",
+		Evidence: fmt.Sprintf("protocol grpc, endpoint %s", where),
+		Remedy: "Set the exporter to http/protobuf or http/json and point it at the " +
+			"collector's HTTP port, normally 4318. If that endpoint is somebody else's " +
+			"collector rather than Reeve, this finding does not apply and is worth " +
+			"silencing deliberately.",
+	}}
 }

@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/feysal07/reeve/internal/config"
+	"github.com/feysal07/reeve/internal/policy"
+	"github.com/feysal07/reeve/internal/replay"
 	"github.com/feysal07/reeve/internal/telemetry"
 )
 
@@ -271,6 +274,15 @@ func runTrialReport() error {
 
 	rep := telemetry.Aggregate(events, time.Time{}, time.Time{})
 	renderReport(rep, 20)
+
+	// What each rule actually matched, not just how often.
+	//
+	// The first real trial reported "destructive-delete: 40 fired" and nothing else,
+	// and working out whether any of those forty were correct took a one-off script
+	// written against the raw log. Nobody running a trial is going to do that, which
+	// means the most useful thing a trial can find would never be found. Three lines
+	// of what it matched answers it at a glance.
+	printRuleExamples(logPath)
 
 	fmt.Printf(`What to send back
 
@@ -566,3 +578,74 @@ rules:
         - "production.tfvars"
         - "workspace select prod"
 `
+
+// trialExamples is how many matched commands to show per rule. Enough to see a
+// pattern, few enough that the report stays readable.
+const trialExamples = 3
+
+// printRuleExamples shows what each rule matched, and warns where the match may be in
+// data rather than in what runs.
+//
+// The first real trial reported "destructive-delete: 40 fired" and nothing else, and
+// working out whether any of those forty were correct took a one-off script written
+// against the raw log. Nobody running a trial is going to do that, which means the most
+// useful thing a trial can find — a rule that fires on ordinary work — would never be
+// found. Three lines of what it matched answers it at a glance.
+func printRuleExamples(logPath string) {
+	records, _, err := replay.Load(logPath)
+	if err != nil {
+		return
+	}
+
+	byRule := map[string][]replay.Record{}
+	var order []string
+	for _, r := range records {
+		if r.RuleID == "" {
+			continue
+		}
+		if _, seen := byRule[r.RuleID]; !seen {
+			order = append(order, r.RuleID)
+		}
+		byRule[r.RuleID] = append(byRule[r.RuleID], r)
+	}
+	if len(order) == 0 {
+		return
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return len(byRule[order[i]]) > len(byRule[order[j]])
+	})
+
+	fmt.Printf("\nWhat each rule matched\n\n")
+	for _, id := range order {
+		rs := byRule[id]
+		fmt.Printf("  %s (%d)\n", id, len(rs))
+		carriesData := 0
+		for i, r := range rs {
+			if r.Command != "" && policy.ExecutablePart(r.Command) != r.Command {
+				carriesData++
+			}
+			if i >= trialExamples {
+				continue
+			}
+			subject := r.Command
+			if subject == "" {
+				subject = strings.Join(r.Paths, ", ")
+			}
+			if subject == "" {
+				subject = r.Tool
+			}
+			fmt.Printf("      %s\n", oneLine(subject, 68))
+		}
+		if len(rs) > trialExamples {
+			fmt.Printf("      ... and %d more\n", len(rs)-trialExamples)
+		}
+		// Whether the matched text is something the command runs or something it
+		// carries. A rule firing on a commit message is a different problem from one
+		// firing on a deletion, and a count cannot tell them apart.
+		if carriesData > 0 {
+			fmt.Printf("      %d of these carry a here-document, so the match may be in\n", carriesData)
+			fmt.Printf("      data rather than in what runs. commandRuns ignores those.\n")
+		}
+		fmt.Println()
+	}
+}

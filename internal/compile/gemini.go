@@ -227,6 +227,10 @@ func (g *geminiCLI) compileRule(r policy.Rule) (Coverage, []geminiRule, []string
 			prefixes := analyseShell(r.Match).prefixes
 
 			var fragments []string
+			// commandRuns is never emitted natively. Gemini's commandRegex tests
+			// the whole argument string, here-document bodies included, so a
+			// pattern from a commandRuns rule would fire where the rule says it
+			// must not — a compiler quietly making a rule stricter than written.
 			for _, c := range r.Match.CommandContains {
 				fragments = append(fragments, regexp.QuoteMeta(c))
 			}

@@ -55,6 +55,22 @@ type Match struct {
 	// CommandContains matches anywhere in the command line. Globs are easy to
 	// evade with a leading argument, so this is the blunter, safer form.
 	CommandContains []string `yaml:"commandContains,omitempty"`
+	// CommandRuns matches anywhere in the part of the command line that will run,
+	// with here-document bodies removed.
+	//
+	// The difference from CommandContains is what a trial measured rather than what
+	// anyone guessed. Over a day of real work, thirty-two of fifty-four firings
+	// matched text that was never going to execute: a commit message explaining a
+	// fix, a JSON test fixture piped into this very tool, source files being edited
+	// that happen to mention kubectl. The command being run was git, echo or python.
+	//
+	// Prefer this for anything matching a dangerous command. Use CommandContains
+	// when you genuinely mean "these characters appear anywhere in the line",
+	// including inside data.
+	//
+	// Neither is a boundary against someone trying to get past it. See
+	// ExecutablePart.
+	CommandRuns []string `yaml:"commandRuns,omitempty"`
 	// Path matches any file the action touches, as a glob. ** crosses directories.
 	Path []string `yaml:"path,omitempty"`
 	// URL matches a fetch target, as a glob.
@@ -250,7 +266,7 @@ func (p *Policy) Evaluate(a Action) Decision {
 					"could not be read. Refusing rather than assuming nothing has " +
 					"been spent. Give the guard an event store with --store, or set " +
 					"REEVE_EVENT_STORE."
-			case a.Spend.Incomplete(a, *r.Match.Spend, time.Now()):
+			case a.Spend.Incomplete(a, *r.Match.Spend, a.now()):
 				// A partial window totals low, and a budget compared against a
 				// total that is too low permits. Refusing is the only honest answer
 				// to "I could not see far enough back to know".
@@ -315,6 +331,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if len(m.CommandContains) > 0 && !anyContains(m.CommandContains, a.Command) {
+		return false
+	}
+	if len(m.CommandRuns) > 0 && !anyContains(m.CommandRuns, ExecutablePart(a.Command)) {
 		return false
 	}
 	if len(m.Path) > 0 && !anyPathGlob(m.Path, a.Paths) {
@@ -506,7 +525,7 @@ func (r RepeatedMatch) matches(a Action) bool {
 	if r.MoreThan <= 0 || r.Within <= 0 {
 		return false
 	}
-	return a.History.Count(a, r, time.Now()) >= r.MoreThan
+	return a.History.Count(a, r, a.now()) >= r.MoreThan
 }
 
 // matches reports whether spend in the window already exceeds the budget.
@@ -519,7 +538,7 @@ func (m SpendMatch) matches(a Action) bool {
 	if m.MoreThan < 0 || m.Within <= 0 {
 		return false
 	}
-	return a.Spend.Total(a, m, time.Now()) > m.MoreThan
+	return a.Spend.Total(a, m, a.now()) > m.MoreThan
 }
 
 // NeedsHistory reports whether any rule matches on what came before.

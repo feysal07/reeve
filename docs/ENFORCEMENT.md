@@ -260,6 +260,71 @@ address, a path to the conversation transcript and, for a file read, the entire
 contents of the file. None of it is read into the action, because the guard writes a
 decision log and anything the action carries lands on a developer's disk.
 
+## Matching a command: what it runs, not what it carries
+
+Two matchers look at a command line, and the difference between them was measured
+rather than guessed.
+
+```yaml
+match:
+  commandRuns:      ["rm -rf"]   # what the command executes
+  commandContains:  ["rm -rf"]   # anywhere in the line, data included
+```
+
+The first real trial of this tool recorded fourteen hours of one developer's ordinary
+work: 864 actions and 54 rule firings. **Thirty-two of the fifty-four matched text
+that was never going to execute.** A git commit whose message explained a fix and
+therefore quoted `rm -rf`. Ten test fixtures shaped like
+`echo '{"command":"rm -rf /"}' | reeve guard`. Python here-documents editing source
+files that mention `kubectl` or `git push --force`. In every case the command being
+run was `git`, `echo` or `python`.
+
+`commandRuns` removes here-document bodies before matching, because a here-document is
+input to a program rather than a command. Everything else is matched as before,
+including quoted arguments — `sh -c "rm -rf /"` and `cat ".env"` both put the
+interesting text in an argument, and both matter.
+
+**Neither is a boundary against someone trying to get past it.** A here-document fed
+to an interpreter is executed by that interpreter, so `python - <<'PY'` carrying
+`os.system("rm -rf /")` is not matched by `commandRuns`. That was already true of
+anything built at runtime, base64-encoded or assembled from variables. Matching text
+in a command line catches mistakes and casual actions, never a determined evader, and
+the only thing this changes is how much ordinary work gets caught alongside them.
+
+Neither compiles to native configuration. No vendor's permission syntax matches a
+substring of a command line, and none of them strips here-document bodies first, so an
+emitted rule would fire where a `commandRuns` rule says it must not — a compiler
+quietly making a rule stricter than it was written.
+
+## Replaying a log against a changed policy
+
+```
+reeve policy replay ./decisions.jsonl --policy new-baseline.yaml
+```
+
+Run the guard in dry run for a week, then find out what a rule change would have done
+to that week before anyone has to live with it.
+
+```
+  outcome    : 864 actions replayed: 16 stricter, 49 looser, 799 unchanged
+  stopped    : 0  (was 41)
+  questioned : 50  (was 13)
+
+  Rule                          before   after   change
+    destructive-delete              41      25   -16
+    production-infrastructure        6       0   -6  <- stops firing entirely
+```
+
+The counts that matter are **stopped** and **questioned**. A rule moved from deny to
+ask fires exactly as often and is an entirely different thing to work under, and a
+firing count cannot tell you that.
+
+Counting rules replay properly, because the log *is* the history they count from: each
+record is evaluated against the ones before it, as at its own recorded time rather than
+as at now. **Budgets cannot be replayed at all** — spend lives in the event store, so
+there is nothing in a decision log to total, and replay says so rather than reporting
+that no budget was ever exceeded.
+
 ## Circuit breakers: matching on what already happened
 
 Every rule above is a pure function of the action in front of it. One is not.

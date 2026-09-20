@@ -148,6 +148,14 @@ func analyseShell(m policy.Match) shellRule {
 	for _, c := range m.CommandContains {
 		s.unexpressible = append(s.unexpressible, c)
 	}
+	// commandRuns is unexpressible for a further reason, and it is the stronger
+	// one. No vendor's permission syntax matches a substring of a command line at
+	// all, and none of them strips here-document bodies first, so a native rule
+	// built from these patterns would match in places this rule deliberately does
+	// not. Emitting one would be stricter than what the operator wrote.
+	for _, c := range m.CommandRuns {
+		s.unexpressible = append(s.unexpressible, c)
+	}
 	return s
 }
 

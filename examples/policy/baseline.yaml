@@ -73,15 +73,20 @@ rules:
         - "**/*.p12"
         - "**/*.keystore"
 
+  # Ask, for the same reason as destructive-delete below: these patterns are
+  # substrings, and ".env" appears in commands that are reading a policy file,
+  # writing a test fixture or editing documentation. Reading a credential really
+  # is worth stopping, so tighten this to deny once you have replayed your own
+  # log and know what it costs.
   - id: print-secrets
     description: Printing credential files through a shell command
-    decision: deny
+    decision: ask
     reason: >-
       Reading a credential file through the shell bypasses a file-read rule while
       having exactly the same effect.
     match:
       kind: [shell]
-      commandContains:
+      commandRuns:
         - ".env"
         - "id_rsa"
         - ".aws/credentials"
@@ -89,15 +94,25 @@ rules:
 
   # ------------------------------------------------------------ destructive ----
 
+  # Ask rather than deny, and that is a measured decision rather than a cautious
+  # one. Replayed against fourteen hours of one developer's real work, this rule
+  # matched twenty-five times, every one of them a deliberate clean-up of a
+  # scratch directory. A deny at that rate is not a control, because it gets
+  # removed within a day and takes the rest of the policy with it.
+  #
+  # If your fleet does not work that way, make it a deny — but measure first:
+  #
+  #   reeve policy replay ./decisions.jsonl --policy your-baseline.yaml
   - id: destructive-delete
     description: Recursive force delete
-    decision: deny
+    decision: ask
     reason: >-
       A recursive force delete is unrecoverable and, when a path is wrong or a
-      variable is empty, removes far more than intended.
+      variable is empty, removes far more than intended. Check the path before
+      letting this through.
     match:
       kind: [shell]
-      commandContains:
+      commandRuns:
         - "rm -rf"
         - "rm -fr"
         - "Remove-Item -Recurse -Force"
@@ -125,7 +140,7 @@ rules:
         - "*push*--force*"
         - "*push*-f *"
         - "*--force*push*"
-      commandContains:
+      commandRuns:
         - " main"
         - " master"
         - " develop"
@@ -141,7 +156,7 @@ rules:
       work, so a prompt costs nothing and catching a mistake is worth a great deal.
     match:
       kind: [shell]
-      commandContains:
+      commandRuns:
         - "filter-branch"
         - "filter-repo"
 
@@ -153,7 +168,7 @@ rules:
       may not have looked at yet.
     match:
       kind: [shell]
-      commandContains:
+      commandRuns:
         - "git checkout -- ."
         - "git clean -fd"
         - "git restore ."
@@ -186,7 +201,7 @@ rules:
         - "*iwr*"
         - "*irm*"
         - "*invoke-webrequest*"
-      commandContains:
+      commandRuns:
         - "| sh"
         - "|sh"
         - "| bash"
@@ -203,7 +218,7 @@ rules:
       release pipeline, not from a developer machine during a session.
     match:
       kind: [shell]
-      commandContains:
+      commandRuns:
         - "npm publish"
         - "twine upload"
         - "cargo publish"
@@ -258,5 +273,11 @@ rules:
       the agent can now reach.
     match:
       kind: [mcp]
-    # Replace this rule with explicit allow rules per approved server once your
-    # list exists. Left as ask so the policy is usable before that work is done.
+    # Every MCP call matches, because an approved list does not exist until you
+    # write one. Build the first one from what is already running:
+    #
+    #   reeve mcp list ./reports --as-registry > registry.yaml
+    #   reeve mcp check ./reports --registry registry.yaml
+    #
+    # then replace this rule with explicit allow rules per approved server. Left
+    # as ask so the policy is usable before that work is done.

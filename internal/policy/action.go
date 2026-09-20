@@ -87,6 +87,16 @@ type Action struct {
 	// everything before it.
 	History *History `json:"-"`
 
+	// At is the moment this action is being decided.
+	//
+	// Zero means now, which is what the guard wants: it decides actions as they
+	// happen. Replay sets it to the time the action was recorded, so a window
+	// measured in minutes is measured from the action rather than from whenever
+	// somebody happens to be looking at the log. Without it, replaying yesterday's
+	// work evaluates every counting rule against a window that closed hours ago and
+	// reports that nothing ever repeated.
+	At time.Time `json:"-"`
+
 	// Spend is recent cost, read from the event store that reeve collect writes.
 	//
 	// Nil means it could not be read, which again is not the same as nothing having
@@ -234,4 +244,12 @@ type Decision struct {
 	// can be reproduced later.
 	PolicyName    string `json:"policyName,omitempty"`
 	PolicyVersion string `json:"policyVersion,omitempty"`
+}
+
+// now is the clock this action is decided against.
+func (a Action) now() time.Time {
+	if a.At.IsZero() {
+		return time.Now()
+	}
+	return a.At
 }

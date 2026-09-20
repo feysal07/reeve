@@ -112,6 +112,10 @@ Policy commands:
     --agent, --kind, --tool, --command, --path, --url, --mcp-server, --mcp-tool
   reeve policy compile <file> [flags]  Render the policy as each agent's own config
     --agent, --platform, --out <dir>, --strict, --quiet
+  reeve policy replay <log> --policy <file>
+    --show <n>, --changed, --json    Run a policy over a decision log and say what
+                                     would differ. Tune a rule against a day of real
+                                     work instead of against a guess
 
 Guard flags (reeve guard is invoked by an agent, not usually by hand):
   --agent <id>           Required: claude-code, copilot-cli, codex-cli, gemini-cli

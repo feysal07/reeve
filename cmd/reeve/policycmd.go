@@ -23,6 +23,8 @@ func runPolicy(args []string) error {
 		return runPolicyCheck(args[1:])
 	case "test":
 		return runPolicyTest(args[1:])
+	case "replay":
+		return runPolicyReplay(args[1:])
 	case "compile":
 		return runPolicyCompile(args[1:])
 	default:
