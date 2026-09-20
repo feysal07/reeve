@@ -830,6 +830,24 @@ EOF
     {"asInt":"9000","attributes":[{"key":"gen_ai.token.type","value":{"stringValue":"output"}},{"key":"gen_ai.request.model","value":{"stringValue":"gpt-5.6-sol"}}]}]}}]}]}]}
 EOF
 
+    # OpenCode, which the collector accepts and nothing else here covers. Sent so the
+    # report has to say what it can and cannot claim about such an agent, rather than
+    # printing a row that looks like the four that are fully governed.
+    #
+    # Attributed with reeve.agent rather than service.name, because that is the only
+    # mechanism that actually works for it today: agentFromResource has no opencode
+    # case, so a payload naming itself opencode in service.name and using the GenAI
+    # conventions is attributed to Copilot instead. See the note in docs/TELEMETRY.md.
+    post /v1/metrics <<'EOF'
+{"resourceMetrics":[{"resource":{"attributes":[
+ {"key":"reeve.agent","value":{"stringValue":"opencode"}},
+ {"key":"service.name","value":{"stringValue":"opencode"}},
+ {"key":"user.email","value":{"stringValue":"dev5@example.com"}}]},
+ "scopeMetrics":[{"metrics":[
+  {"name":"gen_ai.client.token.usage","sum":{"dataPoints":[
+    {"asInt":"12000","attributes":[{"key":"gen_ai.token.type","value":{"stringValue":"input"}},{"key":"gen_ai.request.model","value":{"stringValue":"claude-sonnet-5"}}]}]}}]}]}]}
+EOF
+
     post /v1/logs <<'EOF'
 {"resourceLogs":[{"resource":{"attributes":[
  {"key":"service.name","value":{"stringValue":"codex"}},
@@ -857,8 +875,8 @@ EOF
     STATS=$(curl -fsS "http://127.0.0.1:$PORT/stats")
     note "stats: $STATS"
     case "$STATS" in
-        *'"batchesReceived":4'*) check "all four agents' telemetry was accepted" 1 ;;
-        *) check "all four agents' telemetry was accepted" 0 "$STATS" ;;
+        *'"batchesReceived":5'*) check "all five agents' telemetry was accepted" 1 ;;
+        *) check "all five agents' telemetry was accepted" 0 "$STATS" ;;
     esac
 
     WRITTEN=$(printf '%s' "$STATS" | sed 's/.*"eventsWritten":\([0-9]*\).*/\1/')
@@ -1050,6 +1068,18 @@ EOF
     [ "$SCHEMA" = "1" ] &&
         check "the JSON report declares its schema version" 1 ||
         check "the JSON report declares its schema version" 0 "schemaVersion was '$SCHEMA'"
+
+    # An agent the collector accepts but scan and guard have never heard of appears in
+    # the cost report all the same. Unmarked, it reads as one of the governed ones, and
+    # the reader only discovers otherwise when scan cannot find it.
+    UNGOVERNED=$("$REEVE" report --store "$EVENTS" --top 10 2>&1)
+    case "$UNGOVERNED" in
+        *"opencode"*"telemetry only, not governed"*)
+            check "an agent with no adapter is not presented as a governed one" 1 ;;
+        *)
+            check "an agent with no adapter is not presented as a governed one" 0 \
+                "the opencode row did not say it is telemetry only" ;;
+    esac
 
     # An allowance declared for an agent nothing reports against reads nought per
     # cent for ever, which on a dashboard is exactly what staying inside the limit

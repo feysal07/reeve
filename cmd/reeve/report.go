@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/telemetry"
 )
 
@@ -293,7 +294,7 @@ func renderReport(r telemetry.Report, top int) {
 	}
 
 	section("By team", r.ByTeam, top, costRow)
-	section("By agent", r.ByAgent, top, costRow)
+	section("By agent", r.ByAgent, top, agentRow)
 	section("By user", r.ByUser, top, costRow)
 	section("By repository", r.ByRepo, top, costRow)
 	section("By model", r.ByModel, top, costRow)
@@ -306,6 +307,22 @@ type rowFunc func(g telemetry.Group) string
 func costRow(g telemetry.Group) string {
 	return fmt.Sprintf("%-28s %10s %12s %8d req", trim(g.Key, 28), money(g.CostUSD),
 		humanInt(g.Tokens.Total()), g.Requests)
+}
+
+// agentRow is costRow, plus a note on any agent this build has no adapter for.
+//
+// The collector accepts telemetry from agents scan and guard have never heard of, so
+// such an agent has always appeared here looking exactly like the five that are fully
+// covered. Somebody reading its spend would then find reeve scan cannot see it and
+// reeve guard refuses to answer for it, and nothing anywhere said that was by design.
+// An unmarked row invites the reading that the agent is governed when only its
+// spending is visible.
+func agentRow(g telemetry.Group) string {
+	row := costRow(g)
+	if g.Key != "" && !model.HasAdapter(model.AgentID(g.Key)) {
+		row += "   telemetry only, not governed"
+	}
+	return row
 }
 
 func ruleRow(g telemetry.Group) string {

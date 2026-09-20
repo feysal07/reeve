@@ -713,6 +713,21 @@ if ($listening) {
     {"asInt":"45000","attributes":[{"key":"gen_ai.token.type","value":{"stringValue":"input"}},{"key":"gen_ai.request.model","value":{"stringValue":"gpt-5.6-sol"}}]},
     {"asInt":"9000","attributes":[{"key":"gen_ai.token.type","value":{"stringValue":"output"}},{"key":"gen_ai.request.model","value":{"stringValue":"gpt-5.6-sol"}}]}]}}]}]}]}
 '@
+        # OpenCode, which the collector accepts and nothing else here covers.
+        #
+        # Attributed with reeve.agent rather than service.name, because that is the
+        # only mechanism that works for it today: agentFromResource has no opencode
+        # case, so a payload naming itself opencode and using the GenAI conventions
+        # is attributed to Copilot instead. See the note in docs/TELEMETRY.md.
+        $opencode = @'
+{"resourceMetrics":[{"resource":{"attributes":[
+ {"key":"reeve.agent","value":{"stringValue":"opencode"}},
+ {"key":"service.name","value":{"stringValue":"opencode"}},
+ {"key":"user.email","value":{"stringValue":"dev5@example.com"}}]},
+ "scopeMetrics":[{"metrics":[
+  {"name":"gen_ai.client.token.usage","sum":{"dataPoints":[
+    {"asInt":"12000","attributes":[{"key":"gen_ai.token.type","value":{"stringValue":"input"}},{"key":"gen_ai.request.model","value":{"stringValue":"claude-sonnet-5"}}]}]}}]}]}]}
+'@
         $codex = @'
 {"resourceLogs":[{"resource":{"attributes":[
  {"key":"service.name","value":{"stringValue":"codex"}},
@@ -738,12 +753,13 @@ if ($listening) {
         $h = @{ "Content-Type" = "application/json" }
         Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/v1/metrics" -Headers $h -Body $claude | Out-Null
         Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/v1/metrics" -Headers $h -Body $copilot | Out-Null
+        Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/v1/metrics" -Headers $h -Body $opencode | Out-Null
         Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/v1/logs" -Headers $h -Body $codex | Out-Null
         Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/v1/metrics" -Headers $h -Body $gemini | Out-Null
 
         $stats = Invoke-RestMethod "http://127.0.0.1:$Port/stats"
         Note "batches received: $($stats.batchesReceived), events written: $($stats.eventsWritten)"
-        Check "all four agents' telemetry was accepted" ($stats.batchesReceived -eq 4)
+        Check "all five agents' telemetry was accepted" ($stats.batchesReceived -eq 5)
         Check "events were normalised and stored" ($stats.eventsWritten -ge 10) "wrote $($stats.eventsWritten)"
     } finally {
         Stop-Process -Id $collector.Id -Force -ErrorAction SilentlyContinue
@@ -797,6 +813,13 @@ if (Test-Path $events) {
     $schema = (Get-Content $reportJson -Raw | ConvertFrom-Json).schemaVersion
     Check "the JSON report declares its schema version" `
         ($schema -eq 1) "schemaVersion was '$schema'"
+
+    # An agent the collector accepts but scan and guard have never heard of appears in
+    # the cost report all the same. Unmarked, it reads as one of the governed ones.
+    $ungoverned = (& $reeve report --store $events --top 10 2>&1 | Out-String)
+    Check "an agent with no adapter is not presented as a governed one" `
+        ($ungoverned -match "opencode.*telemetry only, not governed") `
+        "the opencode row did not say it is telemetry only"
 }
 
 # A rule must match what a command runs, not what it carries.
