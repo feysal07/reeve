@@ -145,9 +145,17 @@ type Decoder struct {
 	Teams TeamResolver
 }
 
-// TeamResolver answers which team an identity belongs to.
+// TeamResolver answers which team an identity belongs to, and which identifier the
+// organisation knows that person by.
+//
+// Both, rather than only the team, and deliberately not an optional second interface
+// checked with a type assertion. A resolver that satisfied half of this would be
+// skipped for the other half and the events would record a vendor's id with nothing
+// saying so — which is the failure this mapping exists to prevent, reproduced one
+// level up.
 type TeamResolver interface {
 	Team(id Identity) string
+	Canonical(id Identity) Identity
 }
 
 // agentFromResource identifies which agent sent a payload.
@@ -220,7 +228,11 @@ func (d *Decoder) identity(a map[string]otlpValue) Identity {
 		Email:    lookup(a, "user.email", "enduser.id").String(),
 		Asserted: true,
 	}
+	// Canonicalise before resolving the team, so a mapping keyed on the organisation's
+	// own subject works. Done the other way round, an alias would fix the budget and
+	// leave the team lookup still asking about a vendor's id.
 	if d.Teams != nil {
+		id = d.Teams.Canonical(id)
 		id.Team = d.Teams.Team(id)
 	}
 	return id

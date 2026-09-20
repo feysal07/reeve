@@ -20,3 +20,18 @@ emails:
 # prefer it where you have one.
 subjects:
   "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b": platform
+
+# What each vendor calls a person, mapped to what the organisation calls them.
+#
+# Every agent invents its own identifier. Anthropic reports an account UUID, Copilot a
+# GitHub login, Cursor its own user id, and none of them is the subject your identity
+# provider issues. Without this, a budget written per person compares the identity the
+# guard resolved against subjects recorded by four different vendors and matches none
+# of them.
+#
+# It fails quietly. The window totals zero, and a budget compared against zero permits,
+# so somebody far over their limit is allowed and the rule reports nothing at all.
+aliases:
+  "acct_01HXY9Z-anthropic-account-uuid": "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b"
+  "octocat": "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b"
+  "dev@example.com": "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b"

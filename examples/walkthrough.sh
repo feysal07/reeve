@@ -1096,6 +1096,27 @@ EOF
         check "the same rule allows once the operator says who this machine is" 1 ||
         check "the same rule allows once the operator says who this machine is" 0
 
+    # The identity is verified and the budget is far exceeded, and without an alias
+    # the rule still allows. The store records what the vendor called the person -
+    # an account UUID - and the guard was told the subject the organisation uses.
+    # They are the same person and nothing matches, so the window totals zero, and a
+    # budget compared against zero permits. Measured: 9M tokens, a 100-token budget,
+    # allowed, no reason.
+    printf 'version: 1\nrules:\n  - id: per-person\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 100, scope: person}\n' > "$SANDBOX/alias.yaml"
+    printf '%s' "$PAYLOAD" | REEVE_IDENTITY=8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b \
+        "$REEVE" guard --agent claude-code --policy "$SANDBOX/alias.yaml" \
+        --store "$EVENTS" > "$SANDBOX/alias.out" 2>&1
+    ALIAS_CODE=$?
+    ALIAS_OUT=$(tr -s '[:space:]' ' ' < "$SANDBOX/alias.out")
+    # The reason as well as the code. The fail-closed refusal for an unverifiable
+    # identity also exits 2, so a check that looked only at the number could pass
+    # while proving the opposite of what this asserts: it must be the rule firing.
+    case "$ALIAS_CODE:$ALIAS_OUT" in
+        2:*"rule per-person"*)
+            check "a budget matches once the vendor's id is mapped to the organisation's" 1 ;;
+        *)  check "a budget matches once the vendor's id is mapped to the organisation's" 0 "exit $ALIAS_CODE: $ALIAS_OUT" ;;
+    esac
+
     # A scope nobody validated silently means session, which is a per-person limit anyone
     # resets by starting a new session.
     printf 'version: 1\nrules:\n  - id: typo\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 1, scope: persno}\n' > "$SANDBOX/scope-typo.yaml"

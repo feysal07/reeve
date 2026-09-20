@@ -1048,6 +1048,28 @@ rules:
     Check "the same rule allows once the operator says who this machine is" `
         ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
 
+    # The identity is verified and the budget is far exceeded, and without an alias the
+    # rule still allows. The store records what the vendor called the person; the guard
+    # was told the subject the organisation uses. Same person, nothing matches, window
+    # totals zero, and a budget compared against zero permits.
+    Write-Text (Join-Path $Sandbox "alias.yaml") @'
+version: 1
+rules:
+  - id: per-person
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 100, scope: person}
+'@
+    $env:REEVE_IDENTITY = "8f14e45f-ea0c-4f2b-9a1d-1c2d3e4f5a6b"
+    $aliasOut = ($payload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "alias.yaml") --store $events 2>&1 | Out-String)
+    $aliasCode = $LASTEXITCODE
+    # The reason as well as the code: the fail-closed refusal for an unverifiable
+    # identity also exits 2, and would pass a check that looked only at the number.
+    Check "a budget matches once the vendor's id is mapped to the organisation's" `
+        (($aliasCode -eq 2) -and (($aliasOut -replace '\s+', ' ') -match "rule per-person")) `
+        "exit $aliasCode`: $($aliasOut.Trim())"
+
     # A scope nobody validated silently means session, which is a per-person limit
     # anyone resets by starting a new session.
     Write-Text (Join-Path $Sandbox "scope-typo.yaml") @'
