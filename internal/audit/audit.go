@@ -67,6 +67,15 @@ const ChainSuffix = ".chain"
 var genesis = []byte("reeve-audit-v1")
 
 // Seal is one record of what the log contained at one moment.
+
+// SchemaVersion is the shape of the JSON this package emits.
+//
+// One form across every command: a string such as "1.0", matching scan and
+// posture. The report used an int for one release, so a consumer reading
+// schemaVersion got a number from one command and a string from another and had
+// to type-switch on a field whose whole purpose is to be checked first.
+const SchemaVersion = "1.0"
+
 type Seal struct {
 	SealedAt time.Time `json:"sealedAt"`
 	// Lines is how many lines the log held when this seal was taken.
@@ -259,8 +268,11 @@ func Add(logPath string, now time.Time, version string) (Seal, error) {
 
 // Report is the outcome of verifying a log against its seals.
 type Report struct {
-	LogPath   string `json:"logPath"`
-	ChainPath string `json:"chainPath"`
+	// SchemaVersion is the shape of this document, following the same convention as
+	// every other JSON this binary emits.
+	SchemaVersion string `json:"schemaVersion"`
+	LogPath       string `json:"logPath"`
+	ChainPath     string `json:"chainPath"`
 	// Lines is how many lines the log holds now.
 	Lines int64 `json:"lines"`
 	Seals int   `json:"seals"`
@@ -307,7 +319,7 @@ func (r Report) Intact() bool { return r.Seals > 0 && len(r.Breaks) == 0 }
 // first, because the interval between the last good seal and the first bad one is what
 // localises a change, and later seals still carry information about later intervals.
 func Verify(logPath string) (Report, error) {
-	rep := Report{LogPath: logPath, ChainPath: ChainPath(logPath)}
+	rep := Report{SchemaVersion: SchemaVersion, LogPath: logPath, ChainPath: ChainPath(logPath)}
 
 	_, lines, err := Hash(logPath, 0)
 	if err != nil {

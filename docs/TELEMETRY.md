@@ -167,9 +167,14 @@ what an organisation comfortably inside its limits looks like. See
 }
 ```
 
-**Read `schemaVersion` first and refuse a number you do not know.** It is 1 today.
-It rises whenever a field is renamed or removed; adding one does not raise it, so treat
-unknown fields as ignorable rather than as an error.
+**Read `schemaVersion` first and refuse a version you do not know.** It is the string
+`"1.0"` today. It rises whenever a field is renamed or removed; adding one does not
+raise it, so treat unknown fields as ignorable rather than as an error.
+
+Every command that emits JSON declares it the same way — `scan`, `posture`, `report`,
+`doctor`, `mcp` and `audit` — always a string, never a number. It was briefly a number
+here and a string elsewhere, which made a consumer type-switch on the one field whose
+whole purpose is to be checked before anything else is read.
 
 Three things worth knowing before you build on it:
 

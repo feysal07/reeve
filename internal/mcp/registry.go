@@ -36,6 +36,15 @@ import (
 )
 
 // Status is how an organisation has ruled on a server.
+
+// SchemaVersion is the shape of the JSON this package emits.
+//
+// One form across every command: a string such as "1.0", matching scan and
+// posture. The report used an int for one release, so a consumer reading
+// schemaVersion got a number from one command and a string from another and had
+// to type-switch on a field whose whole purpose is to be checked first.
+const SchemaVersion = "1.0"
+
 type Status string
 
 const (
@@ -179,7 +188,10 @@ type Result struct {
 
 // Report is a whole reconciliation.
 type Report struct {
-	Results []Result `json:"results"`
+	// SchemaVersion is the shape of this document. See internal/posture.SchemaVersion
+	// for the convention: one form across every command that emits JSON.
+	SchemaVersion string   `json:"schemaVersion"`
+	Results       []Result `json:"results"`
 	// Unused lists registry entries nothing was found running. Not a problem, but
 	// an approved list that has drifted from reality stops being read.
 	Unused []string `json:"unusedEntries,omitempty"`
@@ -255,7 +267,7 @@ func sameCommand(a, b []string) bool {
 
 // Reconcile compares what is configured against what was approved.
 func Reconcile(reg *Registry, observed []Observed) Report {
-	rep := Report{Servers: len(observed)}
+	rep := Report{SchemaVersion: SchemaVersion, Servers: len(observed)}
 
 	machines := map[string]bool{}
 	used := map[string]bool{}
