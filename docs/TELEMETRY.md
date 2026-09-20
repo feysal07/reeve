@@ -149,6 +149,52 @@ and every report and every dashboard says nought per cent for ever — which is 
 what an organisation comfortably inside its limits looks like. See
 [the alerts](#the-alerts-are-shipped-not-described) for the rule that catches it.
 
+## The JSON report
+
+`reeve report --json` emits a documented, versioned shape you can build on.
+
+```json
+{
+  "schemaVersion": 1,
+  "from": "2026-01-02T03:04:05Z",
+  "to": "2026-01-09T03:04:05Z",
+  "overall": { "sessions": 11, "requests": 22, "tokens": { "input": 41 },
+               "equivalentCostUSD": 5.5, "vendorCostUSD": 10.1, "marginalUSD": 11.2 },
+  "allowance": [ { "agent": "claude-code", "used": 1500, "perSeat": 1000,
+                   "over": [ { "who": "dev@example.com", "used": 1400 } ] } ],
+  "byTeam": [ { "key": "platform", "requests": 22 } ],
+  "byAgent": [], "byUser": [], "byRepo": [], "byModel": [], "byRule": []
+}
+```
+
+**Read `schemaVersion` first and refuse a number you do not know.** It is 1 today.
+It rises whenever a field is renamed or removed; adding one does not raise it, so treat
+unknown fields as ignorable rather than as an error.
+
+Three things worth knowing before you build on it:
+
+- **`equivalentCostUSD` is not money.** It is tokens times the rates in your price
+  table — what the usage *would* cost. `marginalUSD` is money that actually left, and
+  it is summed only over events whose billing arrangement was declared; `marginalKnown`
+  and `billingUndeclared` say how much of the window that covers, so a small number can
+  be told from a number nobody could compute.
+- **`vendorCostUSD` is the agents' own claim**, at list price. It is kept separate
+  rather than merged, because summing it with a figure computed at a negotiated rate
+  produces a total that is neither.
+- **Durations are nanoseconds**, which is what a Go duration marshals to. The fields
+  are named `elapsedNanos` and `periodNanos` so that reading them as seconds is a
+  mistake you make once.
+
+Identities appear here — `byUser`, and `over[].who` — and deliberately never in the
+metrics endpoint. This document is produced on demand by somebody who already has
+access to the store; Prometheus is scraped by a system with much wider read access.
+
+> **Before v0.6.0** the flag emitted Go field names — `Overall`, `ByTeam`,
+> `UnpricedRequests` — mixed with the few nested types that already carried tags. That
+> shape was never chosen and a rename could change it silently, so it is not carried
+> forward. `CostUSD` is now `equivalentCostUSD`, matching the metric rename that made
+> the same point.
+
 ## Watching it, rather than reading it
 
 Nobody runs a report at two in the morning. `reeve collect --prices ... --metrics-addr
