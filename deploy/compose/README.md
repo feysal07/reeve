@@ -82,9 +82,20 @@ Everything the collector reads is in `config/`, mounted read-only:
   from an attribute the agent asserts about itself, because an agent runs on a
   developer's machine and anything it says about itself is a claim.
 - `prices.yaml` — your rates, not list prices.
-- `prometheus.yml` — one scrape target.
+- `prometheus.yml` — one scrape target, and the `rule_files` entry that loads the
+  alerts below.
+- `rules.yml` — three alert rules, shipped rather than left as an exercise. Two cover
+  the conditions a graph cannot show you: an allowance nothing is ever measured
+  against, which reads nought per cent for ever, and one being spent fast enough that
+  it will not last the period. The third fires when the store cannot be read, because
+  while that is true the other two are quiet for the wrong reason — the series they
+  match on are absent, not healthy.
 - `grafana/` — the datasource and dashboard, provisioned so a fresh start gives the
   same thing every time.
+
+There is no Alertmanager here, so a firing rule is visible at
+`http://127.0.0.1:9091/alerts` and nowhere else. Add one before treating any of this
+as notification.
 
 Edit and `docker compose restart collector`.
 

@@ -190,6 +190,16 @@ prometheusRule:
   # Fraction of the store volume still free below which to warn. Needs kubelet
   # metrics, which kube-prometheus-stack scrapes by default.
   volumeFreeBelow: 0.15
+  # How long an allowance may sit at zero consumption before it is called silent.
+  #
+  # A day, because that is long enough to clear a weekend of one team not working and
+  # short enough to catch the real case: an agent whose telemetry never reaches the
+  # allowance at all, which otherwise reads as nought per cent indefinitely.
+  allowanceSilentFor: 24h
+  # Pace above which an allowance is called on course to run out. 1 means exactly on
+  # track to finish the window as it resets. Raise it if a bursty week is normal;
+  # below 1 it fires on any use at all in the first hours of a period.
+  paceAbove: 1
 
 serviceAccount:
   create: true
