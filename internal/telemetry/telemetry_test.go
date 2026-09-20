@@ -314,6 +314,30 @@ func TestADirectoryHoldingARecordFileNamesIt(t *testing.T) {
 	}
 }
 
+// TestADirectoryOfManyRecordFilesHintsRatherThanLists. A hint stops being a hint once
+// it is a directory listing: an operator with a month of rotated files would get every
+// one of them in a single error line, and the suggestion would be harder to read than
+// the directory they already typed.
+func TestADirectoryOfManyRecordFilesHintsRatherThanLists(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.jsonl", "b.jsonl", "c.jsonl", "d.jsonl", "e.jsonl"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := ReadEvents(dir)
+	if err == nil {
+		t.Fatal("reading a directory succeeded")
+	}
+	if got := strings.Count(err.Error(), ".jsonl"); got != 3 {
+		t.Errorf("the error names %d files, want 3: %v", got, err)
+	}
+	if !strings.Contains(err.Error(), " or ") {
+		t.Errorf("the candidates are not offered as alternatives: %v", err)
+	}
+}
+
 func TestReportGroupsByTeamAndRepository(t *testing.T) {
 	events := []Event{
 		{Kind: KindAPIRequest, Agent: model.AgentClaudeCode, Identity: Identity{Team: "platform"},
