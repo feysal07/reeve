@@ -659,6 +659,7 @@ printf '%s' "$PAYLOAD" | "$REEVE" guard --agent claude-code >/dev/null 2>&1
 printf 'this is not json' | "$REEVE" guard --agent claude-code --policy "$POLICY" >/dev/null 2>&1
 [ $? = 2 ] && check "an unreadable request denies" 1 || check "an unreadable request denies" 0
 
+
 # A misspelled agent is worse than a missing one: the reply would be shaped for
 # nobody, and an agent that recognises nothing in it runs the tool anyway.
 printf '%s' "$PAYLOAD" | "$REEVE" guard --agent gemini --policy "$POLICY" >/dev/null 2>&1
@@ -1068,6 +1069,42 @@ EOF
     [ "$SCHEMA" = "1" ] &&
         check "the JSON report declares its schema version" 1 ||
         check "the JSON report declares its schema version" 0 "schemaVersion was '$SCHEMA'"
+
+    # A rule totalled per person, with nobody to total against.
+    #
+    # The asymmetry applied to identity. An agent runs on a developer's machine, so an
+    # identity it reports is a claim by the party the rule constrains. With no identity
+    # from outside the machine, the honest answer is to refuse: a per-person limit that
+    # quietly falls back to the machine total answers a different question in the same
+    # shape, and one that reads as enforced.
+    printf 'version: 1\nrules:\n  - id: per-person\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 1, scope: person}\n' > "$SANDBOX/person.yaml"
+    PERSON_OUT=$(printf '%s' "$PAYLOAD" | REEVE_IDENTITY= "$REEVE" guard --agent claude-code \
+        --policy "$SANDBOX/person.yaml" --store "$EVENTS" 2>&1)
+    PERSON_CODE=$?
+    case "$PERSON_CODE:$PERSON_OUT" in
+        2:*"could not be established"*)
+            check "a per-person rule with no identity denies rather than guessing" 1 ;;
+        *)  check "a per-person rule with no identity denies rather than guessing" 0 \
+                "exit $PERSON_CODE: $PERSON_OUT" ;;
+    esac
+
+    # The same rule with an identity the operator set, and consumption under the budget.
+    printf 'version: 1\nrules:\n  - id: per-person\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 999999999, scope: person}\n' > "$SANDBOX/person-ok.yaml"
+    printf '%s' "$PAYLOAD" | REEVE_IDENTITY=dev@example.com "$REEVE" guard --agent claude-code \
+        --policy "$SANDBOX/person-ok.yaml" --store "$EVENTS" >/dev/null 2>&1
+    [ $? = 0 ] &&
+        check "the same rule allows once the operator says who this machine is" 1 ||
+        check "the same rule allows once the operator says who this machine is" 0
+
+    # A scope nobody validated silently means session, which is a per-person limit anyone
+    # resets by starting a new session.
+    printf 'version: 1\nrules:\n  - id: typo\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 1, scope: persno}\n' > "$SANDBOX/scope-typo.yaml"
+    TYPO_SCOPE=$("$REEVE" policy check "$SANDBOX/scope-typo.yaml" 2>&1)
+    case "$TYPO_SCOPE" in
+        *"session, machine or person"*)
+            check "a misspelled scope is an error, not a quietly different rule" 1 ;;
+        *)  check "a misspelled scope is an error, not a quietly different rule" 0 "$TYPO_SCOPE" ;;
+    esac
 
     # An agent the collector accepts but scan and guard have never heard of appears in
     # the cost report all the same. Unmarked, it reads as one of the governed ones, and

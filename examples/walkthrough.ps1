@@ -820,6 +820,59 @@ if (Test-Path $events) {
     Check "an agent with no adapter is not presented as a governed one" `
         ($ungoverned -match "opencode.*telemetry only, not governed") `
         "the opencode row did not say it is telemetry only"
+
+    # A rule totalled per person, with nobody to total against.
+    #
+    # An agent runs on a developer's machine, so an identity it reports is a claim by
+    # the party the rule constrains. With no identity from outside the machine the
+    # honest answer is to refuse: a per-person limit that quietly falls back to the
+    # machine total answers a different question in the same shape.
+    $payload = '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}'
+    Write-Text (Join-Path $Sandbox "person.yaml") @'
+version: 1
+rules:
+  - id: per-person
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 1, scope: person}
+'@
+    $prevIdentity = $env:REEVE_IDENTITY
+    $env:REEVE_IDENTITY = ""
+    $personOut = ($payload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "person.yaml") --store $events 2>&1 | Out-String)
+    $personCode = $LASTEXITCODE
+    Check "a per-person rule with no identity denies rather than guessing" `
+        (($personCode -eq 2) -and ($personOut -match "could not be established")) `
+        "exit $personCode`: $($personOut.Trim())"
+
+    Write-Text (Join-Path $Sandbox "person-ok.yaml") @'
+version: 1
+rules:
+  - id: per-person
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 999999999, scope: person}
+'@
+    $env:REEVE_IDENTITY = "dev@example.com"
+    $null = ($payload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "person-ok.yaml") --store $events 2>&1)
+    Check "the same rule allows once the operator says who this machine is" `
+        ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
+    $env:REEVE_IDENTITY = $prevIdentity
+
+    # A scope nobody validated silently means session, which is a per-person limit
+    # anyone resets by starting a new session.
+    Write-Text (Join-Path $Sandbox "scope-typo.yaml") @'
+version: 1
+rules:
+  - id: typo
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 1, scope: persno}
+'@
+    $typoScope = (& $reeve policy check (Join-Path $Sandbox "scope-typo.yaml") 2>&1 | Out-String)
+    Check "a misspelled scope is an error, not a quietly different rule" `
+        ($typoScope -match "session, machine or person") $typoScope.Trim()
 }
 
 # A rule must match what a command runs, not what it carries.

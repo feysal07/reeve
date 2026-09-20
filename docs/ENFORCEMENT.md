@@ -431,6 +431,46 @@ machine's spend if the store is this machine's, so point the guard at a local on
 guard does not claim a boundary it cannot check: events carry a session, an identity
 and a repository, and nothing that names a machine.
 
+A misspelled scope is refused when the policy is parsed, rather than quietly meaning
+`session`. Nothing checked this until `person` existed, and `scope: machien` totalled
+one agent session and returned a number that looked like a small machine total.
+
+### `scope: person`, and why it refuses more often than you might expect
+
+A budget totalled per person rather than per session or per machine:
+
+```yaml
+match:
+  tokens: {within: 168h, moreThan: 20000000, scope: person}
+```
+
+This needs to know who is at the keyboard, **from a source that person cannot edit**.
+An agent runs on a developer's machine, so an identity the agent reports in its hook
+payload is a claim by the party the rule is about to constrain: anyone who can edit
+their own settings can claim to be somebody else. A per-person limit keyed on that is
+bypassable by exactly the person it limits, and every report would show it as enforced.
+That is worse than having no rule, because somebody has been told there is one.
+
+So the guard takes the identity only from `--identity` or `REEVE_IDENTITY`:
+
+```bash
+reeve guard --agent claude-code --identity "$SSO_SUBJECT" --store ./events.jsonl
+```
+
+Set it from whatever deploys the guard, alongside the administrator-owned configuration
+a developer cannot remove. **With neither set, a person-scoped rule denies and says
+why** — the same asymmetry as a budget that cannot read its store. An unreadable store
+is not a spend of zero, and an identity nobody could establish is not an action
+belonging to nobody.
+
+Two honest limits worth stating:
+
+- These two sources are not immune to a developer with a shell either. They are the
+  *operator's* channel rather than the agent's, and they are worth what the deployment
+  around them is worth. Where that is nothing, leave them unset and let the rule refuse.
+- An event in the store that carried no identity is counted towards **no** person, not
+  towards whoever is asking.
+
 See [examples/policy/budget.yaml](../examples/policy/budget.yaml). Like the loop
 breaker, it is deliberately not in the baseline.
 
