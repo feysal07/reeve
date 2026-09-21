@@ -1070,6 +1070,44 @@ rules:
         (($aliasCode -eq 2) -and (($aliasOut -replace '\s+', ' ') -match "rule per-person")) `
         "exit $aliasCode`: $($aliasOut.Trim())"
 
+    # Single sign-on, and the case that matters most: the operator has said only a
+    # signed token counts, and there is no token. An environment variable must not stand
+    # in for one, or requireToken would mean nothing while reading as enforced.
+    Write-Text (Join-Path $Sandbox "identity.yaml") @'
+issuer: https://idp.example.test
+audience: reeve
+requireToken: true
+'@
+    Write-Text (Join-Path $Sandbox "sso.yaml") @'
+version: 1
+rules:
+  - id: per-person
+    decision: deny
+    match:
+      tokens: {within: 168h, moreThan: 100, scope: person}
+'@
+    $env:REEVE_IDENTITY_CONFIG = (Join-Path $Sandbox "identity.yaml")
+    $env:REEVE_IDENTITY = "dev@example.com"
+    $ssoOut = ($payload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "sso.yaml") --store $events 2>&1 | Out-String)
+    Check "an environment variable does not stand in for single sign-on" `
+        (($ssoOut -replace '\s+', ' ') -match "asserted by the agent itself|could not be established") `
+        $ssoOut.Trim()
+
+    # And a trust configuration that cannot mean anything is refused where somebody is
+    # looking, rather than leaving the machine quietly without single sign-on.
+    Write-Text (Join-Path $Sandbox "bad-identity.yaml") @'
+issuer: http://not-https.example.test
+audience: reeve
+'@
+    $env:REEVE_IDENTITY_CONFIG = (Join-Path $Sandbox "bad-identity.yaml")
+    $badSso = ($payload | & $reeve guard --agent claude-code `
+        --policy (Join-Path $Sandbox "sso.yaml") --store $events 2>&1 | Out-String)
+    Check "an unusable identity configuration is an error, not a silent downgrade" `
+        ($badSso -match "https") $badSso.Trim()
+    $env:REEVE_IDENTITY_CONFIG = ""
+    $env:REEVE_IDENTITY = $prevIdentity
+
     # A scope nobody validated silently means session, which is a per-person limit
     # anyone resets by starting a new session.
     Write-Text (Join-Path $Sandbox "scope-typo.yaml") @'

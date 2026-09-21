@@ -471,6 +471,52 @@ Two honest limits worth stating:
 - An event in the store that carried no identity is counted towards **no** person, not
   towards whoever is asking.
 
+### Single sign-on, and what makes an identity worth anything
+
+`--identity` and `REEVE_IDENTITY` are the operator's channel, and the docs above say
+plainly that they are worth whatever the deployment around them is worth. A signature is
+worth more, because the person it names cannot change it.
+
+With a trust configuration in place, the guard reads a token `reeve login` left on disk
+and verifies it locally:
+
+```yaml
+# /etc/reeve/identity.yaml, or %ProgramData%\Reeve\identity.yaml
+issuer: https://idp.corp.example/realms/engineering
+audience: reeve
+maxSessionAge: 12h     # how old a login may be, measured from the token's iat
+keyGrace: 48h          # how long a rotated-out key stays usable
+requireToken: false    # true means only single sign-on counts on this machine
+```
+
+**The verification never touches the network.** Signature and claims are arithmetic over
+a file and a cached key set, so an outage at the provider changes nothing until the token
+expires — a laptop on a plane keeps working. That is deliberate rather than convenient:
+the guard runs before every tool call, and several agents treat a hook that timed out as
+permission to continue, so a verifier that could block on a slow provider would turn a
+provider outage into an absence of governance everywhere. A test walks the verifier's
+import graph and fails if `net/http` appears.
+
+**Where the trust configuration is found matters more than what is in it.** The search
+path is `REEVE_IDENTITY_CONFIG`, then the administrator-owned location, then
+`~/.reeve/identity.yaml` — and **the first one wins outright**. Nothing is merged. A merge
+would let a developer add an issuer and an inlined key to their own file, sign a token
+naming anybody, and be reported as verified, with enforcement showing green on every
+dashboard while resting on a keypair the governed party generated.
+
+**An expired or unverifiable token is the absence of an identity, never a downgrade.** A
+person-scoped rule then refuses with a reason naming `reeve login`, rather than falling
+back to an environment variable whose advice would be the wrong advice.
+
+Two limits worth stating, because they are real:
+
+- `identity.json` is a bearer credential. It is written `0600` in a `0700` directory with
+  no refresh token, but copying it to another machine moves the identity with it, and
+  nothing binds it to the hardware. It is worth what the filesystem is worth.
+- The `subject` and `email` beside the token in that file are for `reeve doctor` to
+  print. Nothing reads them to decide anything — they sit outside the signature, and a
+  developer can edit them while the token stays valid.
+
 ### `scope: team`
 
 The scope an organisation usually wants, and it needs **two** operator-owned inputs

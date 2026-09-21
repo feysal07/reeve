@@ -1117,6 +1117,30 @@ EOF
         *)  check "a budget matches once the vendor's id is mapped to the organisation's" 0 "exit $ALIAS_CODE: $ALIAS_OUT" ;;
     esac
 
+    # Single sign-on, and the case that matters most: the operator has said only a
+    # signed token counts, and there is no token. An environment variable must not
+    # stand in for one, or requireToken would mean nothing while reading as enforced.
+    printf 'issuer: https://idp.example.test\naudience: reeve\nrequireToken: true\n' > "$SANDBOX/identity.yaml"
+    printf 'version: 1\nrules:\n  - id: per-person\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 100, scope: person}\n' > "$SANDBOX/sso.yaml"
+    SSO_OUT=$(printf '%s' "$PAYLOAD" | REEVE_IDENTITY_CONFIG="$SANDBOX/identity.yaml" \
+        REEVE_IDENTITY=dev@example.com "$REEVE" guard --agent claude-code \
+        --policy "$SANDBOX/sso.yaml" --store "$EVENTS" 2>&1 | tr -s '[:space:]' ' ')
+    case "$SSO_OUT" in
+        *"asserted by the agent itself"*|*"could not be established"*)
+            check "an environment variable does not stand in for single sign-on" 1 ;;
+        *)  check "an environment variable does not stand in for single sign-on" 0 "$SSO_OUT" ;;
+    esac
+
+    # And a trust configuration that cannot mean anything is refused where somebody is
+    # looking, rather than leaving the machine quietly without single sign-on.
+    printf 'issuer: http://not-https.example.test\naudience: reeve\n' > "$SANDBOX/bad-identity.yaml"
+    BAD_SSO=$(printf '%s' "$PAYLOAD" | REEVE_IDENTITY_CONFIG="$SANDBOX/bad-identity.yaml" \
+        "$REEVE" guard --agent claude-code --policy "$SANDBOX/sso.yaml" --store "$EVENTS" 2>&1)
+    case "$BAD_SSO" in
+        *https*) check "an unusable identity configuration is an error, not a silent downgrade" 1 ;;
+        *) check "an unusable identity configuration is an error, not a silent downgrade" 0 "$BAD_SSO" ;;
+    esac
+
     # A scope nobody validated silently means session, which is a per-person limit anyone
     # resets by starting a new session.
     printf 'version: 1\nrules:\n  - id: typo\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 1, scope: persno}\n' > "$SANDBOX/scope-typo.yaml"

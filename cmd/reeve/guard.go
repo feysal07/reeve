@@ -127,7 +127,12 @@ func runGuard(args []string) error {
 	if pol.NeedsSpend() {
 		act.Spend = readSpend(eventStorePath(*storePath), window)
 	}
-	act.Identity = resolveIdentity(*identityFlag, *teamsPath)
+	// Only when a rule asks. A policy with no person or team rule never reads a
+	// token, a key cache or a trust configuration, so it cannot be stopped by
+	// anything to do with identity either.
+	if pol.NeedsIdentity() {
+		act.Identity = resolveIdentity(*identityFlag, *teamsPath, time.Now())
+	}
 
 	decision := pol.Evaluate(act)
 	elapsed := time.Since(start)
@@ -414,53 +419,6 @@ func readHistory(path string, window time.Duration) *policy.History {
 }
 
 // eventStorePath resolves the store a budget totals from.
-// resolveIdentity says who this machine belongs to, for rules totalled per person.
-//
-// Only from --identity or REEVE_IDENTITY, and never from the hook payload. That is the
-// whole point of it. An agent runs on a developer's machine, so an identity the agent
-// sends is asserted by the party a per-person rule is about to constrain: anyone who
-// can edit their own settings can claim to be somebody else, and a limit keyed on that
-// is bypassable by exactly the person it limits while reading as enforced.
-//
-// These two sources are not immune to that either — a developer with a shell can set an
-// environment variable. They are the operator's channel rather than the agent's: the
-// value is written by whatever deploys the guard, alongside the managed configuration
-// a developer cannot remove, and on a machine where that deployment is the thing being
-// trusted. Where it is not, the honest answer is to leave it unset and let the rule
-// refuse, which is what Policy.Evaluate does.
-//
-// Nothing here parses the value into a subject and an email. An operator sets one
-// string, and guessing which kind of identifier it is from whether it contains an @
-// would make the meaning of a policy depend on the shape of somebody's username.
-func resolveIdentity(flag, teamsPath string) *policy.Identity {
-	v := flag
-	if v == "" {
-		v = os.Getenv("REEVE_IDENTITY")
-	}
-	if v == "" {
-		return nil
-	}
-	id := &policy.Identity{Subject: v}
-
-	// The team is resolved from the operator's own mapping, the same file the
-	// collector resolves it from when it records an event. Both sides therefore agree
-	// by construction, and neither takes a team the agent asserted about itself —
-	// which is the only reason a rule is allowed to total on one.
-	//
-	// A mapping that cannot be read leaves the team empty rather than guessing, and a
-	// team-scoped rule then refuses. That is the same asymmetry as everywhere else: a
-	// mapping nobody could read is not evidence that this machine belongs to no team.
-	if teamsPath == "" {
-		teamsPath = os.Getenv("REEVE_TEAMS")
-	}
-	if teamsPath != "" {
-		if tm, err := telemetry.LoadTeams(teamsPath); err == nil {
-			id.Team = tm.Team(telemetry.Identity{Subject: v, Email: v})
-		}
-	}
-	return id
-}
-
 func eventStorePath(flag string) string {
 	if flag != "" {
 		return flag
