@@ -1105,6 +1105,20 @@ audience: reeve
         --policy (Join-Path $Sandbox "sso.yaml") --store $events 2>&1 | Out-String)
     Check "an unusable identity configuration is an error, not a silent downgrade" `
         ($badSso -match "https") $badSso.Trim()
+
+    # reeve login is the only command here that reaches the network, and it refuses
+    # before doing so when no operator has said which provider to trust.
+    $env:REEVE_IDENTITY_CONFIG = (Join-Path $Sandbox "does-not-exist.yaml")
+    $loginOut = (& $reeve login --client-id reeve 2>&1 | Out-String)
+    Check "login refuses when no operator has said which provider to trust" `
+        (($loginOut -replace '\s+', ' ') -match "no identity configuration") $loginOut.Trim()
+
+    # And it will not start a login it could not finish.
+    $env:REEVE_IDENTITY_CONFIG = (Join-Path $Sandbox "identity.yaml")
+    $noId = (& $reeve login 2>&1 | Out-String)
+    Check "login says which argument it needs" `
+        (($noId -replace '\s+', ' ') -match "client-id is required") $noId.Trim()
+    $env:REEVE_IDENTITY_CONFIG = ""
     $env:REEVE_IDENTITY_CONFIG = ""
     $env:REEVE_IDENTITY = $prevIdentity
 

@@ -73,7 +73,7 @@ Builds for Linux, macOS and Windows on the
 build provenance. One static binary, no runtime, no dependencies.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 116 checks against it. The
+sandbox of four badly configured agents and asserts 118 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 

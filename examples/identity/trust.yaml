@@ -1,0 +1,46 @@
+# Which identity provider this organisation trusts, and how much.
+#
+# Deployed by whoever deploys Reeve, to the administrator-owned location:
+# /etc/reeve/identity.yaml, or %ProgramData%\Reeve\identity.yaml on Windows.
+#
+# The search order is REEVE_IDENTITY_CONFIG, then that location, then
+# ~/.reeve/identity.yaml, and the first one found wins outright. Nothing is merged. A
+# merge would let a developer add an issuer and their own signing key to their own file,
+# sign a token naming anybody, and be reported as a verified identity - enforcement
+# green on every dashboard, resting on a keypair the governed party generated.
+
+# Compared against a token's iss by equality, never by prefix: an issuer with the right
+# prefix and a different host is a different organisation.
+issuer: https://idp.example.com/realms/engineering
+
+# What your provider mints Reeve's tokens for. Without it, a token issued for any other
+# application at the same provider would be accepted.
+audience: reeve
+
+# How old a login may be, measured from the token's iat.
+#
+# Reeve's own limit, because the expiry belongs to the provider. An operator who sets a
+# thirty-day ID token lifetime has made "verified identity" mean whoever set the laptop
+# up last month, and nothing about that looks wrong: the signature is valid, the token
+# is unexpired, and the deployment reads as healthy.
+maxSessionAge: 12h
+
+# How long a key that has left the provider's published set stays usable.
+#
+# Without overlap, the moment a provider rotates, every machine whose cache predates the
+# rotation loses its identity at once and every person-scoped rule denies together. The
+# obvious fix for that outage is to let the guard fetch keys on demand, which would put
+# the network on the one path that must never block.
+keyGrace: 48h
+
+# Whether only single sign-on counts on this machine.
+#
+# false keeps --identity and REEVE_IDENTITY working, which is what a deployment with no
+# provider needs. true says a signed token or nothing, and an identity from the
+# environment is then reported as asserted so that a per-person rule refuses with the
+# reason naming reeve login.
+requireToken: false
+
+# Restrict what will be verified. Omitted means RS256 and ES256, which is every
+# compliant provider; anything else is refused when this file is read.
+# algorithms: [RS256]
