@@ -95,7 +95,18 @@ func fromToken(trust *identity.Trust, teamsPath string, now time.Time) *policy.I
 		// an assertion about themselves.
 		Asserted: false,
 	}
-	id.Team = resolveTeam(teamsPath, telemetry.Identity{Subject: claims.Subject, Email: claims.Email})
+	// The token's own groups, when the operator asked for them, and the team map
+	// otherwise.
+	//
+	// The token wins because it is signed: a groups claim from the operator's provider
+	// is not something the machine being governed can edit, which is the same standard
+	// the team map is held to. It falls back rather than erroring, so a machine whose
+	// provider publishes no groups still resolves a team from the file.
+	if t := claims.Team(trust); t != "" {
+		id.Team = t
+	} else {
+		id.Team = resolveTeam(teamsPath, telemetry.Identity{Subject: claims.Subject, Email: claims.Email})
+	}
 	return id
 }
 

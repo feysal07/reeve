@@ -175,3 +175,80 @@ func TestAudienceAndGroupsAreReadInBothShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestATeamFromTheTokenIsNeverAGuess.
+//
+// A groups claim inside a signed token from the operator's own provider is not
+// client-asserted, so reading one is legitimate. What is not legitimate is choosing
+// between several: nothing obliges a provider to order them, so taking the first would
+// be a different team on a different day, and a team budget that wanders between teams
+// by itself is worse than one that refuses — it produces a number every time.
+func TestATeamFromTheTokenIsNeverAGuess(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		groups []string
+		want   string
+	}{
+		{
+			name:   "not asked for, so not used",
+			config: "issuer: https://i.test\naudience: reeve\n",
+			groups: []string{"platform"},
+			want:   "",
+		},
+		{
+			name:   "one group and no priority is unambiguous",
+			config: "issuer: https://i.test\naudience: reeve\nteamFromClaim: groups\n",
+			groups: []string{"platform"},
+			want:   "platform",
+		},
+		{
+			name:   "several groups and no priority is a guess, so no team",
+			config: "issuer: https://i.test\naudience: reeve\nteamFromClaim: groups\n",
+			groups: []string{"platform", "payments"},
+			want:   "",
+		},
+		{
+			name:   "the operator's order decides, not the provider's",
+			config: "issuer: https://i.test\naudience: reeve\nteamFromClaim: groups\nteamPriority: [payments, platform]\n",
+			groups: []string{"platform", "payments"},
+			want:   "payments",
+		},
+		{
+			name:   "a group nobody prioritised is not a team",
+			config: "issuer: https://i.test\naudience: reeve\nteamFromClaim: groups\nteamPriority: [payments]\n",
+			groups: []string{"some-unrelated-group"},
+			want:   "",
+		},
+		{
+			name:   "no groups at all",
+			config: "issuer: https://i.test\naudience: reeve\nteamFromClaim: groups\n",
+			groups: nil,
+			want:   "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, err := Parse([]byte(tc.config))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := (&Claims{Groups: tc.groups}).Team(tr)
+			if got != tc.want {
+				t.Errorf("team = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAPriorityWithNothingToOrderIsRefused. teamPriority without teamFromClaim orders
+// nothing, which is a declaration that cannot mean anything — refused where somebody is
+// looking rather than silently ignored.
+func TestAPriorityWithNothingToOrderIsRefused(t *testing.T) {
+	_, err := Parse([]byte("issuer: https://i.test\naudience: reeve\nteamPriority: [platform]\n"))
+	if err == nil {
+		t.Fatal("accepted, so the priority list would sit there doing nothing")
+	}
+	if !strings.Contains(err.Error(), "order nothing") {
+		t.Errorf("the error does not explain itself: %v", err)
+	}
+}

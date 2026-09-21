@@ -508,6 +508,14 @@ dashboard while resting on a keypair the governed party generated.
 person-scoped rule then refuses with a reason naming `reeve login`, rather than falling
 back to an environment variable whose advice would be the wrong advice.
 
+**Groups from the token.** With `teamFromClaim: groups` the team comes from the token
+rather than from `teams.yaml`, which is the other half of what the free-forever page
+promises alongside login. It needs `teamPriority` as soon as anybody holds more than one
+group: nothing obliges a provider to order them, so taking the first would be a
+different team on a different day, and a team budget that wanders between teams by
+itself is worse than one that refuses — it produces a number every time. Several groups
+and no priority is no team, and a team-scoped rule then refuses.
+
 Two limits worth stating, because they are real:
 
 - `identity.json` is a bearer credential. It is written `0600` in a `0700` directory with
