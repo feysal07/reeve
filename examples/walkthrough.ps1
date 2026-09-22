@@ -1136,10 +1136,11 @@ rules:
     Check "a misspelled scope is an error, not a quietly different rule" `
         ($typoScope -match "session, machine, team or person") $typoScope.Trim()
 
-    # A repetition rule scoped per person would count nothing and never fire, because
-    # the decision log records no identity. Accepted, it is a loop breaker that cannot
-    # trigger: allow, no reason, for ever, and indistinguishable from one never
-    # provoked. Refused where somebody is looking instead.
+    # A repetition rule scoped per person. For five changes this was refused at load
+    # time, because the decision log recorded no identity: the count matched nothing,
+    # totalled zero, and a loop breaker that could never fire was accepted. The log
+    # records who now, so the rule has to do what it says - stop the person repeating
+    # themselves, in whichever session, and not a colleague sharing the same log.
     Write-Text (Join-Path $Sandbox "loop-person.yaml") @'
 version: 1
 rules:
@@ -1148,12 +1149,19 @@ rules:
     match:
       repeated: {same: tool, within: 5m, moreThan: 2, scope: person}
 '@
-    # Whitespace squeezed before matching: the CLI wraps its explanations to the
-    # terminal width, so a phrase can fall across a line break and a literal match
-    # would fail for a reason that has nothing to do with the behaviour.
-    $loopPerson = (& $reeve policy check (Join-Path $Sandbox "loop-person.yaml") 2>&1 | Out-String)
-    Check "a rule that would never fire is refused rather than accepted" `
-        (($loopPerson -replace '\s+', ' ') -match "does not record who") $loopPerson.Trim()
+    $personLog = Join-Path $Sandbox "loop-person.jsonl"
+    $identityBefore = $env:REEVE_IDENTITY
+    $personExits = foreach ($call in @(
+            @("looping@example.com", "s1"), @("looping@example.com", "s2"),
+            @("colleague@example.com", "s3"), @("looping@example.com", "s4"))) {
+        $env:REEVE_IDENTITY = $call[0]
+        $payload = '{"session_id":"' + $call[1] + '","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://api.example/retry"}}'
+        $null = ($payload | & $reeve guard --agent claude-code --policy (Join-Path $Sandbox "loop-person.yaml") --log $personLog 2>&1)
+        $LASTEXITCODE
+    }
+    $env:REEVE_IDENTITY = $identityBefore
+    Check "a loop breaker scoped per person stops that person and not a colleague" `
+        (($personExits -join " ") -eq "0 0 0 2") "exits were $($personExits -join ' '), want 0 0 0 2"
 
     # A team budget needs two operator-owned inputs: an identity the developer cannot
     # edit, and the mapping from it to a team. With an identity but no mapping there is

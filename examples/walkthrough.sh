@@ -1170,20 +1170,26 @@ EOF
         *)  check "a misspelled scope is an error, not a quietly different rule" 0 "$TYPO_SCOPE" ;;
     esac
 
-    # A repetition rule scoped per person would count nothing and never fire, because
-    # the decision log records no identity. Accepted, it is a loop breaker that cannot
-    # trigger: allow, no reason, for ever, and indistinguishable from one never
-    # provoked. Refused where somebody is looking instead.
+    # A repetition rule scoped per person. For five changes this was refused at load
+    # time, because the decision log recorded no identity: the count matched nothing,
+    # totalled zero, and a loop breaker that could never fire was accepted. The log
+    # records who now, so the rule has to do what it says - stop the person repeating
+    # themselves, in whichever session, and not a colleague sharing the same log.
     printf 'version: 1\nrules:\n  - id: loop\n    decision: deny\n    match:\n      repeated: {same: tool, within: 5m, moreThan: 2, scope: person}\n' > "$SANDBOX/loop-person.yaml"
-    # Whitespace squeezed before matching: the CLI wraps its explanations to the
-    # terminal width, so a phrase can fall across a line break and a literal match
-    # would fail for a reason that has nothing to do with the behaviour.
-    LOOP_PERSON=$("$REEVE" policy check "$SANDBOX/loop-person.yaml" 2>&1 | tr -s '[:space:]' ' ')
-    case "$LOOP_PERSON" in
-        *"does not record who"*)
-            check "a rule that would never fire is refused rather than accepted" 1 ;;
-        *)  check "a rule that would never fire is refused rather than accepted" 0 "$LOOP_PERSON" ;;
-    esac
+    PERSON_LOG="$SANDBOX/loop-person.jsonl"
+    person_call() {
+        printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://api.example/retry"}}' "$2" |
+            REEVE_IDENTITY="$1" "$REEVE" guard --agent claude-code \
+                --policy "$SANDBOX/loop-person.yaml" --log "$PERSON_LOG" >/dev/null 2>&1
+        echo $?
+    }
+    P1=$(person_call looping@example.com s1)
+    P2=$(person_call looping@example.com s2)
+    P3=$(person_call colleague@example.com s3)
+    P4=$(person_call looping@example.com s4)
+    [ "$P1$P2$P3$P4" = "0002" ] &&
+        check "a loop breaker scoped per person stops that person and not a colleague" 1 ||
+        check "a loop breaker scoped per person stops that person and not a colleague" 0 "exits were $P1 $P2 $P3 $P4, want 0 0 0 2"
 
     # A team budget needs two operator-owned inputs: an identity the developer cannot
     # edit, and the mapping from it to a team. With an identity but no mapping there is

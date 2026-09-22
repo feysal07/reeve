@@ -337,7 +337,7 @@ Every rule above is a pure function of the action in front of it. One is not.
       same: tool        # tool | command | any
       within: 10m
       moreThan: 50
-      scope: session    # session | machine
+      scope: session    # session | machine | person | team
 ```
 
 This is for the failure that costs the most and looks least like an attack: an agent
@@ -362,6 +362,29 @@ the action being decided is not itself counted.
 never partial. Emitting the rest of the match without the count produces a different
 and stricter rule — "deny curl after fifty tries" would compile to "deny curl" — so the
 compilers emit nothing for it and say why.
+
+**Per person or per team.** `scope: person` counts the repetitions of whoever is at the
+keyboard across every session in the log, and `scope: team` those of their team. Both
+need an identity the rule may rely on, resolved exactly as for a budget (see
+[`scope: person`](#scope-person-and-why-it-refuses-more-often-than-you-might-expect)
+below), and refuse without one.
+
+Until v0.6.0 these two scopes were refused when the policy was parsed, because the
+decision log recorded what was done and never by whom: the count matched nothing,
+totalled zero, and a loop breaker that could never fire would have been accepted by
+`policy check`. The log records who now, and the refusal went in the same change.
+
+Three things follow from where the count comes from:
+
+- **The log is this machine's.** A person-scoped count differs from a machine-scoped one
+  only where several people's decisions land in the same log — a shared build host, a
+  jump box, a log on a shared volume. On a laptop with one user the two are the same.
+- **Only a verified identity attributes a past action.** A line written with an asserted
+  identity counts towards nobody. Otherwise anyone on the machine could push a
+  colleague over their line by claiming to be them.
+- **Lines written before the rule existed carry no identity**, because the guard reads
+  one only when a rule needs it. They count towards nobody, so a person-scoped rule
+  switched on today undercounts for at most one window.
 
 See [examples/policy/loop-breaker.yaml](../examples/policy/loop-breaker.yaml). It is
 deliberately not in the baseline: the baseline is the first thing anyone deploys and
@@ -670,6 +693,13 @@ inside every agent's hook timeout.
 Each decision appends one JSON line: what was attempted, what was decided, which rule
 decided it, and how long evaluation took. It records no prompt text and no file
 contents.
+
+When the policy has a rule that needs to know who is at the keyboard, the line also
+records who the guard decided that was — `who`, `team`, and `identity`, which is
+`verified` for an identity a rule may rely on and `asserted` for one it may not. A policy
+with no such rule reads no identity, and its lines carry none. The log is written with
+owner-only permissions, and a subject or an email address in it is personal data: rotate
+and retain it on that basis.
 
 ```json
 {"time":"2026-09-18T15:42:03Z","agent":"claude-code","kind":"shell",
