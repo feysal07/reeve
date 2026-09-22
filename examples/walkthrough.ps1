@@ -597,6 +597,39 @@ $null = ($loopPayload | & $reeve guard --agent claude-code --policy $loopPolicy 
 Check "a counting rule with no log to count from denies, rather than assuming quiet" `
     ($LASTEXITCODE -eq 2) "exit was $LASTEXITCODE"
 
+# A Kubernetes MCP server reaches the same clusters kubectl does. Found on a real
+# machine: a production rule written for shell commands never saw a call made through
+# MCP, and every one was allowed while the rule looked configured. The registry now says
+# what an MCP server runs, the guard finds its definition in the agent's own
+# configuration, and a call naming a production namespace is production. A call to a
+# development namespace, through the same server, is the control: it proves the answer
+# comes from resolving the call rather than from a rule about MCP in general.
+$mcpHome = Join-Path $Sandbox "mcp-home"
+New-Item -ItemType Directory -Force $mcpHome | Out-Null
+Write-Text (Join-Path $mcpHome ".claude.json") '{"mcpServers": {"kubernetes": {"command": "npx", "args": ["-y", "kubernetes-mcp-server@latest"]}}}'
+Write-Text (Join-Path $Sandbox "mcp-production.yaml") @'
+version: 1
+default: allow
+rules:
+  - id: production
+    decision: deny
+    match:
+      kind: [shell, mcp]
+      environment: [production]
+'@
+$saved = @{}
+foreach ($k in "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "KUBECONFIG") { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+$mcpExits = foreach ($ns in "payments", "dev") {
+    foreach ($k in "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA") { [Environment]::SetEnvironmentVariable($k, $mcpHome) }
+    [Environment]::SetEnvironmentVariable("KUBECONFIG", (Join-Path $mcpHome "none"))
+    $payload = '{"session_id":"m","hook_event_name":"PreToolUse","tool_name":"mcp__kubernetes__pods_list_in_namespace","tool_input":{"namespace":"' + $ns + '"},"cwd":' + (ConvertTo-Json $mcpHome) + '}'
+    $null = ($payload | & $reeve guard --agent claude-code --policy (Join-Path $Sandbox "mcp-production.yaml") --resources (Join-Path $repo "examples\resources\resources.yaml") 2>&1)
+    $LASTEXITCODE
+}
+foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+Check "a production rule sees an MCP call that reaches production" `
+    (($mcpExits -join ":") -eq "2:0") "exits were $($mcpExits -join ', '); want 2 and 0"
+
 # A budget, the other rule that depends on a record rather than on the request. It
 # totals the event store the collector writes, and its failure modes are the ones
 # worth asserting: unreadable refuses, and an agent that reports no cost at all is

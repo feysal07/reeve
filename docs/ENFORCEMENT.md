@@ -676,7 +676,7 @@ then matches the environment rather than the words:
 
 ```yaml
 match:
-  kind: [shell]
+  kind: [shell, mcp]
   environment: [production]
 ```
 
@@ -693,6 +693,47 @@ unreadable registry leaves everything `unknown` rather than stopping work.
 
 Resolution reads local files only and costs roughly a millisecond, which stays well
 inside every agent's hook timeout.
+
+### MCP servers reach environments too
+
+A Kubernetes MCP server is a second door into every cluster its kubeconfig can reach,
+and a rule written about shell commands never sees what comes through it. Found on a
+real machine: pods listed and resources read through MCP, every call allowed without a
+prompt, while a production rule looked configured.
+
+The registry's `mcp` section says what each server reaches:
+
+```yaml
+mcp:
+  - command: "npx -y kubernetes-mcp-server*"   # base name and arguments, globbed
+    kubernetes:
+      contextArg: context        # tool arguments that name a target, if any
+      namespaceArg: namespace
+  - url: "https://db-mcp.internal.example/*"
+    environment: production      # a server bound to one place
+```
+
+**A server is identified by what it runs, never by its name.** The name in a tool call is
+a label from the agent's configuration, which the developer chose. The guard looks that
+name up in the agent's own configuration — the same files `reeve scan` reads — and
+matches the command line or URL it finds there. A Kubernetes server is then resolved per
+call, the way a kubectl command is: the namespace or context from the call's arguments
+when it names one, and from the kubeconfig the server reads otherwise. A `--kubeconfig`
+in the server's arguments is the one read.
+
+**Everything that cannot be known is `unknown`:** a server the registry does not list, a
+name the agent's configuration does not define, a name defined two different ways, and
+a server handed its own `KUBECONFIG`, whose value is deliberately never read. On a
+machine with no registry that is every MCP call, which is the truth about them.
+
+The configuration is only read when the registry lists at least one MCP server, so a
+machine without an `mcp` section pays nothing for this. MCP arguments are read for the
+environment and never written to the decision log.
+
+Finding the server's definition meant finding two places `reeve scan` had never looked:
+`~/.claude.json`, where `claude mcp add` writes user- and local-scoped servers, and the
+Claude desktop application's configuration, whose servers Claude Code is handed when it
+runs inside the desktop application. Both are now in the inventory.
 
 ## The decision log
 

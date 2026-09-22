@@ -63,6 +63,11 @@ type Action struct {
 	// MCPServer and MCPTool identify an MCP call.
 	MCPServer string `json:"mcpServer,omitempty"`
 	MCPTool   string `json:"mcpTool,omitempty"`
+	// MCPArguments are the string-valued arguments of an MCP call, so the resource
+	// registry can read a cluster or namespace the call names. Never serialised: an
+	// MCP call's arguments are whatever the server accepts, which includes queries,
+	// file contents and tokens, and the decision log must not become where they end up.
+	MCPArguments map[string]string `json:"-"`
 
 	// Environment is what the action is about to touch, resolved from the command
 	// and from the tool's own current state rather than guessed from the text. It is

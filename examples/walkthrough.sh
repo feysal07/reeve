@@ -691,6 +691,31 @@ printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$LOOP
     check "a counting rule with no log to count from denies, rather than assuming quiet" 1 ||
     check "a counting rule with no log to count from denies, rather than assuming quiet" 0
 
+# A Kubernetes MCP server reaches the same clusters kubectl does. Found on a real
+# machine: a production rule written for shell commands never saw a call made through
+# MCP, and every one was allowed while the rule looked configured. The registry now says
+# what an MCP server runs, the guard finds its definition in the agent's own
+# configuration, and a call naming a production namespace is production. A call to a
+# development namespace, through the same server, is the control: it proves the answer
+# comes from resolving the call rather than from a rule about MCP in general.
+MCP_HOME="$SANDBOX/mcp-home"
+mkdir -p "$MCP_HOME"
+printf '{"mcpServers": {"kubernetes": {"command": "npx", "args": ["-y", "kubernetes-mcp-server@latest"]}}}' > "$MCP_HOME/.claude.json"
+printf 'version: 1\ndefault: allow\nrules:\n  - id: production\n    decision: deny\n    match:\n      kind: [shell, mcp]\n      environment: [production]\n' > "$SANDBOX/mcp-production.yaml"
+mcp_call() {
+    printf '{"session_id":"m","hook_event_name":"PreToolUse","tool_name":"mcp__kubernetes__pods_list_in_namespace","tool_input":{"namespace":"%s"},"cwd":"%s"}' "$1" "$MCP_HOME" |
+        env HOME="$MCP_HOME" USERPROFILE="$MCP_HOME" APPDATA="$MCP_HOME" LOCALAPPDATA="$MCP_HOME" \
+            KUBECONFIG="$MCP_HOME/none" "$REEVE" guard --agent claude-code \
+            --policy "$SANDBOX/mcp-production.yaml" \
+            --resources "$REPO/examples/resources/resources.yaml" >/dev/null 2>&1
+    echo $?
+}
+MCP_PROD=$(mcp_call payments)
+MCP_DEV=$(mcp_call dev)
+[ "$MCP_PROD:$MCP_DEV" = "2:0" ] &&
+    check "a production rule sees an MCP call that reaches production" 1 ||
+    check "a production rule sees an MCP call that reaches production" 0 "exits were production $MCP_PROD, development $MCP_DEV; want 2 and 0"
+
 
 # A budget, the other rule that depends on a record rather than on the request. It
 # totals the event store the collector writes, and its failure modes are the ones

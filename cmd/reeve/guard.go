@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/model"
@@ -155,6 +157,10 @@ func runGuard(args []string) error {
 // degrades to "unknown" rather than failing closed. A rule that wants to be careful
 // about unresolvable targets says so by matching on "unknown" explicitly.
 func resolveEnvironment(act *policy.Action, explicit string) {
+	if act.Kind == policy.KindMCP && act.MCPServer != "" {
+		resolveMCPEnvironment(act, explicit)
+		return
+	}
 	if act.Kind != policy.KindShell || act.Command == "" {
 		return
 	}
@@ -179,6 +185,77 @@ func resolveEnvironment(act *policy.Action, explicit string) {
 
 	act.Environment = target.Environment
 	act.EnvironmentDetail = target.Detail
+}
+
+// resolveMCPEnvironment works out which environment an MCP call reaches.
+//
+// Unlike a shell command, an MCP call never says what it runs: the server is named by a
+// label from the agent's configuration. So the definition is looked up in that
+// configuration, the same files scan reads, and matched against the registry by command
+// line or URL. The configuration is read only when the registry lists any MCP server at
+// all, because nothing could match otherwise and every MCP call would pay for it.
+//
+// A server the registry does not list is unknown, never assumed harmless. On a machine
+// with no registry that is every MCP call, which is the truth about them.
+func resolveMCPEnvironment(act *policy.Action, explicit string) {
+	home, _ := os.UserHomeDir()
+	workDir := act.CWD
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	reg := loadRegistry(explicit, home)
+	var found []resource.ConfiguredServer
+	if reg != nil && len(reg.MCP) > 0 {
+		found = configuredMCPServers(act.Agent, act.MCPServer, adapter.Env{
+			Home: home, WorkDir: workDir, GOOS: runtime.GOOS,
+			Getenv: os.Getenv, ProgramData: os.Getenv("ProgramData"),
+		})
+	}
+	t := reg.ClassifyMCP(act.MCPServer, found, act.MCPArguments,
+		resource.Env{Home: home, WorkDir: workDir, Getenv: os.Getenv})
+	act.Environment = t.Environment
+	act.EnvironmentDetail = t.Detail
+}
+
+// configuredMCPServers returns every definition of a named server in one agent's
+// configuration.
+//
+// The name in a tool call is the agent's rendering of the configured name, which may
+// have replaced characters a tool identifier cannot carry, so both sides are compared in
+// that rendering.
+func configuredMCPServers(agent model.AgentID, name string, env adapter.Env) []resource.ConfiguredServer {
+	var out []resource.ConfiguredServer
+	for _, a := range supportedAdapters() {
+		if a.ID() != agent {
+			continue
+		}
+		inst, err := a.Inspect(context.Background(), env)
+		if err != nil {
+			return nil
+		}
+		for _, s := range inst.MCPServers {
+			if toolSafe(s.Name) != toolSafe(name) {
+				continue
+			}
+			out = append(out, resource.ConfiguredServer{
+				Command: s.Command, Args: s.Args, URL: s.URL, EnvKeys: s.EnvKeys,
+			})
+		}
+	}
+	return out
+}
+
+// toolSafe renders a server name the way agents do when they build a tool identifier
+// from it: anything outside letters, digits, underscore and hyphen becomes an
+// underscore.
+func toolSafe(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			return r
+		}
+		return '_'
+	}, name)
 }
 
 // loadRegistry finds a registry, returning nil when there is none. A nil registry
