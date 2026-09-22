@@ -37,7 +37,21 @@ type Trust struct {
 	RequireToken bool `yaml:"requireToken,omitempty"`
 	// TeamFromClaim names a claim to read the team from, when the operator wants group
 	// membership from the provider rather than from the team map.
+	//
+	// Off unless set. A groups claim inside a signed token from the operator's own
+	// provider is not client-asserted, so reading one satisfies the invariant that
+	// attribution never comes from anything the agent said about itself — but it is
+	// still a decision an operator makes rather than a default this build assumes.
 	TeamFromClaim string `yaml:"teamFromClaim,omitempty"`
+
+	// TeamPriority orders the teams, for the common case of somebody in several groups.
+	//
+	// Required whenever a person can hold more than one. Without it, picking "the"
+	// group means picking whichever the provider happened to list first, which is a
+	// different team on a different day and a budget that moves with it. An ambiguous
+	// team is therefore no team at all, and a team-scoped rule refuses rather than
+	// enforcing against a coin toss.
+	TeamPriority []string `yaml:"teamPriority,omitempty"`
 }
 
 // Defaults applied when the operator left something out.
@@ -78,6 +92,9 @@ func Parse(b []byte) (*Trust, error) {
 		return nil, fmt.Errorf("audience is required: without it a token minted for any other application at the same provider would be accepted")
 	}
 
+	if len(t.TeamPriority) > 0 && t.TeamFromClaim == "" {
+		return nil, fmt.Errorf("teamPriority is set and teamFromClaim is not, so the priority would order nothing")
+	}
 	for _, a := range t.Algorithms {
 		if a != AlgRS256 && a != AlgES256 {
 			return nil, fmt.Errorf("algorithm %q is not one this build verifies, which are %s and %s",

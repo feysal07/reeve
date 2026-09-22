@@ -44,3 +44,17 @@ requireToken: false
 # Restrict what will be verified. Omitted means RS256 and ES256, which is every
 # compliant provider; anything else is refused when this file is read.
 # algorithms: [RS256]
+
+# Read the team from a claim in the token, rather than from teams.yaml.
+#
+# A groups claim inside a token your own provider signed is not something the machine
+# being governed can edit, so it meets the same standard the team map does. Off unless
+# set, because it is a decision an operator makes rather than a default.
+#
+# teamPriority is required as soon as somebody can hold more than one group. Without it,
+# "the" group is whichever the provider happened to list first - a different team on a
+# different day, and a team budget that moves with it. Several groups and no priority is
+# therefore no team at all, and a team-scoped rule refuses rather than enforcing against
+# a coin toss.
+# teamFromClaim: groups
+# teamPriority: [payments, platform, engineering]

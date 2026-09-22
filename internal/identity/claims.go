@@ -119,6 +119,36 @@ func Validate(payload []byte, t *Trust, now time.Time) (*Claims, error) {
 	}, nil
 }
 
+// Team is the team this token says the person belongs to, or empty.
+//
+// Empty whenever the answer would be a guess, and that is the whole design. Three ways
+// it is empty: the operator has not asked for a team from the token at all; the token
+// carries no groups; or the person holds several groups and none of them appears in the
+// operator's priority list.
+//
+// That last one is the case worth spelling out. Picking the first group the provider
+// happened to list would be a different team on a different day, because nothing
+// obliges a provider to order them — and a team budget that moves between teams by
+// itself is worse than one that refuses, because it produces a number every time. An
+// ambiguous team is no team, and a team-scoped rule then refuses with a reason.
+func (c *Claims) Team(t *Trust) string {
+	if c == nil || t == nil || t.TeamFromClaim == "" || len(c.Groups) == 0 {
+		return ""
+	}
+	// The priority list decides, in the operator's order rather than the provider's.
+	for _, want := range t.TeamPriority {
+		if contains(c.Groups, want) {
+			return want
+		}
+	}
+	// No priority list and exactly one group is unambiguous, so it is usable. More than
+	// one without a list is not, and saying so is better than choosing.
+	if len(t.TeamPriority) == 0 && len(c.Groups) == 1 {
+		return c.Groups[0]
+	}
+	return ""
+}
+
 // stringOrArray reads a claim published as either a string or an array of them.
 //
 // Both shapes are in the wild, for aud and for groups. A decoder handling one and
