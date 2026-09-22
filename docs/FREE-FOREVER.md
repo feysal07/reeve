@@ -34,9 +34,9 @@ list. **Planned** means it has not been written yet; it does not soften the prom
   administrator-owned lists that restrict it. A registry with its own interface is
   *planned*.
 - **Single sign-on.** OIDC login and group-based policy, against any compliant identity
-  provider. Authentication is not a premium feature. *Planned*, and the most expensive
-  promise on this page, which is the reason for making it in writing rather than
-  deciding later under revenue pressure.
+  provider. Authentication is not a premium feature. It was the most expensive promise
+  on this page, and the reason for making it in writing rather than deciding later under
+  revenue pressure. `reeve login` ships in v0.6.0; group-based policy follows it.
 - **Deployment.** Container images and Helm charts for everything above.
 
 ## What is intended to be paid

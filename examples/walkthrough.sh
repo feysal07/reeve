@@ -1141,6 +1141,25 @@ EOF
         *) check "an unusable identity configuration is an error, not a silent downgrade" 0 "$BAD_SSO" ;;
     esac
 
+    # reeve login is the only command here that reaches the network, and it refuses
+    # before doing so when no operator has said which provider to trust. Single sign-on
+    # a developer could configure is single sign-on pointed at their own keypair.
+    LOGIN_OUT=$(REEVE_IDENTITY_CONFIG="$SANDBOX/does-not-exist.yaml" \
+        "$REEVE" login --client-id reeve 2>&1 | tr -s '[:space:]' ' ')
+    case "$LOGIN_OUT" in
+        *"no identity configuration"*)
+            check "login refuses when no operator has said which provider to trust" 1 ;;
+        *)  check "login refuses when no operator has said which provider to trust" 0 "$LOGIN_OUT" ;;
+    esac
+
+    # And it will not start a login it could not finish: a client id is the thing the
+    # provider registered, and asking without one wastes a round trip and a person.
+    NOID=$(REEVE_IDENTITY_CONFIG="$SANDBOX/identity.yaml" "$REEVE" login 2>&1 | tr -s '[:space:]' ' ')
+    case "$NOID" in
+        *"client-id is required"*) check "login says which argument it needs" 1 ;;
+        *) check "login says which argument it needs" 0 "$NOID" ;;
+    esac
+
     # A scope nobody validated silently means session, which is a per-person limit anyone
     # resets by starting a new session.
     printf 'version: 1\nrules:\n  - id: typo\n    decision: deny\n    match:\n      tokens: {within: 168h, moreThan: 1, scope: persno}\n' > "$SANDBOX/scope-typo.yaml"

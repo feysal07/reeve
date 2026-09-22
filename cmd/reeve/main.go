@@ -1,7 +1,11 @@
 // Command reeve discovers and governs AI coding agents.
 //
-// This is the operator-facing entry point. It performs no network access and never
-// modifies an agent's configuration.
+// This is the operator-facing entry point. It never modifies an agent's configuration.
+//
+// One subcommand reaches the network and only when a person runs it: reeve login, which
+// talks to the identity provider the operator declared. Everything else, and in
+// particular the guard, is local — a test walks internal/identity's import graph to keep
+// that true rather than merely intended.
 package main
 
 import (
@@ -61,6 +65,8 @@ func run(args []string) error {
 		return runInstall(args[1:])
 	case "uninstall":
 		return runUninstall(args[1:])
+	case "login":
+		return runLogin(args[1:])
 	case "doctor":
 		return runDoctor(args[1:])
 	case "trial":
@@ -92,6 +98,7 @@ Usage:
   reeve install          Register the guard in every agent on this machine
                          --policy, --store, --prices, --enforce, --plan
   reeve uninstall        Remove it again, leaving your own hooks alone
+  reeve login            Sign in, so a per-person rule has an identity nobody can forge
   reeve doctor           Check the guard is registered AND actually answering
   reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
   reeve version          Print the version
