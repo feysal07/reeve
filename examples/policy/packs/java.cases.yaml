@@ -1,0 +1,28 @@
+cases:
+  - name: editing a Liquibase changeset asks
+    action: {kind: write, paths: ["/src/svc/src/main/resources/db/changelog/0042-add-index.xml"]}
+    expect: {effect: ask, rule: edit-applied-migration}
+  - name: editing a Flyway migration asks
+    action: {kind: write, paths: ["/src/svc/src/main/resources/db/migration/V7__orders.sql"]}
+    expect: {effect: ask, rule: edit-applied-migration}
+  - name: flyway clean is stopped
+    action: {kind: shell, command: "mvn flyway:clean -Dflyway.url=jdbc:postgresql://db/app"}
+    expect: {effect: deny, rule: drop-schema}
+  - name: building without tests asks
+    action: {kind: shell, command: "mvn -q package -DskipTests"}
+    expect: {effect: ask, rule: skip-verification}
+  - name: gradle excluding the test task at the end asks
+    action: {kind: shell, command: "./gradlew build -x test"}
+    expect: {effect: ask, rule: skip-verification-at-the-end}
+  - name: gradle excluding the test task mid-line asks
+    action: {kind: shell, command: "./gradlew -x test build"}
+    expect: {effect: ask, rule: skip-verification}
+  - name: curl through a proxy is not a skipped test
+    action: {kind: shell, command: "curl -x test-proxy.internal:8080 https://example.com"}
+    expect: {effect: allow}
+  - name: an ordinary build is not interrupted
+    action: {kind: shell, command: "mvn -q verify"}
+    expect: {effect: allow}
+  - name: editing a service class is not interrupted
+    action: {kind: write, paths: ["/src/svc/src/main/java/com/example/OrderService.java"]}
+    expect: {effect: allow}

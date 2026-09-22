@@ -15,7 +15,7 @@ func splitFileAndFlags(args []string) (file string, flags []string) {
 		"--agent": true, "--platform": true, "--out": true, "--policy": true,
 		"--log": true, "--dir": true, "--fail-on": true, "--kind": true,
 		"--tool": true, "--command": true, "--path": true, "--url": true,
-		"--mcp-server": true, "--mcp-tool": true,
+		"--mcp-server": true, "--mcp-tool": true, "--cases": true,
 	}
 
 	skipNext := false

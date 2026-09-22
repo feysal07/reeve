@@ -1,0 +1,34 @@
+cases:
+  - name: rewriting the policy the guard reads is stopped
+    action: {kind: write, paths: ["/home/dev/.reeve/policy.yaml"]}
+    expect: {effect: deny, rule: edit-reeve-itself}
+  - name: replacing the guard binary is stopped
+    action: {kind: write, paths: ['C:\Users\dev\.reeve\bin\reeve.exe']}
+    expect: {effect: deny, rule: edit-reeve-itself}
+  - name: editing managed settings is stopped
+    action: {kind: write, paths: ["/etc/claude-code/managed-settings.json"]}
+    expect: {effect: deny, rule: edit-managed-settings}
+  - name: editing the hooks in a user's settings asks
+    action: {kind: write, paths: ["/home/dev/.claude/settings.json"]}
+    expect: {effect: ask, rule: edit-agent-settings}
+  - name: reinstalling the guard from the shell asks
+    action: {kind: shell, command: "reeve install --dry-run"}
+    expect: {effect: ask, rule: shell-touches-the-guard}
+  - name: sed on the policy asks
+    action: {kind: shell, command: "sed -i 's/deny/allow/' ~/.reeve/policy.yaml"}
+    expect: {effect: ask, rule: shell-touches-the-guard}
+  - name: a project folder that happens to be called ClaudeCode is not blocked
+    action: {kind: write, paths: ["/src/ClaudeCode/app/main.go"]}
+    expect: {effect: allow}
+  - name: a Python project's requirements file is not blocked
+    action: {kind: write, paths: ["/src/app/requirements.toml"]}
+    expect: {effect: allow}
+  - name: editing Codex's administrator requirements is stopped
+    action: {kind: write, paths: ["/etc/codex/requirements.toml"]}
+    expect: {effect: deny, rule: edit-managed-settings}
+  - name: editing application settings is not interrupted
+    action: {kind: write, paths: ["/src/app/config/settings.json"]}
+    expect: {effect: allow}
+  - name: reading the policy is not interrupted
+    action: {kind: read, paths: ["/home/dev/.reeve/policy.yaml"]}
+    expect: {effect: allow}
