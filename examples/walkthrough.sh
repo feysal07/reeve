@@ -1456,6 +1456,23 @@ ENTRIES=$(grep -c "guard --agent claude-code" "$INST_HOME/.claude/settings.json"
     check "installing twice registers the guard once" 1 ||
     check "installing twice registers the guard once" 0 "found $ENTRIES registrations"
 
+# A policy the operator wrote survives a reinstall.
+#
+# Found on a real machine. Refreshing the hook with install and no --policy wrote the
+# built-in trial policy over the operator's own, and the plan beforehand listed only
+# hook commands - so the output was the same whether or not the policy had just been
+# destroyed. The plan must now say what it will do to the policy, and keep it.
+printf "version: 1\ndefault: allow\nrules:\n  - id: operators-own-marker\n    decision: deny\n    match:\n      command: [dropdb]\n" > "$INST_HOME/.reeve/policy.yaml"
+KEEP_PLAN=$(env $INST_ENV "$REEVE" install --plan 2>&1 | tr -s "[:space:]" " ")
+env $INST_ENV "$REEVE" install >/dev/null 2>&1
+case "$KEEP_PLAN" in
+    *"would keep the existing policy"*)
+        grep -q "operators-own-marker" "$INST_HOME/.reeve/policy.yaml" &&
+            check "a reinstall keeps a policy the operator wrote, and the plan says so" 1 ||
+            check "a reinstall keeps a policy the operator wrote, and the plan says so" 0 "the reinstall replaced it" ;;
+    *)  check "a reinstall keeps a policy the operator wrote, and the plan says so" 0 "$KEEP_PLAN" ;;
+esac
+
 # Registered is not firing. A hook can be in the file, answer perfectly when
 # called by hand, and never once be called by the agent — and from the outside
 # that looks exactly like a machine on which nothing bad happened.

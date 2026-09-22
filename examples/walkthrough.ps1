@@ -1302,6 +1302,28 @@ try {
     $entries = ([regex]::Matches((Get-Content $instSettings -Raw), "guard --agent claude-code")).Count
     Check "installing twice registers the guard once" ($entries -eq 1) "found $entries registrations"
 
+    # A policy the operator wrote survives a reinstall.
+    #
+    # Found on a real machine. Refreshing the hook with install and no --policy wrote the
+    # built-in trial policy over the operator's own, and the plan beforehand listed only
+    # hook commands - so the output was the same whether or not the policy had just been
+    # destroyed. The plan must now say what it will do to the policy, and keep it.
+    Write-Text (Join-Path $instHome ".reeve\policy.yaml") @'
+version: 1
+default: allow
+rules:
+  - id: operators-own-marker
+    decision: deny
+    match:
+      command: [dropdb]
+'@
+    $keepPlan = (& $reeve install --plan 2>&1 | Out-String)
+    $null = (& $reeve install 2>&1)
+    $kept = (Get-Content (Join-Path $instHome ".reeve\policy.yaml") -Raw) -match "operators-own-marker"
+    Check "a reinstall keeps a policy the operator wrote, and the plan says so" `
+        ((($keepPlan -replace '\s+', ' ') -match "would keep the existing policy") -and $kept) `
+        $keepPlan.Trim()
+
     # Registered is not firing. A hook can be in the file, answer perfectly when
     # called by hand, and never once be called by the agent — and from the outside
     # that looks exactly like a machine on which nothing bad happened.
