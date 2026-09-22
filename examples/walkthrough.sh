@@ -716,6 +716,22 @@ MCP_DEV=$(mcp_call dev)
     check "a production rule sees an MCP call that reaches production" 1 ||
     check "a production rule sees an MCP call that reaches production" 0 "exits were production $MCP_PROD, development $MCP_DEV; want 2 and 0"
 
+# A policy is code, and a cases file is its tests: named actions and the decision each
+# must get. The baseline and every pack ship with one, so a change to them is checked
+# before anybody's agent finds out. A run that printed FAIL and exited zero would pass
+# every CI job it was put in, so a deliberately wrong case must fail the command.
+CASES_FAILED=""
+for CASES in "$REPO"/examples/policy/*.cases.yaml "$REPO"/examples/policy/packs/*.cases.yaml; do
+    "$REEVE" policy test "${CASES%.cases.yaml}.yaml" --cases "$CASES" >/dev/null 2>&1 ||
+        CASES_FAILED="$CASES_FAILED $(basename "$CASES")"
+done
+printf 'cases:\n  - {name: wrong, action: {kind: shell, command: "rm -rf /"}, expect: {effect: allow}}\n' > "$SANDBOX/wrong.cases.yaml"
+"$REEVE" policy test "$REPO/examples/policy/baseline.yaml" --cases "$SANDBOX/wrong.cases.yaml" >/dev/null 2>&1
+WRONG_CODE=$?
+[ -z "$CASES_FAILED" ] && [ "$WRONG_CODE" != 0 ] &&
+    check "every shipped policy passes its own cases, and a wrong case fails" 1 ||
+    check "every shipped policy passes its own cases, and a wrong case fails" 0 "failing:${CASES_FAILED:- none}; a wrong case exited $WRONG_CODE"
+
 
 # A budget, the other rule that depends on a record rather than on the request. It
 # totals the event store the collector writes, and its failure modes are the ones

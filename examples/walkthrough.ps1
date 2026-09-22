@@ -630,6 +630,27 @@ foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$
 Check "a production rule sees an MCP call that reaches production" `
     (($mcpExits -join ":") -eq "2:0") "exits were $($mcpExits -join ', '); want 2 and 0"
 
+# A policy is code, and a cases file is its tests: named actions and the decision each
+# must get. The baseline and every pack ship with one, so a change to them is checked
+# before anybody's agent finds out. A run that printed FAIL and exited zero would pass
+# every CI job it was put in, so a deliberately wrong case must fail the command.
+$casesFailed = @()
+$casesFiles = @(Get-ChildItem (Join-Path $repo "examples\policy") -Filter "*.cases.yaml") +
+    @(Get-ChildItem (Join-Path $repo "examples\policy\packs") -Filter "*.cases.yaml")
+foreach ($cf in $casesFiles) {
+    $pol = $cf.FullName -replace '\.cases\.yaml$', '.yaml'
+    $null = (& $reeve policy test $pol --cases $cf.FullName 2>&1)
+    if ($LASTEXITCODE -ne 0) { $casesFailed += $cf.Name }
+}
+Write-Text (Join-Path $Sandbox "wrong.cases.yaml") @'
+cases:
+  - {name: wrong, action: {kind: shell, command: "rm -rf /"}, expect: {effect: allow}}
+'@
+$null = (& $reeve policy test (Join-Path $repo "examples\policy\baseline.yaml") --cases (Join-Path $Sandbox "wrong.cases.yaml") 2>&1)
+$wrongCode = $LASTEXITCODE
+Check "every shipped policy passes its own cases, and a wrong case fails" `
+    (($casesFailed.Count -eq 0) -and ($wrongCode -ne 0)) "failing: $($casesFailed -join ', '); a wrong case exited $wrongCode"
+
 # A budget, the other rule that depends on a record rather than on the request. It
 # totals the event store the collector writes, and its failure modes are the ones
 # worth asserting: unreadable refuses, and an agent that reports no cost at all is

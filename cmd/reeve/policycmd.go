@@ -130,7 +130,71 @@ func runPolicyCheck(args []string) error {
 			fmt.Printf("\n  warning: rule %q has no match conditions, so it applies to every action.\n", r.ID)
 		}
 	}
+	for _, w := range mcpBlindSpots(p) {
+		fmt.Printf("\n  warning: %s\n", wrap(w, 72, "  "))
+	}
 	return nil
+}
+
+// mcpBlindSpots names environment rules that no MCP call can reach.
+//
+// Found on a real machine: a production rule written for shell commands, and a
+// Kubernetes MCP server reaching the same clusters. Every call through the server was
+// allowed without a prompt while the rule looked configured. A rule is only reported
+// when nothing else in the policy covers MCP calls to the same environment, so a policy
+// that pairs a shell rule with an MCP one - as the Kubernetes pack does - is not.
+func mcpBlindSpots(p *policy.Policy) []string {
+	var out []string
+	for _, r := range p.Rules {
+		if len(r.Match.Environment) == 0 || reachesMCP(r.Match) {
+			continue
+		}
+		for _, env := range r.Match.Environment {
+			if mcpCovered(p, env) {
+				continue
+			}
+			out = append(out, fmt.Sprintf("rule %q matches the %s environment for shell "+
+				"commands only, and no rule here matches an MCP call that reaches it. A "+
+				"Kubernetes MCP server reaches the same clusters as kubectl; add mcp to the "+
+				"rule's kinds, or see examples/policy/packs/kubernetes.yaml.", r.ID, env))
+			break
+		}
+	}
+	return out
+}
+
+// reachesMCP reports whether a rule's conditions can match an MCP call at all. A rule
+// with a command condition cannot, whatever its kinds say: an MCP call has no command.
+func reachesMCP(m policy.Match) bool {
+	if len(m.Command) > 0 || len(m.CommandContains) > 0 || len(m.CommandRuns) > 0 {
+		return false
+	}
+	if len(m.Kinds) == 0 {
+		return true
+	}
+	for _, k := range m.Kinds {
+		if k == policy.KindMCP {
+			return true
+		}
+	}
+	return false
+}
+
+func mcpCovered(p *policy.Policy, env string) bool {
+	for _, r := range p.Rules {
+		if !reachesMCP(r.Match) {
+			continue
+		}
+		if len(r.Match.Environment) == 0 {
+			return true
+		}
+		for _, e := range r.Match.Environment {
+			if strings.EqualFold(e, env) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isEmptyMatch reports whether a rule narrows nothing and so applies to everything.
@@ -154,17 +218,28 @@ func runPolicyTest(args []string) error {
 	url := fs.String("url", "", "target, for fetch actions")
 	mcpServer := fs.String("mcp-server", "", "MCP server name")
 	mcpTool := fs.String("mcp-tool", "", "MCP tool name")
+	casesPath := fs.String("cases", "", "a cases file: named actions and the decision each must get")
 	file, flags := splitFileAndFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return err
 	}
 	if file == "" {
-		return fmt.Errorf("usage: reeve policy test <file> [flags]")
+		return fmt.Errorf("usage: reeve policy test <file> [--cases <file> | flags]")
 	}
 
 	p, err := policy.Load(file)
 	if err != nil {
 		return err
+	}
+	if *casesPath != "" {
+		// One or the other. An action described by flags alongside a cases file
+		// would be silently ignored, and whoever typed it would read the cases'
+		// verdict as an answer about their action.
+		if *kind != "" || *tool != "" || *command != "" || *path != "" || *url != "" ||
+			*mcpServer != "" || *mcpTool != "" {
+			return fmt.Errorf("give either --cases or an action, not both")
+		}
+		return runPolicyCases(file, p, *casesPath)
 	}
 
 	act := policy.Action{
@@ -265,4 +340,31 @@ func plural(n int, many, one string) string {
 		return one
 	}
 	return many
+}
+
+// runPolicyCases runs a cases file and fails when any case does, so it can gate CI.
+func runPolicyCases(policyFile string, p *policy.Policy, casesPath string) error {
+	cs, err := policy.LoadCases(casesPath, p)
+	if err != nil {
+		return err
+	}
+	results := cs.Run(p)
+	failed := 0
+	fmt.Printf("\n%s against %s\n\n", casesPath, policyFile)
+	for _, r := range results {
+		mark := "PASS"
+		if !r.Pass {
+			mark = "FAIL"
+			failed++
+		}
+		fmt.Printf("  [%s] %s\n", mark, r.Case.Name)
+		if !r.Pass {
+			fmt.Printf("         %s\n", r.Why)
+		}
+	}
+	fmt.Printf("\n  %d of %d cases passed.\n\n", len(results)-failed, len(results))
+	if failed > 0 {
+		return fmt.Errorf("%d case(s) failed", failed)
+	}
+	return nil
 }

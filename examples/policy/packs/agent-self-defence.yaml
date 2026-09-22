@@ -1,0 +1,76 @@
+# The agent changing the controls on itself.
+#
+# Every other rule assumes the guard is still installed. An agent can edit the file that
+# registers it, the policy it reads, or the binary it runs, with the same write tool it
+# uses for source code - and the next action would then be decided by whatever it wrote.
+# None of that needs malice: "the hook keeps blocking me, remove it" is a reasonable-
+# sounding step for an agent that has been told to get a build passing.
+#
+# Deny for Reeve's own files and for administrator-owned settings, which no session
+# should be editing. Ask for each agent's per-user settings, which developers do ask
+# agents to change, and where the prompt is the point: a person sees that the hooks
+# block is being edited, rather than finding out afterwards.
+version: 1
+name: agent-self-defence
+default: allow
+
+rules:
+  - id: edit-reeve-itself
+    description: Editing Reeve's own policy, binary or state
+    decision: deny
+    reason: >-
+      This is the policy, binary or record the guard runs from. A session that can
+      rewrite them is deciding its own rules. Make the change yourself, outside the
+      agent.
+    match:
+      kind: [write]
+      path:
+        - "**/.reeve/**"
+        - "**/reeve/policy.yaml"
+        - "**/Reeve/policy.yaml"
+        - "**/reeve/resources.yaml"
+        - "**/reeve/identity.yaml"
+
+  - id: edit-managed-settings
+    description: Editing administrator-owned agent settings
+    decision: deny
+    reason: >-
+      These are the settings an administrator put in place so a developer's own
+      configuration cannot override them. No session should be changing them.
+    match:
+      kind: [write]
+      path:
+        - "**/managed-settings.json"
+        - "**/ClaudeCode/**"
+        - "**/requirements.toml"
+
+  - id: edit-agent-settings
+    description: Editing an agent's own settings, where its hooks are registered
+    decision: ask
+    reason: >-
+      This file registers the hooks that govern this agent, and its permissions.
+      Check what is being changed before letting it through.
+    match:
+      kind: [write]
+      path:
+        - "**/.claude/settings.json"
+        - "**/.claude/settings.local.json"
+        - "**/.codex/config.toml"
+        - "**/.gemini/settings.json"
+        - "**/.cursor/hooks.json"
+        - "**/.copilot/config.json"
+
+  - id: shell-touches-the-guard
+    description: Changing the guard or its files from the shell
+    decision: ask
+    reason: >-
+      This command reinstalls, removes or edits the guard that decides this agent's
+      actions. Check it is something you asked for.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "reeve install"
+        - "reeve uninstall"
+        - ".reeve/"
+        - '.reeve\'
+        - "managed-settings.json"
