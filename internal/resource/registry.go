@@ -40,6 +40,10 @@ type Registry struct {
 	// strictest first: an identifier matching both production and development
 	// patterns should be treated as production.
 	Environments []Environment `yaml:"environments"`
+
+	// MCP lists MCP servers by what they run, and says which environment a call to
+	// each one reaches. A server not listed here is unknown. See mcp.go.
+	MCP []MCPServer `yaml:"mcp,omitempty"`
 }
 
 // Environment is one named environment and the things that belong to it.
@@ -103,6 +107,9 @@ func Parse(b []byte) (*Registry, error) {
 			return nil, fmt.Errorf("environments[%d]: duplicate name %q", i, e.Name)
 		}
 		seen[e.Name] = true
+	}
+	if err := r.validateMCP(); err != nil {
+		return nil, err
 	}
 	return &r, nil
 }

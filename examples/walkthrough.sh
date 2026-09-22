@@ -691,6 +691,47 @@ printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$LOOP
     check "a counting rule with no log to count from denies, rather than assuming quiet" 1 ||
     check "a counting rule with no log to count from denies, rather than assuming quiet" 0
 
+# A Kubernetes MCP server reaches the same clusters kubectl does. Found on a real
+# machine: a production rule written for shell commands never saw a call made through
+# MCP, and every one was allowed while the rule looked configured. The registry now says
+# what an MCP server runs, the guard finds its definition in the agent's own
+# configuration, and a call naming a production namespace is production. A call to a
+# development namespace, through the same server, is the control: it proves the answer
+# comes from resolving the call rather than from a rule about MCP in general.
+MCP_HOME="$SANDBOX/mcp-home"
+mkdir -p "$MCP_HOME"
+printf '{"mcpServers": {"kubernetes": {"command": "npx", "args": ["-y", "kubernetes-mcp-server@latest"]}}}' > "$MCP_HOME/.claude.json"
+printf 'version: 1\ndefault: allow\nrules:\n  - id: production\n    decision: deny\n    match:\n      kind: [shell, mcp]\n      environment: [production]\n' > "$SANDBOX/mcp-production.yaml"
+mcp_call() {
+    printf '{"session_id":"m","hook_event_name":"PreToolUse","tool_name":"mcp__kubernetes__pods_list_in_namespace","tool_input":{"namespace":"%s"},"cwd":"%s"}' "$1" "$MCP_HOME" |
+        env HOME="$MCP_HOME" USERPROFILE="$MCP_HOME" APPDATA="$MCP_HOME" LOCALAPPDATA="$MCP_HOME" \
+            KUBECONFIG="$MCP_HOME/none" "$REEVE" guard --agent claude-code \
+            --policy "$SANDBOX/mcp-production.yaml" \
+            --resources "$REPO/examples/resources/resources.yaml" >/dev/null 2>&1
+    echo $?
+}
+MCP_PROD=$(mcp_call payments)
+MCP_DEV=$(mcp_call dev)
+[ "$MCP_PROD:$MCP_DEV" = "2:0" ] &&
+    check "a production rule sees an MCP call that reaches production" 1 ||
+    check "a production rule sees an MCP call that reaches production" 0 "exits were production $MCP_PROD, development $MCP_DEV; want 2 and 0"
+
+# A policy is code, and a cases file is its tests: named actions and the decision each
+# must get. The baseline and every pack ship with one, so a change to them is checked
+# before anybody's agent finds out. A run that printed FAIL and exited zero would pass
+# every CI job it was put in, so a deliberately wrong case must fail the command.
+CASES_FAILED=""
+for CASES in "$REPO"/examples/policy/*.cases.yaml "$REPO"/examples/policy/packs/*.cases.yaml; do
+    "$REEVE" policy test "${CASES%.cases.yaml}.yaml" --cases "$CASES" >/dev/null 2>&1 ||
+        CASES_FAILED="$CASES_FAILED $(basename "$CASES")"
+done
+printf 'cases:\n  - {name: wrong, action: {kind: shell, command: "rm -rf /"}, expect: {effect: allow}}\n' > "$SANDBOX/wrong.cases.yaml"
+"$REEVE" policy test "$REPO/examples/policy/baseline.yaml" --cases "$SANDBOX/wrong.cases.yaml" >/dev/null 2>&1
+WRONG_CODE=$?
+[ -z "$CASES_FAILED" ] && [ "$WRONG_CODE" != 0 ] &&
+    check "every shipped policy passes its own cases, and a wrong case fails" 1 ||
+    check "every shipped policy passes its own cases, and a wrong case fails" 0 "failing:${CASES_FAILED:- none}; a wrong case exited $WRONG_CODE"
+
 
 # A budget, the other rule that depends on a record rather than on the request. It
 # totals the event store the collector writes, and its failure modes are the ones
@@ -1050,6 +1091,19 @@ EOF
         *) check "a misspelled condition is an error, not a no-op" 0 "$TYPO" ;;
     esac
 
+    # The detection half of the alias map. A per-person budget compared a verified
+    # subject against events recorded under an address nobody had aliased, totalled
+    # zero, and permitted - measured at nine million tokens over a thousand-token limit.
+    # teams.yaml names people by subject, and this store holds senders it never named,
+    # so a gate asking about unmatched identities must fail and say whom to alias.
+    UNMATCHED=$("$REEVE" report --store "$EVENTS" --fail-on identity.unmatched 2>&1 | tr -s '[:space:]' ' ')
+    "$REEVE" report --store "$EVENTS" --fail-on identity.unmatched >/dev/null 2>&1
+    UNMATCHED_CODE=$?
+    case "$UNMATCHED_CODE:$UNMATCHED" in
+        [1-9]*:*"identity.unmatched"*"Add an alias"*) check "consumption no budget can count is a condition the gate can fail on" 1 ;;
+        *) check "consumption no budget can count is a condition the gate can fail on" 0 "exit $UNMATCHED_CODE: $UNMATCHED" ;;
+    esac
+
     # --store takes the events file, not the directory holding it. Given a directory,
     # the only thing that came back was the operating system's word for reading one:
     # "is a directory" here, and "Incorrect function." on Windows, which names neither
@@ -1170,20 +1224,26 @@ EOF
         *)  check "a misspelled scope is an error, not a quietly different rule" 0 "$TYPO_SCOPE" ;;
     esac
 
-    # A repetition rule scoped per person would count nothing and never fire, because
-    # the decision log records no identity. Accepted, it is a loop breaker that cannot
-    # trigger: allow, no reason, for ever, and indistinguishable from one never
-    # provoked. Refused where somebody is looking instead.
+    # A repetition rule scoped per person. For five changes this was refused at load
+    # time, because the decision log recorded no identity: the count matched nothing,
+    # totalled zero, and a loop breaker that could never fire was accepted. The log
+    # records who now, so the rule has to do what it says - stop the person repeating
+    # themselves, in whichever session, and not a colleague sharing the same log.
     printf 'version: 1\nrules:\n  - id: loop\n    decision: deny\n    match:\n      repeated: {same: tool, within: 5m, moreThan: 2, scope: person}\n' > "$SANDBOX/loop-person.yaml"
-    # Whitespace squeezed before matching: the CLI wraps its explanations to the
-    # terminal width, so a phrase can fall across a line break and a literal match
-    # would fail for a reason that has nothing to do with the behaviour.
-    LOOP_PERSON=$("$REEVE" policy check "$SANDBOX/loop-person.yaml" 2>&1 | tr -s '[:space:]' ' ')
-    case "$LOOP_PERSON" in
-        *"does not record who"*)
-            check "a rule that would never fire is refused rather than accepted" 1 ;;
-        *)  check "a rule that would never fire is refused rather than accepted" 0 "$LOOP_PERSON" ;;
-    esac
+    PERSON_LOG="$SANDBOX/loop-person.jsonl"
+    person_call() {
+        printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://api.example/retry"}}' "$2" |
+            REEVE_IDENTITY="$1" "$REEVE" guard --agent claude-code \
+                --policy "$SANDBOX/loop-person.yaml" --log "$PERSON_LOG" >/dev/null 2>&1
+        echo $?
+    }
+    P1=$(person_call looping@example.com s1)
+    P2=$(person_call looping@example.com s2)
+    P3=$(person_call colleague@example.com s3)
+    P4=$(person_call looping@example.com s4)
+    [ "$P1$P2$P3$P4" = "0002" ] &&
+        check "a loop breaker scoped per person stops that person and not a colleague" 1 ||
+        check "a loop breaker scoped per person stops that person and not a colleague" 0 "exits were $P1 $P2 $P3 $P4, want 0 0 0 2"
 
     # A team budget needs two operator-owned inputs: an identity the developer cannot
     # edit, and the mapping from it to a team. With an identity but no mapping there is
@@ -1471,6 +1531,15 @@ case "$KEEP_PLAN" in
             check "a reinstall keeps a policy the operator wrote, and the plan says so" 1 ||
             check "a reinstall keeps a policy the operator wrote, and the plan says so" 0 "the reinstall replaced it" ;;
     *)  check "a reinstall keeps a policy the operator wrote, and the plan says so" 0 "$KEEP_PLAN" ;;
+esac
+
+# The same fact, for a script. install --json was the bare list of per-agent results,
+# with no schemaVersion and nothing about the policy, so a script driving install could
+# not tell a first install from one that had just replaced a customised policy.
+KEEP_JSON=$(env $INST_ENV "$REEVE" install --plan --json 2>&1 | tr -s '[:space:]' ' ')
+case "$KEEP_JSON" in
+    *'"schemaVersion"'*'"action": "keep"'*'"written": false'*) check "install --json is versioned and says what it did to the policy" 1 ;;
+    *) check "install --json is versioned and says what it did to the policy" 0 "$KEEP_JSON" ;;
 esac
 
 # Registered is not firing. A hook can be in the file, answer perfectly when

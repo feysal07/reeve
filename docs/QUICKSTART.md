@@ -44,7 +44,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 119 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 123 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -172,6 +172,13 @@ separately from the agents that are done.
 Installing twice refreshes the existing registration rather than adding a second one.
 Two registrations would decide every action twice and log it twice, doubling every
 count in `reeve report`.
+
+**A policy you already have is kept.** Without `--policy`, install writes the built-in
+policy only when there is none; `--policy` replaces it and keeps the old one as
+`policy.yaml.previous`. The plan says which will happen, and so does `--json`, whose
+`policy` object carries `action` (`create`, `keep`, `replace` or `unchanged`) and
+`written`, so a script can tell a first install from one that just changed a policy
+somebody edited by hand. Like every other `--json` output, it carries `schemaVersion`.
 
 For an organisation, `reeve policy compile` is the other half: it produces the
 administrator-owned files to deploy, which a developer cannot remove.
