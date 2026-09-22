@@ -243,11 +243,91 @@ func policyLine(pp policyPlan, path string, plan bool) string {
 	return path
 }
 
+// installReport is what install and uninstall emit with --json.
+//
+// It used to be the bare list of per-agent results, with no schemaVersion - the one
+// JSON output left outside the convention every other command follows - and with
+// nothing about the policy file, which is the one thing install writes that an operator
+// is likely to have edited by hand. A script driving install could not tell a first
+// install from one that had just replaced a customised policy.
+type installReport struct {
+	SchemaVersion string `json:"schemaVersion"`
+	// Command is install or uninstall.
+	Command string `json:"command"`
+	// Plan is true when nothing was changed and this says what would have been.
+	Plan bool `json:"plan"`
+	// Mode is dry-run or enforce: what the installed guard will do. Install only.
+	Mode    string           `json:"mode,omitempty"`
+	LogPath string           `json:"logPath,omitempty"`
+	Results []install.Result `json:"results"`
+	// Policy is what happened, or would happen, to the policy file. Install only.
+	Policy *installPolicy `json:"policy,omitempty"`
+}
+
+// installPolicy is the policy line of the plain output, as data.
+type installPolicy struct {
+	// Action is create, keep, replace or unchanged.
+	Action string `json:"action"`
+	Path   string `json:"path"`
+	// Source is where the new body came from, for create, replace and unchanged.
+	Source string `json:"source,omitempty"`
+	Rules  int    `json:"rules"`
+	// Previous is where the replaced policy is kept, for replace.
+	Previous string `json:"previous,omitempty"`
+	// Written says the file was changed by this run. False for a plan, and for keep
+	// and unchanged, so "did my policy just change" is one field rather than a rule
+	// the reader has to derive from two.
+	Written bool `json:"written"`
+}
+
+func (a policyAction) String() string {
+	switch a {
+	case policyCreate:
+		return "create"
+	case policyKeep:
+		return "keep"
+	case policyReplace:
+		return "replace"
+	case policyUnchanged:
+		return "unchanged"
+	}
+	return "unknown"
+}
+
+func newInstallReport(results []install.Result, opts install.Options, plan, removing bool, pp *policyPlan) installReport {
+	r := installReport{SchemaVersion: schemaVersion, Command: "install", Plan: plan, Results: results}
+	if r.Results == nil {
+		// An empty list, never null: a consumer iterating results should not have to
+		// check for the absence of the thing it asked for.
+		r.Results = []install.Result{}
+	}
+	if removing {
+		r.Command = "uninstall"
+		return r
+	}
+	r.Mode, r.LogPath = "dry-run", opts.LogPath
+	if opts.Enforce {
+		r.Mode = "enforce"
+	}
+	if pp != nil {
+		ip := &installPolicy{Action: pp.Action.String(), Path: opts.PolicyPath, Rules: pp.Rules}
+		if pp.Action != policyKeep {
+			ip.Source = pp.Source
+		}
+		if pp.Action == policyReplace {
+			ip.Previous = opts.PolicyPath + ".previous"
+		}
+		ip.Written = !plan && (pp.Action == policyCreate || pp.Action == policyReplace)
+		r.Policy = ip
+	}
+	return r
+}
+
 func reportInstall(results []install.Result, opts install.Options, asJSON, plan, removing bool, pp *policyPlan) error {
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(results)
+		return enc.Encode(newInstallReport(results, opts, plan, removing, pp))
 	}
 
 	verb := "Installed"

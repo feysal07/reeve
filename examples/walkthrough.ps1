@@ -1396,6 +1396,17 @@ rules:
         ((($keepPlan -replace '\s+', ' ') -match "would keep the existing policy") -and $kept) `
         $keepPlan.Trim()
 
+    # The same fact, for a script. install --json was the bare list of per-agent
+    # results, with no schemaVersion and nothing about the policy, so a script driving
+    # install could not tell a first install from one that had just replaced a
+    # customised policy.
+    $keepJson = (& $reeve install --plan --json 2>&1 | Out-String)
+    $keepDoc = $null
+    try { $keepDoc = $keepJson | ConvertFrom-Json } catch { }
+    Check "install --json is versioned and says what it did to the policy" `
+        (($null -ne $keepDoc) -and $keepDoc.schemaVersion -and ($keepDoc.policy.action -eq "keep") -and (-not $keepDoc.policy.written)) `
+        $keepJson.Trim()
+
     # Registered is not firing. A hook can be in the file, answer perfectly when
     # called by hand, and never once be called by the agent — and from the outside
     # that looks exactly like a machine on which nothing bad happened.

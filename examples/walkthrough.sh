@@ -1533,6 +1533,15 @@ case "$KEEP_PLAN" in
     *)  check "a reinstall keeps a policy the operator wrote, and the plan says so" 0 "$KEEP_PLAN" ;;
 esac
 
+# The same fact, for a script. install --json was the bare list of per-agent results,
+# with no schemaVersion and nothing about the policy, so a script driving install could
+# not tell a first install from one that had just replaced a customised policy.
+KEEP_JSON=$(env $INST_ENV "$REEVE" install --plan --json 2>&1 | tr -s '[:space:]' ' ')
+case "$KEEP_JSON" in
+    *'"schemaVersion"'*'"action": "keep"'*'"written": false'*) check "install --json is versioned and says what it did to the policy" 1 ;;
+    *) check "install --json is versioned and says what it did to the policy" 0 "$KEEP_JSON" ;;
+esac
+
 # Registered is not firing. A hook can be in the file, answer perfectly when
 # called by hand, and never once be called by the agent — and from the outside
 # that looks exactly like a machine on which nothing bad happened.
