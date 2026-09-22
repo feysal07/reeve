@@ -158,10 +158,36 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 	inst.Permissions = mergePermissions(sources)
 	inst.Telemetry = mergeTelemetry(sources)
 	inst.Hooks = collectHooks(sources)
-	inst.MCPServers = collectMCPServers(env, sources)
+	desktop := loadMCPSources(env)
+	for _, d := range desktop {
+		inst.ConfigFiles = append(inst.ConfigFiles, model.ConfigFile{
+			Path:       d.path,
+			Scope:      model.ScopeUser,
+			Exists:     true,
+			Writable:   writableByUser(d.path),
+			ParseError: errText(d.doc.Err),
+			Lenient:    d.doc.Lenient,
+		})
+	}
+	inst.MCPServers = collectMCPServers(env, sources, desktop)
 	inst.Auth = detectAuth(env, sources)
 
 	return inst, nil
+}
+
+// MCPServers lists the configured MCP servers from the same sources Inspect reads, and
+// nothing else. See adapter.MCPLister.
+func (a *Adapter) MCPServers(ctx context.Context, env adapter.Env) []model.MCPServer {
+	var sources []source
+	for _, p := range managedPaths(env) {
+		sources = append(sources, load(p, model.ScopeManaged))
+	}
+	sources = append(sources,
+		load(filepath.Join(env.Home, ".claude", "settings.json"), model.ScopeUser),
+		load(filepath.Join(env.WorkDir, ".claude", "settings.json"), model.ScopeProject),
+		load(filepath.Join(env.WorkDir, ".claude", "settings.local.json"), model.ScopeUser),
+	)
+	return collectMCPServers(env, dedupeSources(sources), loadMCPSources(env))
 }
 
 // load reads and parses one settings file. A missing file is not an error: it is the
@@ -319,12 +345,17 @@ func collectHooks(sources []source) []model.Hook {
 	return out
 }
 
-func collectMCPServers(env adapter.Env, sources []source) []model.MCPServer {
+func collectMCPServers(env adapter.Env, sources []source, extra []mcpSource) []model.MCPServer {
 	var out []model.MCPServer
 	seen := map[string]bool{}
 
 	add := func(name string, cfg mcpServerConfig, scope model.Scope) {
-		key := string(scope) + "/" + name
+		// Keyed on what the server runs as well as its name and scope. The same
+		// server read twice is one server; two different servers under one name are
+		// two, and collapsing them would report whichever was read first while the
+		// agent might be running the other.
+		key := string(scope) + "/" + name + "/" + cfg.Command + "/" +
+			strings.Join(cfg.Args, "\x00") + "/" + cfg.URL
 		if seen[key] {
 			return
 		}
@@ -375,7 +406,131 @@ func collectMCPServers(env adapter.Env, sources []source) []model.MCPServer {
 			}
 		}
 	}
+	for _, d := range extra {
+		for _, n := range d.servers {
+			add(n.name, n.cfg, model.ScopeUser)
+		}
+	}
 	return out
+}
+
+// mcpSource is a file that holds MCP servers and nothing else this adapter reads.
+//
+// Two of them, both found on a real machine, and both missing from every inventory this
+// adapter produced before:
+//
+//   - ~/.claude.json is where `claude mcp add` writes: user-scoped servers at the top
+//     level, and local-scoped ones under the project directory they belong to. The
+//     settings files this adapter reads hold neither.
+//   - The desktop application's configuration. Claude Code running inside the desktop
+//     application is handed the servers configured there, and scan reported no MCP
+//     servers at all while a Kubernetes server from that file was answering calls.
+//
+// An inventory that misses a live server is the failure this tool exists to catch in
+// other people's configuration, and the guard cannot say what a server it cannot find
+// is running.
+type mcpSource struct {
+	path    string
+	doc     config.Document
+	servers []namedServer
+}
+
+type namedServer struct {
+	name string
+	cfg  mcpServerConfig
+}
+
+// claudeJSON is the part of ~/.claude.json that says which MCP servers are configured.
+type claudeJSON struct {
+	MCPServers map[string]mcpServerConfig `json:"mcpServers"`
+	Projects   map[string]struct {
+		MCPServers map[string]mcpServerConfig `json:"mcpServers"`
+	} `json:"projects"`
+}
+
+// loadMCPSources reads every such file that exists.
+//
+// On Windows the packaged desktop application keeps its files under a virtualised copy
+// of AppData, so the same file can appear at two paths, or at only the packaged one
+// depending on which process is asking; both are read, and collectMCPServers treats
+// identical definitions as one.
+func loadMCPSources(env adapter.Env) []mcpSource {
+	var out []mcpSource
+
+	cj := mcpSource{path: filepath.Join(env.Home, ".claude.json")}
+	var parsed claudeJSON
+	cj.doc = config.ReadJSON(cj.path, &parsed)
+	if cj.doc.Found {
+		for name, cfg := range parsed.MCPServers {
+			cj.servers = append(cj.servers, namedServer{name, cfg})
+		}
+		// Local scope is keyed by the project directory, written with forward
+		// slashes on every platform. A server defined differently at user and local
+		// scope is kept twice, so the caller sees the ambiguity rather than having it
+		// resolved here.
+		if env.WorkDir != "" {
+			want := filepath.ToSlash(filepath.Clean(env.WorkDir))
+			for dir, p := range parsed.Projects {
+				if !sameDir(filepath.ToSlash(filepath.Clean(dir)), want, env.GOOS) {
+					continue
+				}
+				for name, cfg := range p.MCPServers {
+					cj.servers = append(cj.servers, namedServer{name, cfg})
+				}
+			}
+		}
+		out = append(out, cj)
+	}
+
+	for _, p := range desktopConfigPaths(env) {
+		d := mcpSource{path: p}
+		var f mcpFile
+		d.doc = config.ReadJSON(p, &f)
+		if !d.doc.Found {
+			continue
+		}
+		for name, cfg := range f.MCPServers {
+			d.servers = append(d.servers, namedServer{name, cfg})
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+func sameDir(a, b, goos string) bool {
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func desktopConfigPaths(env adapter.Env) []string {
+	const name = "claude_desktop_config.json"
+	switch env.GOOS {
+	case "windows":
+		var out []string
+		appData := env.Getenv("APPDATA")
+		if appData == "" && env.Home != "" {
+			appData = filepath.Join(env.Home, "AppData", "Roaming")
+		}
+		if appData != "" {
+			out = append(out, filepath.Join(appData, "Claude", name))
+		}
+		local := env.Getenv("LOCALAPPDATA")
+		if local == "" && env.Home != "" {
+			local = filepath.Join(env.Home, "AppData", "Local")
+		}
+		if local != "" {
+			pkgs, _ := filepath.Glob(filepath.Join(local, "Packages", "Claude_*",
+				"LocalCache", "Roaming", "Claude", name))
+			out = append(out, pkgs...)
+		}
+		return out
+	case "darwin":
+		return []string{filepath.Join(env.Home, "Library", "Application Support", "Claude", name)}
+	default:
+		return []string{filepath.Join(env.Home, ".config", "Claude", name)}
+	}
 }
 
 // detectAuth infers how Claude Code reaches a model. This determines whether the

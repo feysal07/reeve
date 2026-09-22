@@ -131,6 +131,12 @@ func resolveTeam(teamsPath string, id telemetry.Identity) string {
 	}
 	tm, err := telemetry.LoadTeams(teamsPath)
 	if err != nil {
+		// Said, as resolveIdentity says an unreadable trust configuration. The rule
+		// still refuses - a team nobody could resolve is no team - but a map that
+		// exists and cannot be read reads exactly like no map at all otherwise, and
+		// the reason the developer sees would send them looking for the wrong thing.
+		// Found by review.
+		fmt.Fprintf(os.Stderr, "reeve: team map %s could not be read, so no team was resolved: %v\n", teamsPath, err)
 		return ""
 	}
 	return tm.Team(tm.Canonical(id))
