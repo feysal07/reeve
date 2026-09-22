@@ -87,8 +87,46 @@ func TestAnIdentityTheMapKnowsNothingAboutIsUnattributed(t *testing.T) {
 	if r.Unmatched == nil || r.Unmatched.Unattributed != 1 || r.Unmatched.UnattributedTokens != 500 {
 		t.Fatalf("unmatched = %+v, want one unattributed identity with 500 tokens", r.Unmatched)
 	}
-	if r.Unmatched.UnknownSubjects != 0 {
-		t.Errorf("a map with no subjects reported subjects as unknown: %+v", r.Unmatched)
+}
+
+// TestADomainsOnlyMapStillReportsTheIncident.
+//
+// Found by review. The first version skipped the subject half for a map built from
+// domains alone, and that is exactly the map the incident happens under: the domain
+// fixes the team, the vendor's id stays on the event, and a per-person budget - which
+// never consults the map - compares the guard's subject against it and totals zero.
+func TestADomainsOnlyMapStillReportsTheIncident(t *testing.T) {
+	tm := &TeamMap{Default: "unattributed", Domains: map[string]string{"example.com": "platform"}}
+	events := collect(t, tm, usage("8f14e45f-anthropic-uuid", "dev@example.com", 9_000_000))
+	r := Aggregate(events, events[0].Time, events[0].Time)
+	ids := map[string]string{}
+	for _, c := range r.Concerns() {
+		ids[c.ID] = c.Detail
+	}
+	if _, ok := ids[ConcernUnmatched]; !ok {
+		t.Fatalf("a domains-only map raised no %s for the incident: %v", ConcernUnmatched, ids)
+	}
+	if _, ok := ids[ConcernUnattributed]; ok {
+		t.Errorf("a correctly resolved team was reported as unattributed: %v", ids)
+	}
+}
+
+// TestTheTwoHalvesAreSeparateConditions. An organisation with no per-person budget has
+// no use for the subject half, and one condition covering both would make it choose
+// between gating on noise and not gating on its team budgets at all.
+func TestTheTwoHalvesAreSeparateConditions(t *testing.T) {
+	tm := &TeamMap{Default: "unattributed", Domains: map[string]string{"example.com": "platform"}}
+	events := collect(t, tm, usage("", "contractor@elsewhere.test", 500))
+	r := Aggregate(events, events[0].Time, events[0].Time)
+	got := Matching(r.Concerns(), map[string]bool{ConcernUnattributed: true})
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "contractor@elsewhere.test") ||
+		!strings.Contains(got[0].Detail, "team budget") {
+		t.Errorf("identity.unattributed = %+v", got)
+	}
+	for _, id := range []string{ConcernUnattributed, ConcernUnmatched} {
+		if want, err := ParseConcerns(id); err != nil || !want[id] {
+			t.Errorf("--fail-on %s refused: %v", id, err)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/feysal07/reeve/internal/policy"
+	"github.com/feysal07/reeve/internal/telemetry"
 )
 
 func decisionLines(t *testing.T, path string) []decisionRecord {
@@ -123,5 +125,28 @@ func TestAPersonScopedLoopBreakerFiresThroughTheLog(t *testing.T) {
 	}
 	if d := decide(looping, "e"); d.Effect != policy.EffectDeny {
 		t.Errorf("effect = %q, want deny on the third call by the same person", d.Effect)
+	}
+}
+
+// TestATeamMapThatCannotBeReadIsSaid. The rule still refuses without a team, but a map
+// that exists and cannot be read read exactly like no map at all, and the reason the
+// developer saw sent them looking for the wrong thing. Found by review.
+func TestATeamMapThatCannotBeReadIsSaid(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "teams.yaml")
+	if err := os.WriteFile(bad, []byte("domains: [this is not a map\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	team := resolveTeam(bad, telemetry.Identity{Email: "dev@example.com"})
+	w.Close()
+	os.Stderr = old
+	msg, _ := io.ReadAll(r)
+	if team != "" {
+		t.Errorf("team = %q from an unreadable map", team)
+	}
+	if !strings.Contains(string(msg), "could not be read") {
+		t.Errorf("nothing said about the unreadable map: %q", msg)
 	}
 }

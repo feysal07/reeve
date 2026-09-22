@@ -235,15 +235,15 @@ type Unmatched struct {
 	// none of their consumption.
 	UnknownSubjects      int   `json:"unknownSubjects"`
 	UnknownSubjectTokens int64 `json:"unknownSubjectTokens"`
-	// Examples names up to three of the heaviest, by what the report already calls
-	// them, so the alias to write is not a search.
-	Examples []string `json:"examples,omitempty"`
+	// The examples name up to three of the heaviest in each half, by what the report
+	// already calls them, so the alias to write is not a search.
+	UnknownExamples      []string `json:"unknownSubjectExamples,omitempty"`
+	UnattributedExamples []string `json:"unattributedExamples,omitempty"`
 }
 
 func unmatched(events []Event) *Unmatched {
 	var u Unmatched
-	unattr, unknown := map[string]bool{}, map[string]bool{}
-	weight := map[string]int64{}
+	unattr, unknown := map[string]int64{}, map[string]int64{}
 	for _, e := range events {
 		key := firstNonEmpty(e.Identity.Email, e.Identity.Subject)
 		if key == "" {
@@ -251,21 +251,24 @@ func unmatched(events []Event) *Unmatched {
 		}
 		tokens := e.Tokens.Total()
 		if e.Identity.Unattributed {
-			unattr[key] = true
+			unattr[key] += tokens
 			u.UnattributedTokens += tokens
 		}
 		if e.Identity.UnknownSubject {
-			unknown[key] = true
+			unknown[key] += tokens
 			u.UnknownSubjectTokens += tokens
-		}
-		if e.Identity.Unattributed || e.Identity.UnknownSubject {
-			weight[key] += tokens
 		}
 	}
 	u.Unattributed, u.UnknownSubjects = len(unattr), len(unknown)
 	if u.Unattributed == 0 && u.UnknownSubjects == 0 {
 		return nil
 	}
+	u.UnattributedExamples, u.UnknownExamples = heaviest(unattr), heaviest(unknown)
+	return &u
+}
+
+// heaviest names up to three keys by weight, ties broken by name so output is stable.
+func heaviest(weight map[string]int64) []string {
 	keys := make([]string, 0, len(weight))
 	for k := range weight {
 		keys = append(keys, k)
@@ -279,8 +282,7 @@ func unmatched(events []Event) *Unmatched {
 	if len(keys) > 3 {
 		keys = keys[:3]
 	}
-	u.Examples = keys
-	return &u
+	return keys
 }
 
 func orUnknown(s string) string {
