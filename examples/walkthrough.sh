@@ -1646,6 +1646,30 @@ AUDIT_OUT=$("$REEVE" audit verify "$AUDIT_LOG" 2>&1)
     check "re-sealing an edited log refuses rather than covering it up" 1 ||
     check "re-sealing an edited log refuses rather than covering it up" 0
 
+# Retention that cannot be told from tampering is retention nobody can use. Rotation
+# seals the log, moves it aside and starts the next chain linked to it; retention then
+# removes old segments' records and keeps their chains, so verify can say "pruned on
+# schedule" rather than "missing". --keep 1ns makes the first segment old enough to
+# prune without waiting a month.
+ROT_DIR="$SANDBOX/rotation"
+mkdir -p "$ROT_DIR"
+ROT_LOG="$ROT_DIR/decisions.jsonl"
+for n in 1 2 3; do
+    printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$ROT_LOG" >/dev/null 2>&1
+done
+"$REEVE" audit rotate "$ROT_LOG" >/dev/null 2>&1
+ROT1=$?
+printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$ROT_LOG" >/dev/null 2>&1
+"$REEVE" audit rotate "$ROT_LOG" --keep 1ns >/dev/null 2>&1
+ROT2=$?
+printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$ROT_LOG" >/dev/null 2>&1
+ROT_OUT=$("$REEVE" audit verify "$ROT_LOG" 2>&1 | tr -s '[:space:]' ' ')
+ROT_VERIFY=$?
+case "$ROT1:$ROT2:$ROT_VERIFY:$ROT_OUT" in
+    0:0:0:*"pruned decisions-"*) check "rotation and retention keep the decision log verifiable" 1 ;;
+    *) check "rotation and retention keep the decision log verifiable" 0 "rotate $ROT1, rotate --keep $ROT2, verify $ROT_VERIFY: $ROT_OUT" ;;
+esac
+
 # Truncation is the easiest tampering there is, and a hash chain alone cannot see
 # it: a prefix of a valid chain is a valid chain. The recorded line count is what
 # catches it.

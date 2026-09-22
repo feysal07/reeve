@@ -88,6 +88,10 @@ type Seal struct {
 	// Version records which build wrote the seal, so a future change to the hash
 	// construction can be told apart from a mismatch.
 	Version string `json:"version,omitempty"`
+	// Follows names the segment this log was rotated from, on the first seal of a
+	// rotated log only. Prev on that seal is the hash of the segment's last seal, so
+	// the chains of every segment are one chain. See rotate.go.
+	Follows string `json:"follows,omitempty"`
 }
 
 // ChainPath returns the sidecar path for a log.
@@ -198,13 +202,12 @@ func sealLineHash(b []byte) string {
 // localised to an interval, and it is also what makes removing a seal visible, since
 // the next one names it.
 func Add(logPath string, now time.Time, version string) (Seal, error) {
-	digest, lines, err := Hash(logPath, 0)
+	chainPath := ChainPath(logPath)
+	seals, err := ReadSeals(chainPath)
 	if err != nil {
 		return Seal{}, err
 	}
-
-	chainPath := ChainPath(logPath)
-	seals, err := ReadSeals(chainPath)
+	digest, lines, err := hashOrEmpty(logPath, len(seals) > 0)
 	if err != nil {
 		return Seal{}, err
 	}
@@ -221,7 +224,7 @@ func Add(logPath string, now time.Time, version string) (Seal, error) {
 					"the current %s before doing anything else",
 				lines, last.Lines, last.SealedAt.Format(time.RFC3339), filepath.Base(chainPath))
 		}
-		prefix, _, err := Hash(logPath, last.Lines)
+		prefix, err := prefixHash(logPath, last.Lines)
 		if err != nil {
 			return Seal{}, err
 		}
@@ -292,6 +295,9 @@ type Report struct {
 	Unsealed int64 `json:"unsealed"`
 	// Breaks are the intervals that failed, in order. More than one is possible.
 	Breaks []Break `json:"breaks,omitempty"`
+	// History is every earlier segment this log was rotated from, newest first, as
+	// far back as the chains go. A pruned segment is reported as pruned, not missing.
+	History []SegmentStatus `json:"history,omitempty"`
 }
 
 // Break is one interval of the log that no longer matches what was sealed.
@@ -319,18 +325,56 @@ func (r Report) Intact() bool { return r.Seals > 0 && len(r.Breaks) == 0 }
 // first, because the interval between the last good seal and the first bad one is what
 // localises a change, and later seals still carry information about later intervals.
 func Verify(logPath string) (Report, error) {
-	rep := Report{SchemaVersion: SchemaVersion, LogPath: logPath, ChainPath: ChainPath(logPath)}
-
-	_, lines, err := Hash(logPath, 0)
+	rep, err := verifyOne(logPath)
 	if err != nil {
 		return rep, err
 	}
-	rep.Lines = lines
+	seals, err := ReadSeals(rep.ChainPath)
+	if err != nil {
+		return rep, err
+	}
+	history, breaks := verifyHistory(logPath, seals)
+	rep.History = history
+	rep.Breaks = append(rep.Breaks, breaks...)
+	rep.Verified = rep.Intact()
+	return rep, nil
+}
+
+// hashOrEmpty hashes a log, reading a log that does not exist as an empty one when the
+// caller knows it has been sealed before - which is the state straight after rotation,
+// before the guard has written the first line of the new log. Without a chain a missing
+// log stays an error: a path that names nothing is a mistake to report, not a log.
+func hashOrEmpty(logPath string, sealed bool) (string, int64, error) {
+	digest, lines, err := Hash(logPath, 0)
+	if err != nil && sealed && os.IsNotExist(err) {
+		return newRunningHash().digest(), 0, nil
+	}
+	return digest, lines, err
+}
+
+// prefixHash is the hash of a log's first n lines. Hash reads zero as "the whole file",
+// so a seal of nothing - the first seal of a rotated log - is answered here instead.
+func prefixHash(logPath string, n int64) (string, error) {
+	if n == 0 {
+		return newRunningHash().digest(), nil
+	}
+	digest, _, err := Hash(logPath, n)
+	return digest, err
+}
+
+// verifyOne checks one log against its own chain, without following earlier segments.
+func verifyOne(logPath string) (Report, error) {
+	rep := Report{SchemaVersion: SchemaVersion, LogPath: logPath, ChainPath: ChainPath(logPath)}
 
 	seals, err := ReadSeals(rep.ChainPath)
 	if err != nil {
 		return rep, err
 	}
+	_, lines, err := hashOrEmpty(logPath, len(seals) > 0)
+	if err != nil {
+		return rep, err
+	}
+	rep.Lines = lines
 	rep.Seals = len(seals)
 	if len(seals) == 0 {
 		rep.Unsealed = lines
@@ -359,8 +403,11 @@ func Verify(logPath string) (Report, error) {
 
 	var lastGood int64
 	for i, s := range seals {
-		digest, got, err := Hash(logPath, s.Lines)
-		if err != nil {
+		var digest string
+		var got int64
+		if s.Lines == 0 {
+			digest = newRunningHash().digest()
+		} else if digest, got, err = Hash(logPath, s.Lines); err != nil {
 			return rep, err
 		}
 		switch {
