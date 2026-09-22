@@ -765,6 +765,25 @@ func (p *Policy) NeedsSpend() bool {
 	return false
 }
 
+// NeedsIdentity reports whether any rule has to know who is at the keyboard.
+//
+// Asked so the guard does not read a token, a key cache and a trust configuration on
+// every tool call for a policy that never mentions a person. The same reasoning as
+// NeedsSpend and NeedsHistory: most policies want none of it, and every action would
+// otherwise pay for an answer nothing consults.
+//
+// It also keeps the blast radius proportional. A machine whose policy has no person or
+// team rule cannot be stopped by anything to do with identity, because nothing about
+// identity is read.
+func (p *Policy) NeedsIdentity() bool {
+	for _, r := range p.Rules {
+		if r.Match.personScoped() || r.Match.teamScoped() {
+			return true
+		}
+	}
+	return false
+}
+
 // HasDollarBudget reports whether any rule governs money rather than tokens.
 //
 // Asked so that policy check can say what a dollar figure means for an organisation
