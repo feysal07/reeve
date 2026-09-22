@@ -61,7 +61,17 @@ type Record struct {
 	Effect      policy.Effect `json:"effect"`
 	RuleID      string        `json:"ruleId,omitempty"`
 	DryRun      bool          `json:"dryRun,omitempty"`
+	// Who, Team and Identity are who the guard decided the action was taken by, and
+	// whether that identity was "verified" or "asserted". Empty when the guard
+	// resolved none, which it does whenever the policy in force had no rule that
+	// needed one.
+	Who      string `json:"who,omitempty"`
+	Team     string `json:"team,omitempty"`
+	Identity string `json:"identity,omitempty"`
 }
+
+// verified reports a record whose identity a rule may rely on.
+func (r Record) verified() bool { return r.Identity == "verified" && r.Who != "" }
 
 // Action rebuilds the action this record describes.
 func (r Record) Action() policy.Action {
@@ -77,7 +87,17 @@ func (r Record) Action() policy.Action {
 		MCPServer:   r.MCPServer,
 		MCPTool:     r.MCPTool,
 		Environment: r.Environment,
+		Identity:    r.identity(),
 	}
+}
+
+// identity rebuilds the identity the guard had, as it had it. An asserted one stays
+// asserted, so a person-scoped rule refuses it here exactly as it did at the time.
+func (r Record) identity() *policy.Identity {
+	if r.Who == "" {
+		return nil
+	}
+	return &policy.Identity{Subject: r.Who, Team: r.Team, Asserted: !r.verified()}
 }
 
 // Load reads a decision log.
@@ -190,6 +210,31 @@ func Run(p *policy.Policy, records []Record, opts Options) Report {
 		return rep
 	}
 
+	// A rule scoped per person or per team needs to know who took each action, and
+	// the guard records that only while the policy in force needs it. Replaying such
+	// a rule against lines written without one would refuse every one of them for
+	// want of an identity — a loop breaker "firing" on a whole day's traffic, which is
+	// a statement about the log and not about the rule. Found by review: the first
+	// version of person-scoped repetition dropped these fields here and did exactly
+	// that, with nothing in the report to say it could not be trusted.
+	if p.NeedsIdentity() {
+		missing := 0
+		for _, r := range records {
+			if r.Who == "" {
+				missing++
+			}
+		}
+		if missing > 0 {
+			rep.Unreplayable = missing
+			rep.WhyNot = fmt.Sprintf("This policy has a rule totalled per person or per team, and "+
+				"%d of these %d records carry no identity: the guard records who took an action "+
+				"only while the policy in force has a rule that needs to know. Replaying against "+
+				"them would refuse every one for want of an identity, which would describe this "+
+				"file rather than the rule.", missing, len(records))
+			return rep
+		}
+	}
+
 	for i, r := range records {
 		act := r.Action()
 		// Decided as at the moment it happened, not as at now. A window measured in
@@ -237,12 +282,17 @@ func historyBefore(records []Record, i int) *policy.History {
 	}
 	for j := i - 1; j >= start; j-- {
 		r := records[j]
-		h.Records = append(h.Records, policy.RecentAction{
+		ra := policy.RecentAction{
 			Time:      r.Time,
 			SessionID: r.SessionID,
 			Tool:      r.Tool,
 			Command:   r.Command,
-		})
+		}
+		// Only a verified line attributes a past action, as in the guard.
+		if r.verified() {
+			ra.Who, ra.Team = r.Who, r.Team
+		}
+		h.Records = append(h.Records, ra)
 	}
 	return h
 }

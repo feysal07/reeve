@@ -325,6 +325,12 @@ as at now. **Budgets cannot be replayed at all** — spend lives in the event st
 there is nothing in a decision log to total, and replay says so rather than reporting
 that no budget was ever exceeded.
 
+**A rule scoped per person or per team replays only against lines that say who.** The
+guard records an identity only while the policy in force has a rule that needs one, so
+an older log carries none, and replay refuses rather than reporting every action as
+refused for want of an identity. An identity recorded as asserted is replayed as
+asserted, and refused as it was at the time.
+
 ## Circuit breakers: matching on what already happened
 
 Every rule above is a pure function of the action in front of it. One is not.

@@ -2,6 +2,7 @@ package replay
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,5 +235,91 @@ rules:
 	}
 	if len(r.Looser) != 1 {
 		t.Errorf("looser = %d, want 1: the commit should stop being stopped", len(r.Looser))
+	}
+}
+
+const personLoop = `
+version: 1
+rules:
+  - id: loop
+    decision: deny
+    match:
+      repeated: {same: tool, within: 1h, moreThan: 2, scope: person}
+`
+
+func as(r Record, who, identity string) Record {
+	r.Who, r.Identity = who, identity
+	return r
+}
+
+// TestAPersonScopedRuleReplaysWithTheIdentityTheGuardRecorded.
+//
+// Found by review. The first version of person-scoped repetition taught the guard to
+// record who, and left replay reading the old shape: every replayed action had no
+// identity, so the rule refused all of them and the report showed a loop breaker firing
+// on a whole day's traffic, with nothing to say the measurement was worthless.
+func TestAPersonScopedRuleReplaysWithTheIdentityTheGuardRecorded(t *testing.T) {
+	var records []Record
+	for i, who := range []string{"a@example.com", "a@example.com", "b@example.com", "a@example.com"} {
+		r := shell("curl https://api/retry", policy.EffectAllow, "", base.Add(time.Duration(i)*time.Second))
+		r.SessionID = fmt.Sprintf("s%d", i)
+		records = append(records, as(r, who, "verified"))
+	}
+	r := Run(parse(t, personLoop), records, Options{})
+
+	if r.Unreplayable != 0 {
+		t.Fatalf("a log that records who was called unreplayable: %s", r.WhyNot)
+	}
+	// Only the fourth record has two earlier calls by the same person behind it.
+	if got := r.FiringsNow["loop"]; got != 1 {
+		t.Errorf("loop fired %d times, want 1 (the third call by a@, not b@'s)", got)
+	}
+}
+
+// TestAnAssertedIdentityIsReplayedAsAsserted. The guard refused a person-scoped rule for
+// an asserted identity at the time, and a replay that upgraded it to verified would
+// report a policy as quieter than it would really be.
+func TestAnAssertedIdentityIsReplayedAsAsserted(t *testing.T) {
+	records := []Record{as(shell("ls", policy.EffectAllow, "", base), "a@example.com", "asserted")}
+	r := Run(parse(t, personLoop), records, Options{})
+	if r.EffectsNow[policy.EffectDeny] != 1 {
+		t.Errorf("an asserted identity was not refused on replay: %+v", r.EffectsNow)
+	}
+}
+
+// TestAPersonScopedRuleCannotBeReplayedAgainstLinesWithNoIdentity. Lines written while
+// no rule needed an identity say nothing about who acted, and refusing each one for that
+// reason would describe the file rather than the rule.
+func TestAPersonScopedRuleCannotBeReplayedAgainstLinesWithNoIdentity(t *testing.T) {
+	records := []Record{
+		as(shell("ls", policy.EffectAllow, "", base), "a@example.com", "verified"),
+		shell("ls", policy.EffectAllow, "", base.Add(time.Second)),
+	}
+	r := Run(parse(t, personLoop), records, Options{})
+	if r.Unreplayable != 1 {
+		t.Errorf("unreplayable = %d, want 1", r.Unreplayable)
+	}
+	if !strings.Contains(r.WhyNot, "carry no identity") {
+		t.Errorf("the reason does not say what is missing: %q", r.WhyNot)
+	}
+	if len(r.Stricter) != 0 || len(r.Looser) != 0 {
+		t.Error("the rule was evaluated anyway")
+	}
+}
+
+// TestOnlyAVerifiedLineCountsInReplayedHistory. The same rule as the guard: an asserted
+// line attributes nothing, or replay would count claims the guard refused to count.
+func TestOnlyAVerifiedLineCountsInReplayedHistory(t *testing.T) {
+	var records []Record
+	for i := 0; i < 3; i++ {
+		records = append(records, as(shell("ls", policy.EffectAllow, "", base.Add(time.Duration(i)*time.Second)),
+			"a@example.com", "asserted"))
+	}
+	records = append(records, as(shell("ls", policy.EffectAllow, "", base.Add(5*time.Second)), "a@example.com", "verified"))
+	r := Run(parse(t, personLoop), records, Options{})
+	// Three asserted lines are refused for their identity; the verified fourth has
+	// nothing attributable behind it and is allowed.
+	if last := r.EffectsNow[policy.EffectAllow]; last != 1 {
+		t.Errorf("allowed = %d, want 1: asserted history was counted", last)
 	}
 }
