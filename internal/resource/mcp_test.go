@@ -182,3 +182,95 @@ func TestAnMCPEntryIsValidatedWhenTheRegistryLoads(t *testing.T) {
 		}
 	}
 }
+
+// TestAnArgumentCannotLoosenWhatTheKubeconfigSays.
+//
+// Found by review. An argument is only what the agent typed, and a tool that takes no
+// namespace ignores one it is given and reaches whatever the kubeconfig points at. The
+// first version believed the argument outright, so "namespace": "dev" on a call whose
+// real target was production classified it as development: not unknown, which a careful
+// rule would still catch, but a named environment every rule treats as safe.
+func TestAnArgumentCannotLoosenWhatTheKubeconfigSays(t *testing.T) {
+	env := testEnv(t)
+	// A context no pattern matches, whose default namespace is production's.
+	writeFile(t, filepath.Join(env.Home, ".kube", "config"),
+		"current-context: shared\ncontexts:\n  - name: shared\n    context: {namespace: payments}\n")
+	got := mcpReg(t).ClassifyMCP("kubernetes", []ConfiguredServer{kubeServer},
+		map[string]string{"namespace": "dev"}, env)
+	if got.Environment != "production" {
+		t.Fatalf("environment = %q (%s): an argument loosened production", got.Environment, got.Detail)
+	}
+}
+
+// TestAnArgumentCanTightenWhatTheKubeconfigSays. The other direction is safe to believe:
+// naming production from a development context is either true or a mistake worth
+// stopping.
+func TestAnArgumentCanTightenWhatTheKubeconfigSays(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.Home, ".kube", "config"),
+		"current-context: kind-local\ncontexts:\n  - name: kind-local\n    context: {}\n")
+	got := mcpReg(t).ClassifyMCP("kubernetes", []ConfiguredServer{kubeServer},
+		map[string]string{"namespace": "payments"}, env)
+	if got.Environment != "production" {
+		t.Fatalf("environment = %q (%s), want production", got.Environment, got.Detail)
+	}
+}
+
+// TestADisagreementBetweenTwoLesserEnvironmentsIsUnknown. Neither side is the strictest,
+// so which one the call reaches depends on the tool, which is not known here.
+func TestADisagreementBetweenTwoLesserEnvironmentsIsUnknown(t *testing.T) {
+	r, err := Parse([]byte(`version: 1
+environments:
+  - name: production
+    kubernetes: {contexts: ["prod-*"]}
+  - name: staging
+    kubernetes: {namespaces: ["staging"]}
+  - name: development
+    kubernetes: {contexts: ["kind-*"]}
+mcp:
+  - command: "npx -y kubernetes-mcp-server*"
+    kubernetes: {namespaceArg: namespace}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.Home, ".kube", "config"),
+		"current-context: kind-local\ncontexts:\n  - name: kind-local\n    context: {}\n")
+	got := r.ClassifyMCP("kubernetes", []ConfiguredServer{kubeServer}, map[string]string{"namespace": "staging"}, env)
+	if got.Environment != EnvUnknown {
+		t.Fatalf("environment = %q (%s), want unknown", got.Environment, got.Detail)
+	}
+}
+
+// TestAnArgumentThatIsNotAKubernetesNameIsNeverRepeated.
+//
+// Found by review. The chosen namespace is written into the reason the decision log
+// keeps, and an argument is whatever the agent put there. A real namespace has a shape;
+// anything else is not one the call could reach, and is not copied anywhere.
+func TestAnArgumentThatIsNotAKubernetesNameIsNeverRepeated(t *testing.T) {
+	secret := "dev token=ghp_abc123"
+	got := mcpReg(t).ClassifyMCP("kubernetes", []ConfiguredServer{kubeServer},
+		map[string]string{"namespace": secret}, testEnv(t))
+	if got.Environment != EnvUnknown {
+		t.Errorf("environment = %q, want unknown", got.Environment)
+	}
+	if strings.Contains(got.Detail, "ghp_abc123") {
+		t.Fatalf("an argument's value reached the detail: %q", got.Detail)
+	}
+	for _, ok := range []string{"payments", "kube-system", "a1"} {
+		if !namespaceName(ok) {
+			t.Errorf("%q was refused as a namespace", ok)
+		}
+	}
+	for _, ok := range []string{"arn:aws:eks:eu-west-1:123:cluster/prod-x", "admin@prod", "gke_proj_zone_name"} {
+		if !contextName(ok) {
+			t.Errorf("%q was refused as a context", ok)
+		}
+	}
+	for _, bad := range []string{"Payments", "-dev", "dev-", "a b", ""} {
+		if namespaceName(bad) {
+			t.Errorf("%q was accepted as a namespace", bad)
+		}
+	}
+}

@@ -721,6 +721,15 @@ call, the way a kubectl command is: the namespace or context from the call's arg
 when it names one, and from the kubeconfig the server reads otherwise. A `--kubeconfig`
 in the server's arguments is the one read.
 
+**A call's arguments can only make the answer stricter.** An argument is what the agent
+typed, and a tool that takes no namespace ignores one it is given. So the guard works
+out the target both ways — from the arguments, and from the kubeconfig alone — and when
+they disagree the result is the first environment in the registry (the strictest) if
+either side is that, and `unknown` otherwise. Found by review: believing the arguments
+outright let `"namespace": "dev"` classify a call to production as development. An
+argument that is not a valid Kubernetes name makes the target `unknown` and is never
+repeated in the reason the decision log keeps.
+
 **Everything that cannot be known is `unknown`:** a server the registry does not list, a
 name the agent's configuration does not define, a name defined two different ways, and
 a server handed its own `KUBECONFIG`, whose value is deliberately never read. On a

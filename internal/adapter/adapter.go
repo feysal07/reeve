@@ -35,6 +35,17 @@ type Adapter interface {
 	Inspect(ctx context.Context, env Env) (model.Installation, error)
 }
 
+// MCPLister is implemented by an adapter that can list its configured MCP servers without
+// a full Inspect.
+//
+// The guard needs only the servers, on the hot path in front of every MCP call, and a
+// full Inspect also discovers versions, permissions, hooks and authentication. Measured
+// on Windows at roughly 65ms a call for the Claude adapter, most of it work the guard
+// then discards. An adapter that does not implement this is inspected in full.
+type MCPLister interface {
+	MCPServers(ctx context.Context, env Env) []model.MCPServer
+}
+
 // Env carries the filesystem and environment context a scan runs against. It exists so
 // adapters can be tested against fixture directories instead of the real machine.
 type Env struct {

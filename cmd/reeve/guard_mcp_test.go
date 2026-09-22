@@ -92,3 +92,14 @@ func TestAnMCPCallsArgumentsNeverReachTheDecisionLog(t *testing.T) {
 		t.Fatalf("an MCP argument reached the decision log: %s", got)
 	}
 }
+
+// TestAnMCPCallNamingNoServerIsUnknown. Found by review: gated on a server name, such a
+// call kept an empty environment, which neither a production rule nor an unknown rule
+// matches, so it passed both.
+func TestAnMCPCallNamingNoServerIsUnknown(t *testing.T) {
+	act := policy.Action{Agent: model.AgentCursor, Kind: policy.KindMCP, ToolName: "run_query"}
+	resolveEnvironment(&act, "")
+	if act.Environment != "unknown" {
+		t.Fatalf("environment = %q, want unknown", act.Environment)
+	}
+}

@@ -157,7 +157,10 @@ func runGuard(args []string) error {
 // degrades to "unknown" rather than failing closed. A rule that wants to be careful
 // about unresolvable targets says so by matching on "unknown" explicitly.
 func resolveEnvironment(act *policy.Action, explicit string) {
-	if act.Kind == policy.KindMCP && act.MCPServer != "" {
+	// Every MCP call, including one whose server could not be named. Found by review:
+	// gated on a server name, a call without one kept an empty environment, which
+	// neither a production rule nor an unknown rule matches, so it passed both.
+	if act.Kind == policy.KindMCP {
 		resolveMCPEnvironment(act, explicit)
 		return
 	}
@@ -198,6 +201,11 @@ func resolveEnvironment(act *policy.Action, explicit string) {
 // A server the registry does not list is unknown, never assumed harmless. On a machine
 // with no registry that is every MCP call, which is the truth about them.
 func resolveMCPEnvironment(act *policy.Action, explicit string) {
+	if act.MCPServer == "" {
+		act.Environment = resource.EnvUnknown
+		act.EnvironmentDetail = "the MCP call named no server, so what it reaches is not known"
+		return
+	}
 	home, _ := os.UserHomeDir()
 	workDir := act.CWD
 	if workDir == "" {
@@ -229,11 +237,17 @@ func configuredMCPServers(agent model.AgentID, name string, env adapter.Env) []r
 		if a.ID() != agent {
 			continue
 		}
-		inst, err := a.Inspect(context.Background(), env)
-		if err != nil {
-			return nil
+		var servers []model.MCPServer
+		if l, ok := a.(adapter.MCPLister); ok {
+			servers = l.MCPServers(context.Background(), env)
+		} else {
+			inst, err := a.Inspect(context.Background(), env)
+			if err != nil {
+				return nil
+			}
+			servers = inst.MCPServers
 		}
-		for _, s := range inst.MCPServers {
+		for _, s := range servers {
 			if toolSafe(s.Name) != toolSafe(name) {
 				continue
 			}

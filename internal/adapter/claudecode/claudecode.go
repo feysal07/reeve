@@ -175,6 +175,21 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 	return inst, nil
 }
 
+// MCPServers lists the configured MCP servers from the same sources Inspect reads, and
+// nothing else. See adapter.MCPLister.
+func (a *Adapter) MCPServers(ctx context.Context, env adapter.Env) []model.MCPServer {
+	var sources []source
+	for _, p := range managedPaths(env) {
+		sources = append(sources, load(p, model.ScopeManaged))
+	}
+	sources = append(sources,
+		load(filepath.Join(env.Home, ".claude", "settings.json"), model.ScopeUser),
+		load(filepath.Join(env.WorkDir, ".claude", "settings.json"), model.ScopeProject),
+		load(filepath.Join(env.WorkDir, ".claude", "settings.local.json"), model.ScopeUser),
+	)
+	return collectMCPServers(env, dedupeSources(sources), loadMCPSources(env))
+}
+
 // load reads and parses one settings file. A missing file is not an error: it is the
 // normal case for most sources.
 func load(path string, scope model.Scope) source {

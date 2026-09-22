@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/feysal07/reeve/internal/adapter"
@@ -274,5 +276,32 @@ func TestServersAddedWithTheCLIAreInTheInventory(t *testing.T) {
 	}
 	if names["another-project"] {
 		t.Error("a server local to a different project was reported for this one")
+	}
+}
+
+// TestTheMCPListerAgreesWithInspect. The guard uses the lister and scan uses Inspect; a
+// server one of them sees and the other does not is a server the guard cannot classify
+// while the inventory says it exists, or the reverse.
+func TestTheMCPListerAgreesWithInspect(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.Home, ".claude", "settings.json"),
+		`{"mcpServers": {"a": {"command": "npx", "args": ["-y", "a"]}}}`)
+	writeFile(t, filepath.Join(env.WorkDir, ".mcp.json"), `{"mcpServers": {"b": {"url": "https://b.example"}}}`)
+	writeFile(t, filepath.Join(env.Home, ".claude.json"), `{"mcpServers": {"c": {"command": "uvx"}}}`)
+	writeFile(t, filepath.Join(env.Home, ".config", "Claude", "claude_desktop_config.json"), desktopConfig)
+
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := New().MCPServers(context.Background(), env)
+	// Both walk maps, so the order is not the point; the set is.
+	byName := func(s []model.MCPServer) {
+		sort.Slice(s, func(i, j int) bool { return s[i].Name < s[j].Name })
+	}
+	byName(listed)
+	byName(inst.MCPServers)
+	if len(listed) != 4 || !reflect.DeepEqual(listed, inst.MCPServers) {
+		t.Fatalf("lister %+v\ninspect %+v", listed, inst.MCPServers)
 	}
 }

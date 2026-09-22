@@ -149,71 +149,150 @@ func (m MCPServer) identifies(s ConfiguredServer) bool {
 }
 
 // classifyKubernetesMCP resolves one call to a Kubernetes MCP server.
+//
+// Two targets are worked out: the ambient one, from the kubeconfig the server reads, and
+// the stated one, which is the ambient one with whatever the call's arguments name laid
+// over it. The arguments can only make the answer stricter, never looser.
+//
+// Found by review. The first version believed the arguments outright, and an argument is
+// only what the agent typed: a tool that takes no namespace ignores one it is given, and
+// reaches whatever the kubeconfig says. An agent could add "namespace": "dev" to a call
+// whose real target was production and have it classified as development — not unknown,
+// which a careful rule would still catch, but a named environment every rule treats as
+// safe. So when the two disagree the result is the strictest environment if either is
+// that, and unknown otherwise.
 func (r *Registry) classifyKubernetesMCP(name string, s ConfiguredServer, k *MCPKubernetes,
 	args map[string]string, env Env) Target {
-	t := Target{Kind: KindKubernetes}
+	unknown := func(detail string) Target {
+		return Target{Kind: KindKubernetes, Environment: EnvUnknown, Source: SourceNone, Detail: detail}
+	}
+
+	// The server reads a kubeconfig, and which one is part of what it runs. A
+	// --kubeconfig in its arguments is the one it uses; failing that it uses the
+	// KUBECONFIG it was started with, which is the guard's own only when the server
+	// inherited it from the same environment.
+	kenv := env
+	p := flagValue(s.Args, "--kubeconfig")
+	if p == "" && hasKey(s.EnvKeys, "KUBECONFIG") {
+		// The server is given its own kubeconfig, and the value is deliberately never
+		// read. Reading the guard's instead would name a cluster the server may not be
+		// talking to at all.
+		return unknown(fmt.Sprintf("MCP server %q is started with its own KUBECONFIG, "+
+			"which is not read, so which cluster it reaches is not known", name))
+	}
+	if p != "" {
+		orig := env.Getenv
+		kenv.Getenv = func(k string) string {
+			if k == "KUBECONFIG" {
+				return p
+			}
+			return orig(k)
+		}
+	}
+	cfg := readKubeconfig(kenv)
+	ambient := Target{Kind: KindKubernetes, Context: cfg.current, Namespace: cfg.namespaces[cfg.current],
+		Source: SourceAmbient}
+
+	stated := ambient
+	var argCtx, argNs string
 	if k.ContextArg != "" {
-		t.Context = args[k.ContextArg]
+		argCtx = args[k.ContextArg]
 	}
 	if k.NamespaceArg != "" {
-		t.Namespace = args[k.NamespaceArg]
+		argNs = args[k.NamespaceArg]
 	}
-	if t.Context != "" || t.Namespace != "" {
-		t.Source = SourceCommand
+	// Validated before use, and never repeated when invalid. The value is written
+	// into the reason the decision log keeps, and an argument is whatever the agent
+	// chose to put there; a real context or namespace has a shape, and anything
+	// without it is not one the call could reach.
+	if argCtx != "" && !contextName(argCtx) {
+		return unknown(fmt.Sprintf("MCP server %q was called with a %s argument that is "+
+			"not a Kubernetes context name, so which cluster it reaches is not known", name, k.ContextArg))
 	}
-
-	if t.Context == "" || t.Namespace == "" {
-		// The server reads a kubeconfig, and which one is part of what it runs. A
-		// --kubeconfig in its arguments is the one it uses; failing that it uses the
-		// KUBECONFIG it was started with, which is the guard's own only when the
-		// server inherited it from the same environment.
-		kenv := env
-		p := flagValue(s.Args, "--kubeconfig")
-		if p == "" && hasKey(s.EnvKeys, "KUBECONFIG") {
-			// The server is given its own kubeconfig, and the value is deliberately
-			// never read. Reading the guard's instead would name a cluster the server
-			// may not be talking to at all.
-			return Target{Kind: KindKubernetes, Environment: EnvUnknown, Source: SourceNone,
-				Detail: fmt.Sprintf("MCP server %q is started with its own KUBECONFIG, "+
-					"which is not read, so which cluster it reaches is not known", name)}
-		}
-		if p != "" {
-			orig := env.Getenv
-			kenv.Getenv = func(k string) string {
-				if k == "KUBECONFIG" {
-					return p
-				}
-				return orig(k)
-			}
-		}
-		cfg := readKubeconfig(kenv)
-		if t.Context == "" && cfg.current != "" {
-			t.Context = cfg.current
-			if t.Source == "" {
-				t.Source = SourceAmbient
-			}
-		}
-		if t.Namespace == "" {
-			if ns := cfg.namespaces[t.Context]; ns != "" {
-				t.Namespace = ns
-				if t.Source == "" {
-					t.Source = SourceAmbient
-				}
-			}
-		}
+	if argNs != "" && !namespaceName(argNs) {
+		return unknown(fmt.Sprintf("MCP server %q was called with a %s argument that is "+
+			"not a Kubernetes namespace name, so which namespace it reaches is not known", name, k.NamespaceArg))
+	}
+	if argCtx != "" {
+		stated.Context = argCtx
+		stated.Namespace = cfg.namespaces[argCtx]
+	}
+	if argNs != "" {
+		stated.Namespace = argNs
+	}
+	if argCtx != "" || argNs != "" {
+		stated.Source = SourceCommand
 	}
 
-	if t.Context == "" && t.Namespace == "" {
-		return Target{Kind: KindKubernetes, Environment: EnvUnknown, Source: SourceNone,
-			Detail: fmt.Sprintf("MCP server %q named no cluster and no kubeconfig could be read", name)}
+	if stated.Context == "" && stated.Namespace == "" {
+		return unknown(fmt.Sprintf("MCP server %q named no cluster and no kubeconfig could be read", name))
 	}
-	how := "named in the MCP call"
-	if t.Source == SourceAmbient {
-		how = "from the kubeconfig the MCP server reads"
+	stated.Detail = fmt.Sprintf("MCP server %q: %s", name, describeKube(howKube(stated.Source), stated))
+	r.Classify(&stated)
+	if stated.Source != SourceCommand || (ambient.Context == "" && ambient.Namespace == "") {
+		return stated
 	}
-	t.Detail = fmt.Sprintf("MCP server %q: %s", name, describeKube(how, t))
-	r.Classify(&t)
-	return t
+
+	ambient.Detail = fmt.Sprintf("MCP server %q: %s", name, describeKube(howKube(SourceAmbient), ambient))
+	r.Classify(&ambient)
+	switch {
+	case ambient.Environment == stated.Environment:
+		return stated
+	case r.strictest(ambient.Environment):
+		return ambient
+	case r.strictest(stated.Environment):
+		return stated
+	}
+	return unknown(fmt.Sprintf("MCP server %q: the call names %s, and the kubeconfig the server "+
+		"reads points at %s. Which one it reaches depends on whether this tool honours the "+
+		"argument, so it is treated as not known", name, stated.Environment, ambient.Environment))
+}
+
+func howKube(src Source) string {
+	if src == SourceCommand {
+		return "named in the MCP call"
+	}
+	return "from the kubeconfig the MCP server reads"
+}
+
+// strictest reports whether env is the first environment in the registry, which the
+// registry's own documentation says is where the strictest goes.
+func (r *Registry) strictest(env string) bool {
+	return len(r.Environments) > 0 && r.Environments[0].Name == env
+}
+
+// namespaceName reports a valid Kubernetes namespace: a DNS label.
+func namespaceName(v string) bool {
+	if len(v) == 0 || len(v) > 63 {
+		return false
+	}
+	for i, c := range v {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' && i > 0 && i < len(v)-1:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// contextName reports a plausible kubeconfig context name. Contexts are free-form in a
+// kubeconfig, and the ones tools write include ARNs and user@cluster forms, so this
+// admits those characters and nothing that could carry a sentence.
+func contextName(v string) bool {
+	if len(v) == 0 || len(v) > 253 {
+		return false
+	}
+	for _, c := range v {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.ContainsRune("-._:/@", c):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // distinctServers collapses definitions that run the same thing. The same server in a
