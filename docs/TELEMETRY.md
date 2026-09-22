@@ -182,6 +182,7 @@ rather than different severities:
 | `billing.undeclared` | priced usage belonging to an agent whose arrangement nobody declared |
 | `billing.silent` | an allowance was declared and **nothing has ever been measured against it** |
 | `prices.unpriced` | requests on a model with no entry in the price table |
+| `identity.unmatched` | consumption recorded against identities your team map does not account for, which no team or person budget counts |
 
 `--fail-on any` selects all of them. An unrecognised name is an error rather than a
 no-op: a gate configured with a typo that silently passes everything is worse than no
@@ -192,6 +193,25 @@ no per-token telemetry, so declare an allowance for it, never finish wiring the 
 and every report and every dashboard says nought per cent for ever — which is exactly
 what an organisation comfortably inside its limits looks like. See
 [the alerts](#the-alerts-are-shipped-not-described) for the rule that catches it.
+
+`identity.unmatched` is the detection half of the alias map. A budget compared against
+events it cannot attribute totals zero, and zero permits: measured, a per-person budget
+allowed somebody nine million tokens over a thousand-token limit because the events were
+recorded under an Anthropic account UUID and the guard asked about an SSO subject. The
+collector now records, per event, whether the team map matched the identity at all
+(`unattributed`) and — for a map that names people by subject — whether the subject is
+one it names, even after aliases (`unknownSubject`). The report counts both, with the
+tokens behind them and the heaviest few by name, so the alias to write is not a search:
+
+```
+identity.unmatched: 1 identity whose subject the team map does not name, even after
+aliases (9.0M tokens), so a per-person budget keyed on your subjects counts none of it.
+Heaviest: dev@example.com. Add an alias or a mapping for them
+```
+
+A map built from domains alone never claims to know anybody's subject, so it is only
+asked the team half. With no team map at all nothing is flagged: there was nothing to
+have matched.
 
 ## The JSON report
 

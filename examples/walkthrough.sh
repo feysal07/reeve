@@ -1091,6 +1091,19 @@ EOF
         *) check "a misspelled condition is an error, not a no-op" 0 "$TYPO" ;;
     esac
 
+    # The detection half of the alias map. A per-person budget compared a verified
+    # subject against events recorded under an address nobody had aliased, totalled
+    # zero, and permitted - measured at nine million tokens over a thousand-token limit.
+    # teams.yaml names people by subject, and this store holds senders it never named,
+    # so a gate asking about unmatched identities must fail and say whom to alias.
+    UNMATCHED=$("$REEVE" report --store "$EVENTS" --fail-on identity.unmatched 2>&1 | tr -s '[:space:]' ' ')
+    "$REEVE" report --store "$EVENTS" --fail-on identity.unmatched >/dev/null 2>&1
+    UNMATCHED_CODE=$?
+    case "$UNMATCHED_CODE:$UNMATCHED" in
+        [1-9]*:*"identity.unmatched"*"Add an alias"*) check "consumption no budget can count is a condition the gate can fail on" 1 ;;
+        *) check "consumption no budget can count is a condition the gate can fail on" 0 "exit $UNMATCHED_CODE: $UNMATCHED" ;;
+    esac
+
     # --store takes the events file, not the directory holding it. Given a directory,
     # the only thing that came back was the operating system's word for reading one:
     # "is a directory" here, and "Incorrect function." on Windows, which names neither

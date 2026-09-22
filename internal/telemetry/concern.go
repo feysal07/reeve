@@ -49,12 +49,19 @@ const (
 	ConcernSilent = "billing.silent"
 	// ConcernUnpriced: requests on a model with no entry in the price table.
 	ConcernUnpriced = "prices.unpriced"
+	// ConcernUnmatched: consumption recorded against identities the team map does
+	// not account for, which no team or person budget counts.
+	//
+	// The detection half of the nine-million-token allow. A budget compared against
+	// events it cannot attribute totals zero, and zero permits; the report is the
+	// only place the gap is visible before somebody hits it.
+	ConcernUnmatched = "identity.unmatched"
 )
 
 // AllConcerns is every identifier, for --fail-on any and for validating input.
 var AllConcerns = []string{
 	ConcernOverSeat, ConcernOverTotal, ConcernPace, ConcernUndeclared,
-	ConcernSilent, ConcernUnpriced,
+	ConcernSilent, ConcernUnpriced, ConcernUnmatched,
 }
 
 // Concerns lists what in this report is worth failing a build over.
@@ -103,6 +110,23 @@ func (r Report) Concerns() []Concern {
 			"%d priced request(s) belong to an agent whose billing arrangement is "+
 				"not declared, so their money is left out of the total rather than "+
 				"assumed to be zero", n)})
+	}
+	if u := r.Unmatched; u != nil {
+		var parts []string
+		if u.UnknownSubjects > 0 {
+			parts = append(parts, fmt.Sprintf("%d identit%s whose subject the team map does "+
+				"not name, even after aliases (%s tokens), so a per-person budget keyed on "+
+				"your subjects counts none of it", u.UnknownSubjects, plural(u.UnknownSubjects),
+				humanCount(u.UnknownSubjectTokens, UnitTokens)))
+		}
+		if u.Unattributed > 0 {
+			parts = append(parts, fmt.Sprintf("%d identit%s the team map matched nothing "+
+				"about (%s tokens), so they are counted under the default team and a team "+
+				"budget counts none of it", u.Unattributed, plural(u.Unattributed),
+				humanCount(u.UnattributedTokens, UnitTokens)))
+		}
+		out = append(out, Concern{ConcernUnmatched, "", strings.Join(parts, "; ") +
+			". Heaviest: " + strings.Join(u.Examples, ", ") + ". Add an alias or a mapping for them"})
 	}
 	if n := r.Overall.UnpricedRequests; n > 0 {
 		out = append(out, Concern{ConcernUnpriced, "", fmt.Sprintf(
@@ -183,4 +207,12 @@ func Matching(concerns []Concern, want map[string]bool) []Concern {
 		}
 	}
 	return out
+}
+
+// plural ends "identit" for a count: one identity, several identities.
+func plural(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
 }

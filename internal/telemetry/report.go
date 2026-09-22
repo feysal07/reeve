@@ -116,6 +116,10 @@ type Report struct {
 	// is whether the included allowance will last the period.
 	Allowance []AllowanceUse `json:"allowance"`
 
+	// Unmatched is what the team map never matched. Absent when everything matched,
+	// or when no map was in use.
+	Unmatched *Unmatched `json:"unmatchedIdentities,omitempty"`
+
 	ByTeam  []Group `json:"byTeam"`
 	ByAgent []Group `json:"byAgent"`
 	ByUser  []Group `json:"byUser"`
@@ -203,6 +207,7 @@ func AggregateWith(events []Event, from, to time.Time, billing BillingTable) Rep
 		}
 	}
 
+	r.Unmatched = unmatched(events)
 	r.ByTeam = sortGroups(team, byCost)
 	r.ByAgent = sortGroups(agent, byCost)
 	r.ByUser = sortGroups(user, byCost)
@@ -210,6 +215,72 @@ func AggregateWith(events []Event, from, to time.Time, billing BillingTable) Rep
 	r.ByModel = sortGroups(mdl, byCost)
 	r.ByRule = sortGroups(rule, byDecisions)
 	return r
+}
+
+// Unmatched counts identities the operator's team map did not account for, and the
+// tokens recorded against them.
+//
+// Found by measuring, not by reading: a person-scoped budget compared a verified SSO
+// subject against events recorded under an Anthropic account UUID, matched none of
+// them, totalled zero, and allowed somebody nine million tokens over a thousand-token
+// limit. Aliases fix it once somebody writes one, and nothing said one was missing.
+// This is what says so.
+type Unmatched struct {
+	// Unattributed identities fell through to the map's default team, so a team
+	// budget counts none of their consumption.
+	Unattributed       int   `json:"unattributed"`
+	UnattributedTokens int64 `json:"unattributedTokens"`
+	// UnknownSubjects are identities whose subject the map does not name, even after
+	// aliases, so a person-scoped budget keyed on the organisation's subjects counts
+	// none of their consumption.
+	UnknownSubjects      int   `json:"unknownSubjects"`
+	UnknownSubjectTokens int64 `json:"unknownSubjectTokens"`
+	// Examples names up to three of the heaviest, by what the report already calls
+	// them, so the alias to write is not a search.
+	Examples []string `json:"examples,omitempty"`
+}
+
+func unmatched(events []Event) *Unmatched {
+	var u Unmatched
+	unattr, unknown := map[string]bool{}, map[string]bool{}
+	weight := map[string]int64{}
+	for _, e := range events {
+		key := firstNonEmpty(e.Identity.Email, e.Identity.Subject)
+		if key == "" {
+			continue
+		}
+		tokens := e.Tokens.Total()
+		if e.Identity.Unattributed {
+			unattr[key] = true
+			u.UnattributedTokens += tokens
+		}
+		if e.Identity.UnknownSubject {
+			unknown[key] = true
+			u.UnknownSubjectTokens += tokens
+		}
+		if e.Identity.Unattributed || e.Identity.UnknownSubject {
+			weight[key] += tokens
+		}
+	}
+	u.Unattributed, u.UnknownSubjects = len(unattr), len(unknown)
+	if u.Unattributed == 0 && u.UnknownSubjects == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(weight))
+	for k := range weight {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if weight[keys[i]] != weight[keys[j]] {
+			return weight[keys[i]] > weight[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	if len(keys) > 3 {
+		keys = keys[:3]
+	}
+	u.Examples = keys
+	return &u
 }
 
 func orUnknown(s string) string {

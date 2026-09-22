@@ -340,6 +340,42 @@ func LoadTeams(path string) (*TeamMap, error) {
 }
 
 // Team resolves an identity, from most specific to least.
+// Matched says whether a mapping decided this identity's team rather than the default,
+// and whether its subject is one the organisation named.
+//
+// The subject half applies only to a map that names people by subject at all — through
+// subjects or through aliases. A map built from domains alone never claims to know
+// anybody's subject, and reporting every identity as unknown to it would be noise that
+// buries the case this exists for.
+func (t *TeamMap) Matched(id Identity) (team, subject bool) {
+	if t == nil {
+		return true, true
+	}
+	_, bySubject := t.Subjects[id.Subject]
+	_, byEmail := t.Emails[strings.ToLower(id.Email)]
+	byDomain := false
+	if i := strings.LastIndex(id.Email, "@"); i >= 0 {
+		_, byDomain = t.Domains[strings.ToLower(id.Email[i+1:])]
+	}
+	team = (bySubject && id.Subject != "") || (byEmail && id.Email != "") || byDomain
+
+	if len(t.Subjects) == 0 && len(t.Aliases) == 0 {
+		return team, true
+	}
+	if id.Subject == "" {
+		return team, false
+	}
+	if bySubject {
+		return team, true
+	}
+	for _, canonical := range t.Aliases {
+		if canonical == id.Subject {
+			return team, true
+		}
+	}
+	return team, false
+}
+
 func (t *TeamMap) Team(id Identity) string {
 	if t == nil {
 		return ""
