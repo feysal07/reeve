@@ -11,9 +11,15 @@ cases:
   - name: building without tests asks
     action: {kind: shell, command: "mvn -q package -DskipTests"}
     expect: {effect: ask, rule: skip-verification}
-  - name: gradle excluding the test task asks
+  - name: gradle excluding the test task at the end asks
     action: {kind: shell, command: "./gradlew build -x test"}
+    expect: {effect: ask, rule: skip-verification-at-the-end}
+  - name: gradle excluding the test task mid-line asks
+    action: {kind: shell, command: "./gradlew -x test build"}
     expect: {effect: ask, rule: skip-verification}
+  - name: curl through a proxy is not a skipped test
+    action: {kind: shell, command: "curl -x test-proxy.internal:8080 https://example.com"}
+    expect: {effect: allow}
   - name: an ordinary build is not interrupted
     action: {kind: shell, command: "mvn -q verify"}
     expect: {effect: allow}

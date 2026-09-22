@@ -17,6 +17,15 @@ cases:
   - name: sed on the policy asks
     action: {kind: shell, command: "sed -i 's/deny/allow/' ~/.reeve/policy.yaml"}
     expect: {effect: ask, rule: shell-touches-the-guard}
+  - name: a project folder that happens to be called ClaudeCode is not blocked
+    action: {kind: write, paths: ["/src/ClaudeCode/app/main.go"]}
+    expect: {effect: allow}
+  - name: a Python project's requirements file is not blocked
+    action: {kind: write, paths: ["/src/app/requirements.toml"]}
+    expect: {effect: allow}
+  - name: editing Codex's administrator requirements is stopped
+    action: {kind: write, paths: ["/etc/codex/requirements.toml"]}
+    expect: {effect: deny, rule: edit-managed-settings}
   - name: editing application settings is not interrupted
     action: {kind: write, paths: ["/src/app/config/settings.json"]}
     expect: {effect: allow}

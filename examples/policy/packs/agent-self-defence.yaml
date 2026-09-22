@@ -40,9 +40,11 @@ rules:
     match:
       kind: [write]
       path:
+        # Named files only. A directory glob such as **/ClaudeCode/** was here, and
+        # denied every write in any checkout that happened to be called ClaudeCode.
         - "**/managed-settings.json"
-        - "**/ClaudeCode/**"
-        - "**/requirements.toml"
+        - "**/codex/requirements.toml"
+        - "**/Codex/requirements.toml"
 
   - id: edit-agent-settings
     description: Editing an agent's own settings, where its hooks are registered

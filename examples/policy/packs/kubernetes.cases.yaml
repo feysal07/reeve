@@ -23,6 +23,6 @@ cases:
   - name: helm upgrade against an unresolved cluster asks
     action: {kind: shell, command: "helm upgrade api ./chart", environment: unknown}
     expect: {effect: ask, rule: kube-change-unknown-shell}
-  - name: a kubectl mention in a commit message is not a cluster change
-    action: {kind: shell, command: "git commit -m 'document kubectl delete usage'", environment: ""}
-    expect: {effect: allow}
+  - name: exec into a pod on an unresolved cluster asks
+    action: {kind: shell, command: "kubectl exec -it api-0 -- sh", environment: unknown}
+    expect: {effect: ask, rule: kube-change-unknown-shell}

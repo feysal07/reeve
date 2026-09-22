@@ -53,5 +53,20 @@ rules:
         - "-Dcheckstyle.skip"
         - "-Dspotbugs.skip"
         - "-Djacoco.skip"
-        - "-x test"
+        # With the trailing space: a bare "-x test" also matched curl's proxy flag,
+        # as in curl -x test-proxy:8080. The form at the very end of a command is
+        # the next rule, because a substring cannot say "end of line".
+        - "-x test "
         - "--exclude-task test"
+
+  - id: skip-verification-at-the-end
+    description: Building with the test task excluded, as the last argument
+    decision: ask
+    reason: >-
+      This builds without the tests that would have caught the problem. Fine for a
+      quick local compile; not for anything that gets committed.
+    match:
+      kind: [shell]
+      command:
+        - "*gradle*-x test"
+        - "*gradlew*-x test"

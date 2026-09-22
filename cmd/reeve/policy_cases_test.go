@@ -67,6 +67,21 @@ func TestPolicyCheckWarnsAboutAnEnvironmentRuleNoMCPCallCanReach(t *testing.T) {
 		t.Errorf("a policy pairing shell and MCP rules was warned about:\n%s", out)
 	}
 
+	// Found by review: an ask on a harmless MCP tool in production counted as cover for
+	// a deny on kubectl delete there, and pods_delete through MCP was unguarded while
+	// the warning stayed quiet. Cover has to be at least as strict.
+	weakCover := filepath.Join(dir, "weak-cover.yaml")
+	writeFile(t, weakCover, "version: 1\nrules:\n  - id: prod-shell\n    decision: deny\n"+
+		"    match: {kind: [shell], environment: [production], commandRuns: [\"kubectl delete\"]}\n"+
+		"  - id: prod-mcp-list\n    decision: ask\n    match: {kind: [mcp], environment: [production], mcpTool: [pods_list]}\n")
+	out, err = captureStdout(t, func() error { return runPolicyCheck([]string{weakCover}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(strings.Fields(out), " "), `rule "prod-shell" matches the production environment for shell commands only`) {
+		t.Errorf("a weaker MCP rule was counted as cover for a deny:\n%s", out)
+	}
+
 	// A rule with no kinds but a command condition looks as though it covers every
 	// kind, and cannot match an MCP call: an MCP call has no command. It is not cover.
 	falseCover := filepath.Join(dir, "false-cover.yaml")

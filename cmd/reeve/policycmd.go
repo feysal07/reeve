@@ -150,7 +150,7 @@ func mcpBlindSpots(p *policy.Policy) []string {
 			continue
 		}
 		for _, env := range r.Match.Environment {
-			if mcpCovered(p, env) {
+			if mcpCovered(p, env, r.Decision) {
 				continue
 			}
 			out = append(out, fmt.Sprintf("rule %q matches the %s environment for shell "+
@@ -180,9 +180,19 @@ func reachesMCP(m policy.Match) bool {
 	return false
 }
 
-func mcpCovered(p *policy.Policy, env string) bool {
+// mcpCovered reports a rule that could stand in for a shell rule on the MCP side: one
+// that can match an MCP call reaching the same environment, and decides at least as
+// strictly.
+//
+// The strictness half was found by review. Without it, an ask on pods_list in production
+// counted as cover for a deny on kubectl delete there, and the warning stayed quiet while
+// pods_delete through the same server was unguarded. It remains a heuristic - a rule
+// naming harmless tools at deny would still count - because which MCP tools are
+// dangerous is not something the policy says.
+func mcpCovered(p *policy.Policy, env string, atLeast policy.Effect) bool {
+	rank := map[policy.Effect]int{policy.EffectAllow: 0, policy.EffectAsk: 1, policy.EffectDeny: 2}
 	for _, r := range p.Rules {
-		if !reachesMCP(r.Match) {
+		if !reachesMCP(r.Match) || rank[r.Decision] < rank[atLeast] {
 			continue
 		}
 		if len(r.Match.Environment) == 0 {
