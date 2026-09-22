@@ -333,22 +333,19 @@ type RecentAction struct {
 	SessionID string
 	Tool      string
 	Command   string
-	// Who is the identity this action was attributed to, empty when none was.
+	// Who is the verified identity this action was attributed to, empty when there
+	// was none — no identity resolved, or only an asserted one.
 	//
-	// The decision log does not carry one today, so this is empty in practice.
+	// For a long time the decision log carried no identity at all, so this was always
+	// empty and a person-scoped repetition rule counted nothing, totalled zero, and
+	// quietly never fired: allow, with no reason, on every action for ever. Parse
+	// refused the combination until the log recorded who; the two changed together.
 	//
-	// An earlier version of this comment claimed Evaluate refused a person-scoped
-	// repetition rule, and it did not. Evaluate refuses only when the identity on the
-	// action is missing or asserted; given a verified one it had no reason to, so the
-	// rule counted nothing, totalled zero, and quietly never fired — allow, with no
-	// reason, on every action for ever. A loop breaker that cannot trigger, accepted
-	// by policy check, is worse than no loop breaker at all.
-	//
-	// Parse now refuses the combination outright. Populate this and lift that refusal
-	// together, in one change, or the scope becomes accepted before it is meaningful.
+	// A record written before that, or while the policy had no rule needing an
+	// identity, has none and counts towards nobody. So a person-scoped rule switched
+	// on today undercounts for at most one window, and says nothing about it.
 	Who string
-	// Team is the operator's attribution for that identity, and is empty for exactly
-	// the same reason Who is.
+	// Team is the operator's attribution for that identity, empty whenever Who is.
 	Team string
 }
 
