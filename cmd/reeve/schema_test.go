@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/feysal07/reeve/internal/audit"
+	"github.com/feysal07/reeve/internal/install"
 	"github.com/feysal07/reeve/internal/mcp"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/posture"
@@ -43,6 +44,8 @@ func TestEveryJSONDocumentDeclaresItsShapeTheSameWay(t *testing.T) {
 		{"report", telemetry.Aggregate(nil, time.Time{}, time.Time{})},
 		{"mcp", mcp.Reconcile(&mcp.Registry{}, nil)},
 		{"audit", verifyEmptyLog(t)},
+		{"install", newInstallReport(nil, install.Options{}, false, false, &policyPlan{})},
+		{"uninstall", newInstallReport(nil, install.Options{}, false, true, nil)},
 
 		// No constructor is reachable from here without running a real scan, reading
 		// a fleet directory, or driving the doctor command end to end. These assert

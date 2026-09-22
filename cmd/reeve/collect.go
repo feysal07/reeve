@@ -32,6 +32,7 @@ func runCollect(args []string) error {
 	pricesPath := fs.String("prices", "", "price table, for cost computed at your rates rather than list")
 	verbose := fs.Bool("verbose", false, "log every batch received")
 	metricsAddr := fs.String("metrics-addr", "", "serve Prometheus metrics on this address, on its own listener")
+	retain := fs.Duration("retain", 0, "remove events older than this from the store, at start-up and hourly (for example 720h); zero keeps everything")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -89,6 +90,25 @@ See docs/TELEMETRY.md`)
 		return err
 	}
 	defer st.Close()
+
+	if *retain < 0 {
+		return fmt.Errorf("--retain cannot be negative")
+	}
+	if *retain > 0 {
+		// Pruned by the collector itself, the store's only writer, so a rewrite can
+		// never race a batch. Once now, so a collector that is restarted often still
+		// forgets on schedule, and hourly after that.
+		if err := pruneStore(st, *retain, time.Now()); err != nil {
+			return err
+		}
+		go func() {
+			for range time.Tick(time.Hour) {
+				if err := pruneStore(st, *retain, time.Now()); err != nil {
+					fmt.Fprintf(os.Stderr, "reeve: %v\n", err)
+				}
+			}
+		}()
+	}
 
 	dec := &telemetry.Decoder{Prices: prices}
 	if teams != nil {
@@ -317,4 +337,23 @@ func (c *collector) stats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"batchesReceived":%d,"eventsWritten":%d,"batchesRejected":%d}`+"\n",
 		c.received, c.written, c.rejected)
+}
+
+// pruneStore applies the retention period and says what it did. A run that removed
+// nothing says nothing, so an hourly tick is not an hourly line in the log.
+func pruneStore(st *telemetry.Store, retain time.Duration, now time.Time) error {
+	kept, removed, unreadable, err := st.Prune(now.Add(-retain))
+	if err != nil {
+		return fmt.Errorf("retention: %w", err)
+	}
+	if removed > 0 || unreadable > 0 {
+		fmt.Printf("retention: removed %d event(s) older than %s, kept %d", removed, retain, kept)
+		if unreadable > 0 {
+			// Kept, not dropped: a line this build cannot read may be one a newer
+			// build wrote, and deleting it would be retention doubling as data loss.
+			fmt.Printf(", and kept %d line(s) it could not read", unreadable)
+		}
+		fmt.Println()
+	}
+	return nil
 }

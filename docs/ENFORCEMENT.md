@@ -325,6 +325,62 @@ as at now. **Budgets cannot be replayed at all** — spend lives in the event st
 there is nothing in a decision log to total, and replay says so rather than reporting
 that no budget was ever exceeded.
 
+**A rule scoped per person or per team replays only against lines that say who.** The
+guard records an identity only while the policy in force has a rule that needs one, so
+an older log carries none, and replay refuses rather than reporting every action as
+refused for want of an identity. An identity recorded as asserted is replayed as
+asserted, and refused as it was at the time.
+
+## Testing a policy: cases files
+
+A policy is code, and a cases file is its tests: named actions, and the decision each
+one must get.
+
+```yaml
+# baseline.cases.yaml
+cases:
+  - name: reading a .env file is stopped
+    action: {kind: read, paths: ["/src/app/.env"]}
+    expect: {effect: deny, rule: read-secrets}
+  - name: running the tests is not interrupted
+    action: {kind: shell, command: "go test ./..."}
+    expect: {effect: allow}
+```
+
+```
+reeve policy test baseline.yaml --cases baseline.cases.yaml
+```
+
+It exits non-zero when any case fails, so it can gate the pull request that changes the
+policy. Rename a rule, narrow a glob, reorder two rules of equal strictness, and the case
+that depended on it fails before anybody's agent does. Write the cases a rule must leave
+alone as well as the ones it must catch: a rule that fires on ordinary work gets removed,
+and takes the rest of the policy with it.
+
+A cases file that could not test anything is refused rather than passed: one with no
+cases, one naming a rule the policy does not have, and one with a misspelt field, which
+would otherwise silently drop the condition it meant to set. Each action is decided on
+its own, with nothing before it and nothing spent, so counting rules and budgets are not
+what cases are for; replay a real log for those.
+
+## Policy packs
+
+[`examples/policy/packs/`](../examples/policy/packs/) holds focused policies for what the
+baseline does not cover, each with its cases file beside it:
+
+| Pack | What it is for |
+|---|---|
+| `kubernetes` | Changes to production clusters, through the shell **and** through a Kubernetes MCP server; each rule comes in both forms, because one rule cannot carry a command and an MCP tool at once. |
+| `agent-self-defence` | The agent editing its own controls: Reeve's policy and binary, administrator-owned settings, and the per-user settings files that register its hooks. |
+| `supply-chain` | New dependencies, a package manager pointed at another registry, the repository's shared MCP servers, and CI workflows. |
+| `java` | Editing an applied Liquibase or Flyway changeset, dropping a schema, and building without the tests. |
+
+Deploy one as it is, or copy its rules into your own policy together with its cases.
+
+`reeve policy check` warns about the gap the Kubernetes pack exists for: a rule that
+matches an environment for shell commands only, when nothing else in the policy matches
+an MCP call reaching the same environment.
+
 ## Circuit breakers: matching on what already happened
 
 Every rule above is a pure function of the action in front of it. One is not.
@@ -337,7 +393,7 @@ Every rule above is a pure function of the action in front of it. One is not.
       same: tool        # tool | command | any
       within: 10m
       moreThan: 50
-      scope: session    # session | machine
+      scope: session    # session | machine | person | team
 ```
 
 This is for the failure that costs the most and looks least like an attack: an agent
@@ -362,6 +418,29 @@ the action being decided is not itself counted.
 never partial. Emitting the rest of the match without the count produces a different
 and stricter rule — "deny curl after fifty tries" would compile to "deny curl" — so the
 compilers emit nothing for it and say why.
+
+**Per person or per team.** `scope: person` counts the repetitions of whoever is at the
+keyboard across every session in the log, and `scope: team` those of their team. Both
+need an identity the rule may rely on, resolved exactly as for a budget (see
+[`scope: person`](#scope-person-and-why-it-refuses-more-often-than-you-might-expect)
+below), and refuse without one.
+
+Until v0.6.0 these two scopes were refused when the policy was parsed, because the
+decision log recorded what was done and never by whom: the count matched nothing,
+totalled zero, and a loop breaker that could never fire would have been accepted by
+`policy check`. The log records who now, and the refusal went in the same change.
+
+Three things follow from where the count comes from:
+
+- **The log is this machine's.** A person-scoped count differs from a machine-scoped one
+  only where several people's decisions land in the same log — a shared build host, a
+  jump box, a log on a shared volume. On a laptop with one user the two are the same.
+- **Only a verified identity attributes a past action.** A line written with an asserted
+  identity counts towards nobody. Otherwise anyone on the machine could push a
+  colleague over their line by claiming to be them.
+- **Lines written before the rule existed carry no identity**, because the guard reads
+  one only when a rule needs it. They count towards nobody, so a person-scoped rule
+  switched on today undercounts for at most one window.
 
 See [examples/policy/loop-breaker.yaml](../examples/policy/loop-breaker.yaml). It is
 deliberately not in the baseline: the baseline is the first thing anyone deploys and
@@ -647,7 +726,7 @@ then matches the environment rather than the words:
 
 ```yaml
 match:
-  kind: [shell]
+  kind: [shell, mcp]
   environment: [production]
 ```
 
@@ -665,11 +744,68 @@ unreadable registry leaves everything `unknown` rather than stopping work.
 Resolution reads local files only and costs roughly a millisecond, which stays well
 inside every agent's hook timeout.
 
+### MCP servers reach environments too
+
+A Kubernetes MCP server is a second door into every cluster its kubeconfig can reach,
+and a rule written about shell commands never sees what comes through it. Found on a
+real machine: pods listed and resources read through MCP, every call allowed without a
+prompt, while a production rule looked configured.
+
+The registry's `mcp` section says what each server reaches:
+
+```yaml
+mcp:
+  - command: "npx -y kubernetes-mcp-server*"   # base name and arguments, globbed
+    kubernetes:
+      contextArg: context        # tool arguments that name a target, if any
+      namespaceArg: namespace
+  - url: "https://db-mcp.internal.example/*"
+    environment: production      # a server bound to one place
+```
+
+**A server is identified by what it runs, never by its name.** The name in a tool call is
+a label from the agent's configuration, which the developer chose. The guard looks that
+name up in the agent's own configuration — the same files `reeve scan` reads — and
+matches the command line or URL it finds there. A Kubernetes server is then resolved per
+call, the way a kubectl command is: the namespace or context from the call's arguments
+when it names one, and from the kubeconfig the server reads otherwise. A `--kubeconfig`
+in the server's arguments is the one read.
+
+**A call's arguments can only make the answer stricter.** An argument is what the agent
+typed, and a tool that takes no namespace ignores one it is given. So the guard works
+out the target both ways — from the arguments, and from the kubeconfig alone — and when
+they disagree the result is the first environment in the registry (the strictest) if
+either side is that, and `unknown` otherwise. Found by review: believing the arguments
+outright let `"namespace": "dev"` classify a call to production as development. An
+argument that is not a valid Kubernetes name makes the target `unknown` and is never
+repeated in the reason the decision log keeps.
+
+**Everything that cannot be known is `unknown`:** a server the registry does not list, a
+name the agent's configuration does not define, a name defined two different ways, and
+a server handed its own `KUBECONFIG`, whose value is deliberately never read. On a
+machine with no registry that is every MCP call, which is the truth about them.
+
+The configuration is only read when the registry lists at least one MCP server, so a
+machine without an `mcp` section pays nothing for this. MCP arguments are read for the
+environment and never written to the decision log.
+
+Finding the server's definition meant finding two places `reeve scan` had never looked:
+`~/.claude.json`, where `claude mcp add` writes user- and local-scoped servers, and the
+Claude desktop application's configuration, whose servers Claude Code is handed when it
+runs inside the desktop application. Both are now in the inventory.
+
 ## The decision log
 
 Each decision appends one JSON line: what was attempted, what was decided, which rule
 decided it, and how long evaluation took. It records no prompt text and no file
 contents.
+
+When the policy has a rule that needs to know who is at the keyboard, the line also
+records who the guard decided that was — `who`, `team`, and `identity`, which is
+`verified` for an identity a rule may rely on and `asserted` for one it may not. A policy
+with no such rule reads no identity, and its lines carry none. The log is written with
+owner-only permissions, and a subject or an email address in it is personal data: rotate
+and retain it on that basis.
 
 ```json
 {"time":"2026-09-18T15:42:03Z","agent":"claude-code","kind":"shell",
@@ -727,6 +863,35 @@ it, not of this code.
 A log that has never been sealed is reported as **not verified**, and exits 2. "No
 breaks found" is true of it and means nothing, and that is exactly what a clean log
 looks like too.
+
+### Rotation and retention without losing the evidence
+
+```
+reeve audit rotate ~/.reeve/decisions.jsonl --keep 720h
+```
+
+A log that is never rotated grows for ever, and deleting the start of a sealed log makes
+every seal fail — which is exactly what tampering looks like. Retention that cannot be
+told apart from tampering is retention nobody can use. So rotation works in whole
+segments:
+
+1. **The log is sealed first.** Sealing refuses a log whose sealed part has changed, so a
+   tampered log cannot be rotated into a clean-looking segment.
+2. **It is moved aside with its chain**, as `decisions-<UTC time>.jsonl`, and the new log's
+   chain begins with a seal of nothing that names that segment and carries the hash of its
+   last seal. The chains of every segment are therefore one chain.
+3. **`--keep` removes the records of segments rotated longer ago than that, and keeps their
+   chains**: a few hundred bytes of counts, times and hashes. A segment that does not
+   verify is not removed, because deleting it on schedule would destroy the only evidence
+   of whatever changed it.
+
+`reeve audit verify` walks back through every segment and reports each as `intact`,
+`pruned` (records removed by retention, chain kept), `broken`, or `missing` — a segment
+whose chain has gone too, which retention never does. A pruned history verifies; a
+missing one does not.
+
+Run it from the same schedule that seals the log. On Windows a guard holding the log open
+stops the move; the rotation then changes nothing, says so, and the next run tries again.
 
 ## Compiling the policy into native configuration
 

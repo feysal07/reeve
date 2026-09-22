@@ -22,7 +22,8 @@ import (
 // survives a crash mid-write without corrupting what came before, it can be read by
 // anything, and it can be shipped to a real store later without the format needing to
 // change. The store is append-only, which matters for an audit record: nothing here
-// rewrites history.
+// rewrites history, with one exception the operator opts into - Prune, which removes
+// whole events older than a retention period and nothing else.
 type Store struct {
 	mu   sync.Mutex
 	f    *os.File
@@ -62,6 +63,98 @@ func (s *Store) Append(events ...Event) error {
 		}
 	}
 	return w.Flush()
+}
+
+// Prune removes events recorded before cutoff, for a retention period the operator
+// chose, and reports how many were kept and removed.
+//
+// The only thing here that rewrites the file, and deliberately done by the writer
+// itself, under the lock Append takes. The collector keeps the store open for as long
+// as it runs, so anything else rewriting it would race the next batch: on Linux the
+// collector would go on appending to a file that had been replaced, and on Windows the
+// replacement would simply fail. Here nothing can be appended mid-rewrite.
+//
+// A line that does not parse is kept rather than dropped. It may be a truncated write,
+// or a shape a newer build wrote, and deleting what this build cannot read would be
+// retention quietly doubling as data loss. It is counted, so the operator can see it.
+func (s *Store) Prune(cutoff time.Time) (kept, removed, unreadable int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	in, err := os.Open(s.path)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	tmp := s.path + ".pruning"
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		in.Close()
+		return 0, 0, 0, err
+	}
+	w := bufio.NewWriter(out)
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var e struct {
+			Time time.Time `json:"time"`
+		}
+		if json.Unmarshal(line, &e) != nil || e.Time.IsZero() {
+			unreadable++
+		} else if e.Time.Before(cutoff) {
+			removed++
+			continue
+		} else {
+			kept++
+		}
+		w.Write(line)
+		w.WriteByte('\n')
+	}
+	scanErr := sc.Err()
+	in.Close()
+	if err := w.Flush(); err != nil || scanErr != nil {
+		out.Close()
+		os.Remove(tmp)
+		if scanErr != nil {
+			return 0, 0, 0, scanErr
+		}
+		return 0, 0, 0, err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return 0, 0, 0, err
+	}
+	out.Close()
+	if removed == 0 {
+		// Nothing to forget, so the file is left exactly as it was.
+		os.Remove(tmp)
+		return kept, 0, unreadable, nil
+	}
+
+	// Close our handle before replacing the file: Windows refuses to replace a file
+	// that is open, and the collector's own handle would be the one refusing.
+	if err := s.f.Close(); err != nil {
+		os.Remove(tmp)
+		return 0, 0, 0, err
+	}
+	renameErr := os.Rename(tmp, s.path)
+	f, openErr := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if openErr != nil {
+		// The store cannot be written at all now, which is worse than not pruning.
+		// Returned loudly; the caller stops collecting rather than dropping batches.
+		return 0, 0, 0, fmt.Errorf("the store could not be reopened after pruning: %w", openErr)
+	}
+	s.f = f
+	if renameErr != nil {
+		os.Remove(tmp)
+		return 0, 0, 0, fmt.Errorf("nothing was pruned, because the store could not be replaced "+
+			"(a reader may have it open; the next run will try again): %w", renameErr)
+	}
+	return kept, removed, unreadable, nil
 }
 
 // Close flushes and closes the file.
@@ -340,6 +433,44 @@ func LoadTeams(path string) (*TeamMap, error) {
 }
 
 // Team resolves an identity, from most specific to least.
+// Matched says whether a mapping decided this identity's team rather than the default,
+// and whether its subject is one the organisation named — in subjects, or as the target
+// of an alias.
+//
+// The subject half is asked of every map. An earlier version skipped it for a map built
+// from domains alone, on the grounds that such a map never claims to know anybody's
+// subject. Found by review: that is exactly the map the nine-million-token incident
+// happens under. A person-scoped budget does not consult the map at all; it compares
+// the guard's identity against the subject recorded on each event, and a domain match
+// fixes the team while leaving the vendor's id in place. The noise that worried the
+// earlier version is handled by reporting the two halves as separate conditions, so an
+// organisation with no per-person budget simply does not gate on this one.
+func (t *TeamMap) Matched(id Identity) (team, subject bool) {
+	if t == nil {
+		return true, true
+	}
+	_, bySubject := t.Subjects[id.Subject]
+	_, byEmail := t.Emails[strings.ToLower(id.Email)]
+	byDomain := false
+	if i := strings.LastIndex(id.Email, "@"); i >= 0 {
+		_, byDomain = t.Domains[strings.ToLower(id.Email[i+1:])]
+	}
+	team = (bySubject && id.Subject != "") || (byEmail && id.Email != "") || byDomain
+
+	if id.Subject == "" {
+		return team, false
+	}
+	if bySubject {
+		return team, true
+	}
+	for _, canonical := range t.Aliases {
+		if canonical == id.Subject {
+			return team, true
+		}
+	}
+	return team, false
+}
+
 func (t *TeamMap) Team(id Identity) string {
 	if t == nil {
 		return ""
