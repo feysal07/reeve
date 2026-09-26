@@ -4,7 +4,7 @@
 # Reeve does runs on a developer's machine or a CI runner, where the single binary
 # is the point and a container would be in the way.
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 
