@@ -447,6 +447,19 @@ else
     esac
 fi
 
+# A version with a published vulnerability. Its own home, so the version file does not
+# change what every other check in this step sees.
+VULN_HOME="$SANDBOX/vulnerable"
+mkdir -p "$VULN_HOME/.claude"
+printf '{}\n' > "$VULN_HOME/.claude/settings.json"
+printf '{"version_from":"2.1.90","version_to":"2.1.100","outcome":"success"}\n' > "$VULN_HOME/.claude/.last-update-result.json"
+VULN_OUT=$(env HOME="$VULN_HOME" USERPROFILE="$VULN_HOME" "$REEVE" scan --dir "$VULN_HOME" --json 2>/dev/null)
+case "$VULN_OUT" in
+    *'"version.known-vulnerability"'*'CVE-2026-54316'*'"https://advisories.gitlab.com/'*)
+        check "an agent below a published fix is named, with the advisory to read" 1 ;;
+    *) check "an agent below a published fix is named, with the advisory to read" 0 "no known-vulnerability finding for Claude Code 2.1.100" ;;
+esac
+
 # The capture is meant to be sent to a stranger, so the one property that
 # matters is that no value from the file survives into it.
 CAPTURE_DIR="$SANDBOX/captured"

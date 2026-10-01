@@ -38,6 +38,7 @@ var rules = []Rule{
 	lenientConfig,
 	agentNewerThanVerified,
 	telemetryCannotArrive,
+	knownVulnerabilities,
 }
 
 // Evaluate runs every rule against every installation.
