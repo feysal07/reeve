@@ -240,6 +240,7 @@ type decisionRecord struct {
 	SessionID string        `json:"sessionId"`
 	Kind      string        `json:"kind"`
 	Tool      string        `json:"tool"`
+	ToolUseID string        `json:"toolUseId"`
 	Command   string        `json:"command"`
 	Effect    string        `json:"effect"`
 	RuleID    string        `json:"ruleId"`
@@ -282,6 +283,7 @@ func ReadDecisions(path string) ([]Event, error) {
 			Agent:     r.Agent,
 			SessionID: r.SessionID,
 			ToolName:  r.Tool,
+			ToolUseID: r.ToolUseID,
 			Decision:  r.Effect,
 			RuleID:    r.RuleID,
 			// A dry-run deny is recorded as a decision but not as a block, because

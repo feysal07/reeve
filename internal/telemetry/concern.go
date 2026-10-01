@@ -61,12 +61,19 @@ const (
 	// ConcernUnattributed: consumption from identities the team map matched nothing
 	// about, counted under its default team, which no team budget counts.
 	ConcernUnattributed = "identity.unattributed"
+	// ConcernRubberStamp: an ask rule that is, in effect, never refused.
+	//
+	// The control that looks most like one. Every firing is in the decision log as an
+	// ask, the person was interrupted every time, and every time they said yes. That
+	// is a delay with a confirmation dialog, and the habit it teaches - approve without
+	// reading - is the one that lets through the time it mattered.
+	ConcernRubberStamp = "ask.rubber-stamp"
 )
 
 // AllConcerns is every identifier, for --fail-on any and for validating input.
 var AllConcerns = []string{
 	ConcernOverSeat, ConcernOverTotal, ConcernPace, ConcernUndeclared,
-	ConcernSilent, ConcernUnpriced, ConcernUnmatched, ConcernUnattributed,
+	ConcernSilent, ConcernUnpriced, ConcernUnmatched, ConcernUnattributed, ConcernRubberStamp,
 }
 
 // Concerns lists what in this report is worth failing a build over.
@@ -130,6 +137,17 @@ func (r Report) Concerns() []Concern {
 				"default team and a team budget counts none of it. Heaviest: %s. Add a "+
 				"mapping for them", u.Unattributed, plural(u.Unattributed),
 				humanCount(u.UnattributedTokens, UnitTokens), strings.Join(u.UnattributedExamples, ", "))})
+		}
+	}
+	if r.Asks != nil {
+		for _, a := range r.Asks.Rules {
+			if a.RubberStamp() {
+				out = append(out, Concern{ConcernRubberStamp, "", fmt.Sprintf("rule %s asked %d "+
+					"time(s) and the action went ahead %d of them. An ask nobody declines is a "+
+					"delay rather than a control, and it teaches approving without reading: allow "+
+					"it, narrow it to what somebody would refuse, or make it deny",
+					a.Rule, a.Asked, a.WentAhead)})
+			}
 		}
 	}
 	if n := r.Overall.UnpricedRequests; n > 0 {

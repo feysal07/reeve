@@ -126,6 +126,10 @@ type Report struct {
 	// or when no map was in use.
 	Unmatched *Unmatched `json:"unmatchedIdentities,omitempty"`
 
+	// Asks says whether the actions the guard asked about went ahead. Nil when the
+	// report was not given a decision log to measure.
+	Asks *Asks `json:"asks,omitempty"`
+
 	ByTeam  []Group `json:"byTeam"`
 	ByAgent []Group `json:"byAgent"`
 	ByUser  []Group `json:"byUser"`
