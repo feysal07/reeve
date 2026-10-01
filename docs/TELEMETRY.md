@@ -253,6 +253,36 @@ The log and store are found the way `reeve report` finds them: `--log` and `--st
 then `REEVE_DECISION_LOG` and `REEVE_EVENT_STORE`, then whatever the installed guard
 writes to, and the commands say which files they read.
 
+### In a browser
+
+```
+reeve view
+```
+
+The same sessions and timelines as a page, served by the binary itself - no build step,
+nothing to deploy. It prints an address with a token in it; open that, on this machine.
+
+The page shows commands and file paths and has no login, so it is built to be unreachable
+by anything but the browser of the person who started it, and each way that could fail is
+closed separately:
+
+- **Loopback only.** Any other `--addr` is refused before anything is read, and the bound
+  socket is checked too, because `localhost` is a name a hosts file can repoint. There is
+  no environment variable for the address, so no deployment can widen it by accident.
+- **Requests for any other host are refused.** A web page in the same browser can point a
+  domain it controls at 127.0.0.1 and read the answers as same-origin - DNS rebinding - and
+  the `Host` header is what gives that away.
+- **A token for every run.** Data needs it; another account on a shared machine can reach
+  a loopback port but cannot read your terminal. It travels in the address's fragment,
+  which a browser never sends to a server or puts in a referrer, and the page removes it
+  from the address bar as soon as it has read it.
+- **Text, never markup.** Every value is inserted as text, the page has no inline script,
+  and its content security policy forbids any.
+
+This is the free tier's session viewer, built into the binary rather than as the separate
+web application the roadmap first described: one fewer thing to deploy, patch and secure,
+for a page whose whole job is to show two files side by side.
+
 ## The JSON report
 
 `reeve report --json` emits a documented, versioned shape you can build on.
