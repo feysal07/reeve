@@ -1,0 +1,18 @@
+The gateway is at {{ .Values.gateway.listen.public_url }}
+
+1. Check it booted end to end. The discovery document answers 200 only after the config
+   loaded, OIDC discovery and the upstream client succeeded, and Postgres migrated:
+
+     curl -sf {{ .Values.gateway.listen.public_url }}/.well-known/oauth-authorization-server
+
+2. Developers sign in with Claude Code's /login. The gateway's hostname must resolve
+   only to private addresses on their machines; Claude Code refuses a gateway on public
+   address space.
+
+3. The gateway does not stop anybody calling the provider directly with their own key.
+   Closing that path is an egress policy decision, made outside this chart.
+{{- if .Values.reeveCollector.url }}
+
+4. Telemetry through the gateway is forwarded to {{ .Values.reeveCollector.url }}.
+   Check it arrives: reeve report --store <the collector's store>
+{{- end }}

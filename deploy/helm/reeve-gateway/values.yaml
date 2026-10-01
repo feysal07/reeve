@@ -1,0 +1,106 @@
+# The Claude apps gateway, on Kubernetes.
+#
+# Every option the gateway reads lives in its own gateway.yaml, documented at
+# https://code.claude.com/docs/en/claude-apps-gateway-config, and this chart renders
+# `gateway:` below into that file verbatim. The chart adds only what Kubernetes needs
+# around it, and refuses the configurations that would deploy cleanly and be wrong.
+
+replicaCount: 2
+
+image:
+  # Build your own: there is no published image, and this chart will not invent one.
+  # image/Dockerfile copies in a claude binary you downloaded from a pinned release and
+  # verified against its GPG-signed manifest. Pin by digest.
+  repository: ""
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The Secret holding every credential the gateway.yaml refers to as ${VAR}: the OIDC
+# client secret, the JWT signing secret, the database password and the upstream
+# credential. Created by you or by your secrets operator; this chart never takes a
+# secret value, and refuses one written into `gateway:`.
+existingSecret: ""
+
+# Rendered as gateway.yaml. Secret-bearing fields must be ${VAR} or ${file:...}.
+gateway:
+  listen:
+    port: 8080
+    # The https:// origin developers sign in to - the Ingress host.
+    public_url: ""
+    # The source ranges of your ingress controller, so the gateway reads client IPs
+    # from X-Forwarded-For. Without them every request appears to come from the proxy,
+    # which merges per-IP rate limits into one bucket.
+    trusted_proxies: []
+  oidc:
+    issuer: ""
+    client_id: ${OIDC_CLIENT_ID}
+    client_secret: ${OIDC_CLIENT_SECRET}
+  session:
+    jwt_secret: ${GATEWAY_JWT_SECRET}
+  store:
+    postgres_url: ""
+    password: ${DB_PASSWORD}
+  upstreams: []
+  # Optional sections pass through unchanged: admin, enforcement, pricing, models,
+  # managed, telemetry, access_control, limits, timeouts, rate_limits.
+
+# Relay the gateway's OTLP to the Reeve collector, so model traffic through the gateway
+# lands in the same store as everything else. Adds a telemetry.forward_to entry. The
+# gateway accepts only https:// here, so this is the collector's TLS address, usually its
+# Ingress, not the in-cluster Service.
+reeveCollector:
+  url: ""
+  # The header the collector's authenticating proxy expects, as ${VAR} from the Secret.
+  headers: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: ""
+  # Never add a redirect to these annotations: Claude Code does not follow redirects on
+  # the device-authorization and token endpoints, so an HTTP-to-HTTPS or host rewrite
+  # breaks sign-in and token refresh.
+  annotations: {}
+  host: ""
+  tlsSecretName: ""
+
+# Kept writable for the gateway's state; the root filesystem is read-only.
+stateDir: /tmp/.claude
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  # Who may reach the gateway: your ingress controller's pods.
+  ingressFrom: []
+  # Where it may connect: Postgres, your IdP, the upstream, the collector. Each as a
+  # NetworkPolicy egress rule with `to:` and `ports:`. DNS is always allowed.
+  egressTo: []
+
+serviceAccount:
+  create: true
+  name: ""
+  # Workload identity for the upstream (IRSA, GKE Workload Identity, Azure workload
+  # identity) goes here, which the gateway's docs prefer to static keys.
+  annotations: {}
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+nameOverride: ""
+fullnameOverride: ""

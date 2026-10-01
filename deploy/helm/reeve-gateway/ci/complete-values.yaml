@@ -1,0 +1,28 @@
+# A complete, valid configuration, used by CI to lint and render the chart. The defaults
+# are deliberately not deployable - there is no image, issuer or database to default to.
+image:
+  repository: registry.internal/claude-gateway
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+existingSecret: claude-gateway
+ingress:
+  className: nginx
+  host: claude-gateway.corp.example
+  tlsSecretName: claude-gateway-tls
+gateway:
+  listen:
+    port: 8080
+    public_url: https://claude-gateway.corp.example
+    trusted_proxies: [10.0.0.0/8]
+  oidc:
+    issuer: https://keycloak.corp.example/realms/engineering
+    client_id: ${OIDC_CLIENT_ID}
+    client_secret: ${OIDC_CLIENT_SECRET}
+  session:
+    jwt_secret: ${GATEWAY_JWT_SECRET}
+  store:
+    postgres_url: postgres://claude-gateway-db.data:5432/gateway?sslmode=require
+    password: ${DB_PASSWORD}
+  upstreams:
+    - provider: anthropic
+      auth:
+        api_key: ${ANTHROPIC_API_KEY}
