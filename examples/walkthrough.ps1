@@ -395,6 +395,26 @@ try {
     if ($savedHome2) { $env:HOME = $savedHome2 } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }
 }
 
+# A version with a published vulnerability. Its own home, so the version file does not
+# change what every other check in this step sees.
+$vulnHome = Join-Path $Sandbox "vulnerable"
+New-Item -ItemType Directory -Force -Path (Join-Path $vulnHome ".claude") | Out-Null
+Write-Text (Join-Path $vulnHome ".claude\settings.json") "{}`n"
+Write-Text (Join-Path $vulnHome ".claude\.last-update-result.json") ('{"version_from":"2.1.90","version_to":"2.1.100","outcome":"success"}' + "`n")
+$savedProfile3 = $env:USERPROFILE
+$savedHome3 = $env:HOME
+$env:USERPROFILE = $vulnHome
+$env:HOME = $vulnHome
+try {
+    $vulnOut = (& $reeve scan --dir $vulnHome --json 2>$null | Out-String)
+    Check "an agent below a published fix is named, with the advisory to read" `
+        ($vulnOut -match '"version\.known-vulnerability"' -and $vulnOut -match 'CVE-2026-54316' -and $vulnOut -match '"https://advisories\.gitlab\.com/') `
+        "no known-vulnerability finding for Claude Code 2.1.100"
+} finally {
+    $env:USERPROFILE = $savedProfile3
+    if ($savedHome3) { $env:HOME = $savedHome3 } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }
+}
+
 # The capture is meant to be sent to a stranger, so the one property that matters
 # is that no value from the file survives into it.
 $captureDir = Join-Path $Sandbox "captured"
