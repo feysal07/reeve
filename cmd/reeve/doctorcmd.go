@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/feysal07/reeve/internal/audit"
 	"github.com/feysal07/reeve/internal/install"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
@@ -57,17 +58,12 @@ func runDoctor(args []string) error {
 		byAgent[r.Agent] = r
 	}
 
-	// The decision log named by the hooks themselves, not the one this build would
-	// choose. They can differ, and the one the hooks name is the one being written.
-	logPath := opts.LogPath
-	for _, r := range registered {
-		if p := flagValue(r.Command, "--log"); p != "" {
-			logPath = p
-			break
-		}
-	}
+	logPath := installedLogPath(opts)
 	rep.LogPath = logPath
 	rep.Decisions = readDecisionSummary(logPath)
+	if rep.Decisions.Exists {
+		rep.Seal = checkSeal(logPath, time.Now())
+	}
 
 	for _, agent := range model.AllAgents() {
 		h := agentHealth{Agent: agent, Name: displayName(agent)}
@@ -111,8 +107,11 @@ type doctorReport struct {
 	StateDir      string        `json:"stateDir"`
 	LogPath       string        `json:"decisionLog"`
 	Decisions     decisionStats `json:"decisions"`
-	Policy        policyHealth  `json:"policy"`
-	Agents        []agentHealth `json:"agents"`
+	// Seal is the state of the decision log's tamper-evidence. Nil when there is no
+	// log to seal.
+	Seal   *sealHealth   `json:"seal,omitempty"`
+	Policy policyHealth  `json:"policy"`
+	Agents []agentHealth `json:"agents"`
 }
 
 type agentHealth struct {
@@ -151,10 +150,56 @@ type decisionStats struct {
 	byAgent map[model.AgentID]int
 }
 
+// sealHealth is what doctor says about the decision log's seals.
+type sealHealth struct {
+	Seals      int       `json:"seals"`
+	LastSealed time.Time `json:"lastSealed,omitempty"`
+	// Unsealed is how many lines were written after the last seal, and so are
+	// covered by nothing.
+	Unsealed int64 `json:"unsealedLines"`
+	// Stale says lines have waited longer than staleAfter for a seal: whatever was
+	// meant to seal this log is not running.
+	Stale  bool `json:"stale,omitempty"`
+	Broken bool `json:"broken,omitempty"`
+	// Problem is an error reading or verifying the log or its chain.
+	Problem string `json:"problem,omitempty"`
+}
+
+// staleAfter is how long lines may sit unsealed before doctor says the schedule is not
+// running. A day, so an hourly timer that missed a few runs is not reported, and one
+// that never existed is reported on the first day.
+const staleAfter = 24 * time.Hour
+
+// checkSeal verifies the log and reports how much of it is covered.
+//
+// Registered and answering is the guard working; it says nothing about whether the
+// record it writes could be edited unseen. Found on the first real installation: sealed
+// by hand once, at line 7,622, and from then on every line was covered by nothing while
+// the chain file sat beside the log looking like a control.
+func checkSeal(logPath string, now time.Time) *sealHealth {
+	h := &sealHealth{}
+	rep, err := audit.Verify(logPath)
+	if err != nil {
+		h.Problem = err.Error()
+		return h
+	}
+	h.Seals, h.Unsealed, h.Broken = rep.Seals, rep.Unsealed, len(rep.Breaks) > 0
+	if seals, err := audit.ReadSeals(rep.ChainPath); err == nil && len(seals) > 0 {
+		h.LastSealed = seals[len(seals)-1].SealedAt
+	}
+	h.Stale = h.Seals > 0 && h.Unsealed > 0 && now.Sub(h.LastSealed) > staleAfter
+	return h
+}
+
 // healthy decides the exit code. Anything that means the guard is not deciding
 // actions fails, because the whole point of running this is to be told.
 func (r doctorReport) healthy() bool {
 	if !r.Policy.OK && r.Policy.Path != "" {
+		return false
+	}
+	// A seal that no longer matches is evidence the log was changed, or damaged.
+	// Unsealed is a gap in a control; broken is the control reporting something.
+	if r.Seal != nil && (r.Seal.Broken || r.Seal.Problem != "") {
 		return false
 	}
 	var any bool
@@ -296,6 +341,18 @@ func flagValue(command, flag string) string {
 	return ""
 }
 
+// installedLogPath is the decision log the registered hooks write, not the one this
+// build would choose. They can differ, and the one the hooks name is the one being
+// written.
+func installedLogPath(opts install.Options) string {
+	for _, r := range install.Registered(opts) {
+		if p := flagValue(r.Command, "--log"); p != "" {
+			return p
+		}
+	}
+	return opts.LogPath
+}
+
 func policyPathFor(regs []install.Registration, opts install.Options) string {
 	for _, r := range regs {
 		if p := flagValue(r.Command, "--policy"); p != "" {
@@ -385,6 +442,9 @@ func renderDoctor(r doctorReport) {
 	} else if r.LogPath != "" {
 		fmt.Printf("  decision log : nothing has been written to %s\n", r.LogPath)
 	}
+	if s := r.Seal; s != nil {
+		renderSeal(*s, r.Decisions.Total)
+	}
 	fmt.Println()
 
 	var problems []string
@@ -465,6 +525,28 @@ func renderDoctor(r doctorReport) {
 		fmt.Printf("  - %s\n", wrap(p, 72, "    "))
 	}
 	fmt.Println()
+}
+
+// renderSeal says how much of the decision log could be edited without anybody being
+// able to tell.
+func renderSeal(s sealHealth, total int) {
+	schedule := "Schedule sealing with: reeve audit schedule"
+	switch {
+	case s.Problem != "":
+		fmt.Printf("  seals        : COULD NOT BE CHECKED: %s\n", s.Problem)
+	case s.Broken:
+		fmt.Printf("  seals        : BROKEN - the log no longer matches what was sealed. Run reeve audit verify\n")
+	case s.Seals == 0:
+		fmt.Printf("  seals        : NEVER SEALED - nothing shows these %d lines have not been edited\n", total)
+		fmt.Printf("                 %s\n", schedule)
+	case s.Stale:
+		fmt.Printf("  seals        : last sealed %s ago, and %d lines since are covered by nothing\n",
+			humanAge(time.Since(s.LastSealed)), s.Unsealed)
+		fmt.Printf("                 %s\n", "Whatever was sealing this log has stopped. "+schedule)
+	default:
+		fmt.Printf("  seals        : %d, the last %s ago; %d lines since\n",
+			s.Seals, humanAge(time.Since(s.LastSealed)), s.Unsealed)
+	}
 }
 
 func humanAge(d time.Duration) string {

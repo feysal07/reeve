@@ -890,8 +890,30 @@ reeve audit verify /var/log/reeve/decisions.jsonl   # check it against every sea
 what they hashed to. Each seal names the one before it, so the sidecar is itself a
 chain. `verify` recomputes and exits 2 if anything differs, so it works as a gate.
 
-Run `seal` on a schedule — hourly from cron, at the end of a session, or in the job
-that ships the log somewhere else.
+Run `seal` on a schedule, or in the job that ships the log somewhere else. The gap
+between seals is the window an edit can hide in, so the interval is the control. A log
+sealed once reads exactly like one under tamper-evidence - the chain file is there,
+`verify` passes - while every line written since is covered by nothing. That is what the
+first real installation did: sealed by hand at line 7,622, then not again.
+
+```
+reeve audit schedule                  # this machine: hourly seal, daily rotation
+reeve audit schedule --keep 720h      # and remove segments older than thirty days
+reeve audit schedule --platform linux --binary /usr/local/bin/reeve --log /var/log/reeve/decisions.jsonl
+```
+
+It prints the timers for the platform - Task Scheduler commands on Windows, systemd user
+timers on Linux, launchd agents on macOS - and how to remove them again. It installs
+nothing: a timer outlives the command that made it, and whoever owns the machine should
+see what is being added and run it themselves. Paths are quoted for each scheduler, and
+a relative path, an interval that is not whole minutes, or a binary in the temporary
+directory (where `go run` builds) is refused.
+
+`reeve doctor` reports the seals beside the decision log: **never sealed**, sealed but
+**stale** (lines have waited more than a day, so whatever was sealing has stopped), or
+how many seals and how many lines since. A seal that no longer matches, or seals that
+cannot be checked, fail doctor; a log that is merely unsealed does not, because that is
+a gap in a control rather than the guard failing.
 
 **Why sealing and not a hash in every record.** The obvious design is each line linking
 to the one before it. Every guard invocation is a separate short-lived process
