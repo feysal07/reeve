@@ -354,6 +354,16 @@ closed separately:
 - **Text, never markup.** Every value is inserted as text, the page has no inline script,
   and its content security policy forbids any.
 
+It has a second page, **MCP servers**: every server this machine's agents are configured
+with, scanned afresh on each visit and reconciled against the approved list - `--registry`,
+or `mcp-registry.yaml` in Reeve's state directory when there is one - with the same
+verdicts as `reeve mcp check`. With no list it says so, and every server reads as
+unregistered rather than looking reviewed. It is read-only: approving or refusing a server
+is a change to the registry file, reviewed where that file is reviewed, and an approval
+workflow belongs to the paid tier. The page holds no form or button, and a test keeps it
+that way. Run on the first real installation, it found eight servers that arrived with
+Claude Code plugins and were on nobody's approved list.
+
 This is the free tier's session viewer, built into the binary rather than as the separate
 web application the roadmap first described: one fewer thing to deploy, patch and secure,
 for a page whose whole job is to show two files side by side.

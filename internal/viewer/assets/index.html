@@ -9,7 +9,8 @@
 </head>
 <body>
 <header>
-  <h1>Sessions</h1>
+  <nav class="tabs"><a href="#" id="tab-sessions" class="current">Sessions</a> <a href="#" id="tab-mcp">MCP servers</a></nav>
+  <h1 id="page-title">Sessions</h1>
   <p class="sub">The guard's decisions and the agent's telemetry, side by side. This page is served
   from this machine only, and reads the files again every time you open a session.</p>
 </header>
@@ -25,6 +26,20 @@
       </tr></thead>
       <tbody></tbody>
     </table>
+  </section>
+  <!-- Read-only: no form, button or input here. Approving a server is a change to the
+       registry file, reviewed where that file is reviewed. A test keeps it that way. -->
+  <section id="mcp-view" hidden>
+    <p id="mcp-registry" class="note"></p>
+    <ul id="mcp-notes" class="notes"></ul>
+    <table id="mcp-servers">
+      <thead><tr>
+        <th>Server</th><th>Agent</th><th>Scope</th><th>Verdict</th><th>Recognised by</th><th>Detail</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <h2 id="mcp-unused-title" hidden>Approved, and nothing is running them</h2>
+    <ul id="mcp-unused" class="notes"></ul>
   </section>
   <section id="detail-view" hidden>
     <p><a href="#" id="back">← All sessions</a></p>
