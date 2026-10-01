@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/model"
@@ -155,6 +157,13 @@ func runGuard(args []string) error {
 // degrades to "unknown" rather than failing closed. A rule that wants to be careful
 // about unresolvable targets says so by matching on "unknown" explicitly.
 func resolveEnvironment(act *policy.Action, explicit string) {
+	// Every MCP call, including one whose server could not be named. Found by review:
+	// gated on a server name, a call without one kept an empty environment, which
+	// neither a production rule nor an unknown rule matches, so it passed both.
+	if act.Kind == policy.KindMCP {
+		resolveMCPEnvironment(act, explicit)
+		return
+	}
 	if act.Kind != policy.KindShell || act.Command == "" {
 		return
 	}
@@ -179,6 +188,88 @@ func resolveEnvironment(act *policy.Action, explicit string) {
 
 	act.Environment = target.Environment
 	act.EnvironmentDetail = target.Detail
+}
+
+// resolveMCPEnvironment works out which environment an MCP call reaches.
+//
+// Unlike a shell command, an MCP call never says what it runs: the server is named by a
+// label from the agent's configuration. So the definition is looked up in that
+// configuration, the same files scan reads, and matched against the registry by command
+// line or URL. The configuration is read only when the registry lists any MCP server at
+// all, because nothing could match otherwise and every MCP call would pay for it.
+//
+// A server the registry does not list is unknown, never assumed harmless. On a machine
+// with no registry that is every MCP call, which is the truth about them.
+func resolveMCPEnvironment(act *policy.Action, explicit string) {
+	if act.MCPServer == "" {
+		act.Environment = resource.EnvUnknown
+		act.EnvironmentDetail = "the MCP call named no server, so what it reaches is not known"
+		return
+	}
+	home, _ := os.UserHomeDir()
+	workDir := act.CWD
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	reg := loadRegistry(explicit, home)
+	var found []resource.ConfiguredServer
+	if reg != nil && len(reg.MCP) > 0 {
+		found = configuredMCPServers(act.Agent, act.MCPServer, adapter.Env{
+			Home: home, WorkDir: workDir, GOOS: runtime.GOOS,
+			Getenv: os.Getenv, ProgramData: os.Getenv("ProgramData"),
+		})
+	}
+	t := reg.ClassifyMCP(act.MCPServer, found, act.MCPArguments,
+		resource.Env{Home: home, WorkDir: workDir, Getenv: os.Getenv})
+	act.Environment = t.Environment
+	act.EnvironmentDetail = t.Detail
+}
+
+// configuredMCPServers returns every definition of a named server in one agent's
+// configuration.
+//
+// The name in a tool call is the agent's rendering of the configured name, which may
+// have replaced characters a tool identifier cannot carry, so both sides are compared in
+// that rendering.
+func configuredMCPServers(agent model.AgentID, name string, env adapter.Env) []resource.ConfiguredServer {
+	var out []resource.ConfiguredServer
+	for _, a := range supportedAdapters() {
+		if a.ID() != agent {
+			continue
+		}
+		var servers []model.MCPServer
+		if l, ok := a.(adapter.MCPLister); ok {
+			servers = l.MCPServers(context.Background(), env)
+		} else {
+			inst, err := a.Inspect(context.Background(), env)
+			if err != nil {
+				return nil
+			}
+			servers = inst.MCPServers
+		}
+		for _, s := range servers {
+			if toolSafe(s.Name) != toolSafe(name) {
+				continue
+			}
+			out = append(out, resource.ConfiguredServer{
+				Command: s.Command, Args: s.Args, URL: s.URL, EnvKeys: s.EnvKeys,
+			})
+		}
+	}
+	return out
+}
+
+// toolSafe renders a server name the way agents do when they build a tool identifier
+// from it: anything outside letters, digits, underscore and hyphen becomes an
+// underscore.
+func toolSafe(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			return r
+		}
+		return '_'
+	}, name)
 }
 
 // loadRegistry finds a registry, returning nil when there is none. A nil registry
@@ -299,7 +390,26 @@ type decisionRecord struct {
 	PolicyFile  string        `json:"policyFile,omitempty"`
 	ElapsedUS   int64         `json:"elapsedMicros"`
 	DryRun      bool          `json:"dryRun,omitempty"`
+
+	// Who, Team and Identity record who the guard decided this action was taken by,
+	// and how much that is worth: "verified" for an identity a rule may rely on,
+	// "asserted" for one it may not. All three are empty when none was resolved,
+	// which happens whenever the policy has no rule that needs to know, because the
+	// guard does not read a token for a policy that never mentions a person.
+	//
+	// Recorded so a repetition rule can be scoped per person or per team. Before
+	// this, the log said what was done and never by whom, so such a rule counted
+	// nothing, totalled zero and could not fire, and Parse refused it for that reason.
+	Who      string `json:"who,omitempty"`
+	Team     string `json:"team,omitempty"`
+	Identity string `json:"identity,omitempty"`
 }
+
+// The two values the Identity field of a decision record takes.
+const (
+	identityVerified = "verified"
+	identityAsserted = "asserted"
+)
 
 // logDecision appends one record. A logging failure never changes the decision: the
 // guard's job is to enforce, and losing an audit line is not a reason to let an
@@ -331,6 +441,13 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 		PolicyFile:  source,
 		ElapsedUS:   elapsed.Microseconds(),
 		DryRun:      dryRun,
+	}
+	if id := a.Identity; id != nil && id.Key() != "" {
+		rec.Who, rec.Team = id.Key(), id.Team
+		rec.Identity = identityAsserted
+		if id.Verified() {
+			rec.Identity = identityVerified
+		}
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
@@ -408,12 +525,20 @@ func readHistory(path string, window time.Duration) *policy.History {
 		if rec.Time.Before(cutoff) {
 			break
 		}
-		h.Records = append(h.Records, policy.RecentAction{
+		ra := policy.RecentAction{
 			Time:      rec.Time,
 			SessionID: rec.SessionID,
 			Tool:      rec.Tool,
 			Command:   rec.Command,
-		})
+		}
+		// Only a verified identity attributes a past action to somebody. An asserted
+		// one is a claim the agent made, and counting it would let anyone on this
+		// machine push a colleague's per-person count over its line by claiming to
+		// be them — a denial of service aimed at somebody else, recorded as policy.
+		if rec.Identity == identityVerified {
+			ra.Who, ra.Team = rec.Who, rec.Team
+		}
+		h.Records = append(h.Records, ra)
 	}
 	return h
 }

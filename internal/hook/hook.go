@@ -269,6 +269,11 @@ var (
 // them, and records every path it can find so a path rule cannot be evaded by the
 // same file arriving under a different key.
 func populate(a *policy.Action, input map[string]any) {
+	// Before the nil check: a call with no arguments is still a call to a server,
+	// and the server is what a rule about MCP matches on.
+	if a.Kind == policy.KindMCP {
+		a.MCPServer, a.MCPTool = splitMCPName(a.ToolName)
+	}
 	if input == nil {
 		return
 	}
@@ -309,7 +314,14 @@ func populate(a *policy.Action, input map[string]any) {
 	}
 
 	if a.Kind == policy.KindMCP {
-		a.MCPServer, a.MCPTool = splitMCPName(a.ToolName)
+		for k, v := range input {
+			if str, ok := v.(string); ok && str != "" {
+				if a.MCPArguments == nil {
+					a.MCPArguments = map[string]string{}
+				}
+				a.MCPArguments[k] = str
+			}
+		}
 	}
 }
 

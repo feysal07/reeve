@@ -216,13 +216,7 @@ func runScan(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	registry := adapter.NewRegistry(
-		claudecode.New(),
-		copilot.New(),
-		codex.New(),
-		gemini.New(),
-		cursor.New(),
-	)
+	registry := adapter.NewRegistry(supportedAdapters()...)
 
 	// Where the guard records what it decided, so the scan can tell a control that
 	// was never there from one that has been taken away. Found the same way
@@ -415,4 +409,17 @@ func wrap(s string, width int, indent string) string {
 		lineLen += len(word)
 	}
 	return b.String()
+}
+
+// supportedAdapters is every agent this build governs, in output order. One list, so the
+// guard's lookup of an MCP server and scan's inventory can never disagree about which
+// agents exist.
+func supportedAdapters() []adapter.Adapter {
+	return []adapter.Adapter{
+		claudecode.New(),
+		copilot.New(),
+		codex.New(),
+		gemini.New(),
+		cursor.New(),
+	}
 }

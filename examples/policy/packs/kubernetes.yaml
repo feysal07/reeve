@@ -1,0 +1,88 @@
+# Kubernetes, through the shell and through MCP.
+#
+# A pack is a complete policy you can deploy on its own or copy rules from. Each one
+# ships with a cases file beside it; run it before and after any edit:
+#
+#   reeve policy test packs/kubernetes.yaml --cases packs/kubernetes.cases.yaml
+#
+# Why both kinds. A Kubernetes MCP server reaches the same clusters kubectl does, and a
+# rule written for shell commands never saw a single call made through one on the
+# machine where that was found. Every rule below therefore comes in a shell form and an
+# MCP form: one rule cannot carry both, because the conditions in a rule are combined
+# with AND, and a command line and an MCP tool name are never present on the same action.
+#
+# Needs a resource registry with an mcp section; see examples/resources/resources.yaml.
+# Without one every target is unknown, and the unknown rules below ask about all of it.
+version: 1
+name: kubernetes
+default: allow
+
+rules:
+  - id: kube-change-production-shell
+    description: Changing a production cluster from the shell
+    decision: deny
+    reason: >-
+      This changes a production cluster. Changes there go through the deployment
+      pipeline, where they are reviewed and can be rolled back.
+    match:
+      kind: [shell]
+      environment: [production]
+      commandRuns: &kube-verbs
+        - "kubectl delete"
+        - "kubectl drain"
+        - "kubectl cordon"
+        - "kubectl scale"
+        - "kubectl apply"
+        - "kubectl create"
+        - "kubectl edit"
+        - "kubectl patch"
+        - "kubectl replace"
+        - "kubectl rollout"
+        - "kubectl exec"
+        - "kubectl run"
+        - "helm install"
+        - "helm upgrade"
+        - "helm uninstall"
+        - "helm rollback"
+
+  - id: kube-change-production-mcp
+    description: Changing a production cluster through an MCP server
+    decision: deny
+    reason: >-
+      This changes a production cluster through an MCP server. Changes there go
+      through the deployment pipeline, where they are reviewed and can be rolled back.
+    # Tool names as kubernetes-mcp-server exposes them. Reading - pods_list,
+    # resources_get, pods_log - is left alone: looking is how a production problem
+    # gets diagnosed, and a rule that stops it gets removed.
+    match:
+      kind: [mcp]
+      environment: [production]
+      mcpTool: &kube-mcp-changes
+        - pods_delete
+        - pods_exec
+        - pods_run
+        - resources_delete
+        - resources_create_or_update
+        - resources_scale
+
+  - id: kube-change-unknown-shell
+    description: Changing a cluster whose environment could not be determined
+    decision: ask
+    reason: >-
+      Reeve could not work out which cluster this reaches. That is not a reason to
+      assume it is safe.
+    match:
+      kind: [shell]
+      environment: [unknown]
+      commandRuns: *kube-verbs
+
+  - id: kube-change-unknown-mcp
+    description: Changing a cluster through an MCP server nobody has classified
+    decision: ask
+    reason: >-
+      This MCP server, or the cluster it reaches, is not in the resource registry, so
+      Reeve cannot tell whether this is production.
+    match:
+      kind: [mcp]
+      environment: [unknown]
+      mcpTool: *kube-mcp-changes

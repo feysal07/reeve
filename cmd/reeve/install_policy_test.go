@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/feysal07/reeve/internal/install"
 )
 
 // sandboxHome points every variable install consults at a throwaway directory.
@@ -226,5 +229,83 @@ func TestThePlanPrintsThePolicyLine(t *testing.T) {
 	}
 	if !strings.Contains(out, "policy :") || !strings.Contains(out, "would keep the existing policy") {
 		t.Fatalf("the plan did not say what it would do to the policy:\n%s", out)
+	}
+}
+
+func installJSON(t *testing.T, args ...string) installReport {
+	t.Helper()
+	out, err := captureStdout(t, func() error { return runInstall(append(args, "--json")) })
+	if err != nil {
+		t.Fatalf("install %v: %v", args, err)
+	}
+	var r installReport
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("install --json is not one JSON document: %v\n%s", err, out)
+	}
+	return r
+}
+
+// TestInstallJSONSaysWhatHappenedToThePolicy.
+//
+// install --json used to be the bare list of per-agent results: no schemaVersion, and
+// nothing about the policy file, the one thing install writes that an operator is likely
+// to have edited by hand. A script driving install could not tell a first install from
+// one that had just replaced a customised policy.
+func TestInstallJSONSaysWhatHappenedToThePolicy(t *testing.T) {
+	home := sandboxHome(t)
+	path := filepath.Join(home, ".reeve", "policy.yaml")
+
+	if r := installJSON(t, "--plan"); r.Policy == nil || r.Policy.Action != "create" || r.Policy.Written || !r.Plan {
+		t.Errorf("plan on an empty home: %+v", r.Policy)
+	}
+	r := installJSON(t)
+	if r.SchemaVersion == "" || r.Command != "install" || r.Mode != "dry-run" {
+		t.Errorf("document header = %q %q %q", r.SchemaVersion, r.Command, r.Mode)
+	}
+	if r.Policy == nil || r.Policy.Action != "create" || !r.Policy.Written || r.Policy.Path != path {
+		t.Errorf("first install: %+v", r.Policy)
+	}
+	if r := installJSON(t); r.Policy == nil || r.Policy.Action != "keep" || r.Policy.Written || r.Policy.Source != "" {
+		t.Errorf("reinstall: %+v", r.Policy)
+	}
+
+	newer := filepath.Join(home, "newer.yaml")
+	writeFile(t, newer, operatorsPolicy)
+	r = installJSON(t, "--policy", newer)
+	if r.Policy == nil || r.Policy.Action != "replace" || !r.Policy.Written ||
+		r.Policy.Previous != path+".previous" || r.Policy.Source != newer {
+		t.Errorf("replace: %+v", r.Policy)
+	}
+	if r := installJSON(t, "--policy", newer); r.Policy == nil || r.Policy.Action != "unchanged" || r.Policy.Written {
+		t.Errorf("same policy again: %+v", r.Policy)
+	}
+}
+
+// TestUninstallJSONIsTheSameDocument. One shape for both commands, so a consumer reads
+// command before anything else, and never a policy it did not touch.
+func TestUninstallJSONIsTheSameDocument(t *testing.T) {
+	sandboxHome(t)
+	out, err := captureStdout(t, func() error { return runUninstall([]string{"--plan", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r installReport
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("uninstall --json is not one document: %v\n%s", err, out)
+	}
+	if r.Command != "uninstall" || r.Policy != nil || r.Results == nil || r.SchemaVersion == "" {
+		t.Errorf("uninstall document: %+v", r)
+	}
+}
+
+// TestNoResultsIsAnEmptyListNotNull. A consumer iterating results should not have to
+// check for the absence of the thing it asked for.
+func TestNoResultsIsAnEmptyListNotNull(t *testing.T) {
+	b, err := json.Marshal(newInstallReport(nil, install.Options{}, true, true, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"results":[]`) {
+		t.Errorf("no results encoded as %s", b)
 	}
 }

@@ -597,6 +597,60 @@ $null = ($loopPayload | & $reeve guard --agent claude-code --policy $loopPolicy 
 Check "a counting rule with no log to count from denies, rather than assuming quiet" `
     ($LASTEXITCODE -eq 2) "exit was $LASTEXITCODE"
 
+# A Kubernetes MCP server reaches the same clusters kubectl does. Found on a real
+# machine: a production rule written for shell commands never saw a call made through
+# MCP, and every one was allowed while the rule looked configured. The registry now says
+# what an MCP server runs, the guard finds its definition in the agent's own
+# configuration, and a call naming a production namespace is production. A call to a
+# development namespace, through the same server, is the control: it proves the answer
+# comes from resolving the call rather than from a rule about MCP in general.
+$mcpHome = Join-Path $Sandbox "mcp-home"
+New-Item -ItemType Directory -Force $mcpHome | Out-Null
+Write-Text (Join-Path $mcpHome ".claude.json") '{"mcpServers": {"kubernetes": {"command": "npx", "args": ["-y", "kubernetes-mcp-server@latest"]}}}'
+Write-Text (Join-Path $Sandbox "mcp-production.yaml") @'
+version: 1
+default: allow
+rules:
+  - id: production
+    decision: deny
+    match:
+      kind: [shell, mcp]
+      environment: [production]
+'@
+$saved = @{}
+foreach ($k in "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "KUBECONFIG") { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+$mcpExits = foreach ($ns in "payments", "dev") {
+    foreach ($k in "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA") { [Environment]::SetEnvironmentVariable($k, $mcpHome) }
+    [Environment]::SetEnvironmentVariable("KUBECONFIG", (Join-Path $mcpHome "none"))
+    $payload = '{"session_id":"m","hook_event_name":"PreToolUse","tool_name":"mcp__kubernetes__pods_list_in_namespace","tool_input":{"namespace":"' + $ns + '"},"cwd":' + (ConvertTo-Json $mcpHome) + '}'
+    $null = ($payload | & $reeve guard --agent claude-code --policy (Join-Path $Sandbox "mcp-production.yaml") --resources (Join-Path $repo "examples\resources\resources.yaml") 2>&1)
+    $LASTEXITCODE
+}
+foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+Check "a production rule sees an MCP call that reaches production" `
+    (($mcpExits -join ":") -eq "2:0") "exits were $($mcpExits -join ', '); want 2 and 0"
+
+# A policy is code, and a cases file is its tests: named actions and the decision each
+# must get. The baseline and every pack ship with one, so a change to them is checked
+# before anybody's agent finds out. A run that printed FAIL and exited zero would pass
+# every CI job it was put in, so a deliberately wrong case must fail the command.
+$casesFailed = @()
+$casesFiles = @(Get-ChildItem (Join-Path $repo "examples\policy") -Filter "*.cases.yaml") +
+    @(Get-ChildItem (Join-Path $repo "examples\policy\packs") -Filter "*.cases.yaml")
+foreach ($cf in $casesFiles) {
+    $pol = $cf.FullName -replace '\.cases\.yaml$', '.yaml'
+    $null = (& $reeve policy test $pol --cases $cf.FullName 2>&1)
+    if ($LASTEXITCODE -ne 0) { $casesFailed += $cf.Name }
+}
+Write-Text (Join-Path $Sandbox "wrong.cases.yaml") @'
+cases:
+  - {name: wrong, action: {kind: shell, command: "rm -rf /"}, expect: {effect: allow}}
+'@
+$null = (& $reeve policy test (Join-Path $repo "examples\policy\baseline.yaml") --cases (Join-Path $Sandbox "wrong.cases.yaml") 2>&1)
+$wrongCode = $LASTEXITCODE
+Check "every shipped policy passes its own cases, and a wrong case fails" `
+    (($casesFailed.Count -eq 0) -and ($wrongCode -ne 0)) "failing: $($casesFailed -join ', '); a wrong case exited $wrongCode"
+
 # A budget, the other rule that depends on a record rather than on the request. It
 # totals the event store the collector writes, and its failure modes are the ones
 # worth asserting: unreadable refuses, and an agent that reports no cost at all is
@@ -916,6 +970,16 @@ billing:
     Check "a misspelled condition is an error, not a no-op" `
         ($typo -match "not a condition") $typo.Trim()
 
+    # The detection half of the alias map. A per-person budget compared a verified
+    # subject against events recorded under an address nobody had aliased, totalled
+    # zero, and permitted - measured at nine million tokens over a thousand-token limit.
+    # teams.yaml names people by subject, and this store holds senders it never named,
+    # so a gate asking about unmatched identities must fail and say whom to alias.
+    $unmatched = (& $reeve report --store $events --fail-on identity.unmatched 2>&1 | Out-String)
+    $unmatchedCode = $LASTEXITCODE
+    Check "consumption no budget can count is a condition the gate can fail on" `
+        (($unmatchedCode -ne 0) -and (($unmatched -replace '\s+', ' ') -match "identity\.unmatched.*Add an alias")) "exit ${unmatchedCode}: $($unmatched.Trim())"
+
     # An allowance declared for an agent nothing reports against reads nought per cent
     # for ever, which on a dashboard is what staying inside the limit looks like.
     Write-Text (Join-Path $Sandbox "silent-prices.yaml") @'
@@ -1136,10 +1200,11 @@ rules:
     Check "a misspelled scope is an error, not a quietly different rule" `
         ($typoScope -match "session, machine, team or person") $typoScope.Trim()
 
-    # A repetition rule scoped per person would count nothing and never fire, because
-    # the decision log records no identity. Accepted, it is a loop breaker that cannot
-    # trigger: allow, no reason, for ever, and indistinguishable from one never
-    # provoked. Refused where somebody is looking instead.
+    # A repetition rule scoped per person. For five changes this was refused at load
+    # time, because the decision log recorded no identity: the count matched nothing,
+    # totalled zero, and a loop breaker that could never fire was accepted. The log
+    # records who now, so the rule has to do what it says - stop the person repeating
+    # themselves, in whichever session, and not a colleague sharing the same log.
     Write-Text (Join-Path $Sandbox "loop-person.yaml") @'
 version: 1
 rules:
@@ -1148,12 +1213,19 @@ rules:
     match:
       repeated: {same: tool, within: 5m, moreThan: 2, scope: person}
 '@
-    # Whitespace squeezed before matching: the CLI wraps its explanations to the
-    # terminal width, so a phrase can fall across a line break and a literal match
-    # would fail for a reason that has nothing to do with the behaviour.
-    $loopPerson = (& $reeve policy check (Join-Path $Sandbox "loop-person.yaml") 2>&1 | Out-String)
-    Check "a rule that would never fire is refused rather than accepted" `
-        (($loopPerson -replace '\s+', ' ') -match "does not record who") $loopPerson.Trim()
+    $personLog = Join-Path $Sandbox "loop-person.jsonl"
+    $identityBefore = $env:REEVE_IDENTITY
+    $personExits = foreach ($call in @(
+            @("looping@example.com", "s1"), @("looping@example.com", "s2"),
+            @("colleague@example.com", "s3"), @("looping@example.com", "s4"))) {
+        $env:REEVE_IDENTITY = $call[0]
+        $payload = '{"session_id":"' + $call[1] + '","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://api.example/retry"}}'
+        $null = ($payload | & $reeve guard --agent claude-code --policy (Join-Path $Sandbox "loop-person.yaml") --log $personLog 2>&1)
+        $LASTEXITCODE
+    }
+    $env:REEVE_IDENTITY = $identityBefore
+    Check "a loop breaker scoped per person stops that person and not a colleague" `
+        (($personExits -join " ") -eq "0 0 0 2") "exits were $($personExits -join ' '), want 0 0 0 2"
 
     # A team budget needs two operator-owned inputs: an identity the developer cannot
     # edit, and the mapping from it to a team. With an identity but no mapping there is
@@ -1324,6 +1396,17 @@ rules:
         ((($keepPlan -replace '\s+', ' ') -match "would keep the existing policy") -and $kept) `
         $keepPlan.Trim()
 
+    # The same fact, for a script. install --json was the bare list of per-agent
+    # results, with no schemaVersion and nothing about the policy, so a script driving
+    # install could not tell a first install from one that had just replaced a
+    # customised policy.
+    $keepJson = (& $reeve install --plan --json 2>&1 | Out-String)
+    $keepDoc = $null
+    try { $keepDoc = $keepJson | ConvertFrom-Json } catch { }
+    Check "install --json is versioned and says what it did to the policy" `
+        (($null -ne $keepDoc) -and $keepDoc.schemaVersion -and ($keepDoc.policy.action -eq "keep") -and (-not $keepDoc.policy.written)) `
+        $keepJson.Trim()
+
     # Registered is not firing. A hook can be in the file, answer perfectly when
     # called by hand, and never once be called by the agent — and from the outside
     # that looks exactly like a machine on which nothing bad happened.
@@ -1416,6 +1499,29 @@ Check "a refusal rewritten as an allowance is caught" `
 $null = (& $reeve audit seal $auditLog 2>&1)
 Check "re-sealing an edited log refuses rather than covering it up" `
     ($LASTEXITCODE -ne 0) "exit was $LASTEXITCODE"
+
+# Retention that cannot be told from tampering is retention nobody can use. Rotation
+# seals the log, moves it aside and starts the next chain linked to it; retention then
+# removes old segments' records and keeps their chains, so verify can say "pruned on
+# schedule" rather than "missing". --keep 1ns makes the first segment old enough to
+# prune without waiting a month.
+$rotDir = Join-Path $Sandbox "rotation"
+New-Item -ItemType Directory -Force $rotDir | Out-Null
+$rotLog = Join-Path $rotDir "decisions.jsonl"
+foreach ($n in 1..3) {
+    $null = ($loopPayload | & $reeve guard --agent claude-code --policy $policy --log $rotLog 2>&1)
+}
+$null = (& $reeve audit rotate $rotLog 2>&1)
+$rot1 = $LASTEXITCODE
+$null = ($loopPayload | & $reeve guard --agent claude-code --policy $policy --log $rotLog 2>&1)
+$null = (& $reeve audit rotate $rotLog --keep 1ns 2>&1)
+$rot2 = $LASTEXITCODE
+$null = ($loopPayload | & $reeve guard --agent claude-code --policy $policy --log $rotLog 2>&1)
+$rotOut = (& $reeve audit verify $rotLog 2>&1 | Out-String)
+$rotVerify = $LASTEXITCODE
+Check "rotation and retention keep the decision log verifiable" `
+    (($rot1 -eq 0) -and ($rot2 -eq 0) -and ($rotVerify -eq 0) -and (($rotOut -replace '\s+', ' ') -match "pruned decisions-")) `
+    "rotate $rot1, rotate --keep $rot2, verify ${rotVerify}: $($rotOut.Trim())"
 
 # Truncation is the easiest tampering there is, and a hash chain alone cannot see
 # it: a prefix of a valid chain is a valid chain. The recorded line count is what

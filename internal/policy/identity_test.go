@@ -202,44 +202,102 @@ func TestEveryCountingMatchHonoursPersonScope(t *testing.T) {
 	}
 }
 
-// TestARepetitionRuleCannotBeScopedPerPersonYet.
-//
-// Found by running it rather than reading it. The decision log records no identity, so
-// History records carry none, so a person-scoped repetition count matches nothing and
-// totals zero — and zero does not fire. Evaluate had no reason to refuse either,
-// because the identity on the action was perfectly good. The result was a loop breaker
-// that returned allow with no reason on every action for ever, accepted by policy
-// check, and impossible to tell apart from a loop breaker that was simply never
-// provoked.
-//
-// Refused at load time, where somebody is looking. Lift this in the same change that
-// makes the log record who, never before it.
-func TestARepetitionRuleCannotBeScopedPerPersonYet(t *testing.T) {
-	_, err := Parse([]byte(`
-version: 1
-rules:
-  - id: loop
-    decision: deny
-    match:
-      repeated: {same: tool, within: 5m, moreThan: 2, scope: person}
-`))
-	if err == nil {
-		t.Fatal("a person-scoped repetition rule was accepted, so it will count " +
-			"nothing and never fire while looking configured")
+func personLoop(t *testing.T, scope string) *Policy {
+	t.Helper()
+	p, err := Parse([]byte("version: 1\ndefault: allow\nrules:\n  - id: loop\n    decision: deny\n" +
+		"    match:\n      repeated: {same: tool, within: 5m, moreThan: 2, scope: " + scope + "}\n"))
+	if err != nil {
+		t.Fatalf("a %s-scoped repetition rule was refused: %v", scope, err)
 	}
-	if !strings.Contains(err.Error(), "does not record who") {
-		t.Errorf("the error does not say why it cannot be honoured: %v", err)
-	}
+	return p
+}
 
-	// The scopes that do work on a repetition rule must keep working.
-	for _, ok := range []string{"", "session", "machine"} {
-		body := "repeated: {same: tool, within: 5m, moreThan: 2}"
-		if ok != "" {
-			body = "repeated: {same: tool, within: 5m, moreThan: 2, scope: " + ok + "}"
+// TestARepetitionRuleScopedPerPersonCountsThatPerson.
+//
+// For five changes this combination was refused at load time, because the decision log
+// recorded no identity: the count matched nothing, totalled zero, and a loop breaker
+// that could never fire was accepted by policy check. The log records who now, and the
+// refusal was lifted in the same change. What has to hold is what the refusal was
+// protecting: the rule fires on the person repeating themselves, and not on a colleague
+// whose history happens to sit in the same log.
+func TestARepetitionRuleScopedPerPersonCountsThatPerson(t *testing.T) {
+	now := time.Now()
+	p := personLoop(t, "person")
+	var recs []RecentAction
+	for i := 0; i < 3; i++ {
+		recs = append(recs, RecentAction{Time: now.Add(-time.Minute), SessionID: "s" + string(rune('a'+i)),
+			Tool: "Bash", Who: "looping@example.com"})
+	}
+	a := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "new", At: now,
+		History: &History{Records: recs}}
+
+	a.Identity = &Identity{Subject: "looping@example.com"}
+	if d := p.Evaluate(a); d.Effect != EffectDeny {
+		t.Errorf("effect = %q, want deny: three calls across three sessions by the same "+
+			"person is the loop a per-person scope exists to catch", d.Effect)
+	}
+	a.Identity = &Identity{Subject: "colleague@example.com"}
+	if d := p.Evaluate(a); d.Effect != EffectAllow {
+		t.Errorf("effect = %q, want allow: somebody else's calls were counted against "+
+			"this person", d.Effect)
+	}
+}
+
+// TestARepetitionRuleScopedPerTeamCountsThatTeam. The same, one step further out.
+func TestARepetitionRuleScopedPerTeamCountsThatTeam(t *testing.T) {
+	now := time.Now()
+	p := personLoop(t, "team")
+	recs := []RecentAction{
+		{Time: now.Add(-time.Minute), Tool: "Bash", Who: "a@example.com", Team: "payments"},
+		{Time: now.Add(-time.Minute), Tool: "Bash", Who: "b@example.com", Team: "payments"},
+		{Time: now.Add(-time.Minute), Tool: "Bash", Who: "c@example.com", Team: "payments"},
+		{Time: now.Add(-time.Minute), Tool: "Bash", Who: "d@example.com", Team: "search"},
+	}
+	a := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", At: now,
+		History: &History{Records: recs}}
+
+	a.Identity = &Identity{Subject: "e@example.com", Team: "payments"}
+	if d := p.Evaluate(a); d.Effect != EffectDeny {
+		t.Errorf("effect = %q, want deny: the team is past its line", d.Effect)
+	}
+	a.Identity = &Identity{Subject: "e@example.com", Team: "search"}
+	if d := p.Evaluate(a); d.Effect != EffectAllow {
+		t.Errorf("effect = %q, want allow: another team's calls were counted", d.Effect)
+	}
+}
+
+// TestAPersonScopedRepetitionStillRefusesWithoutAVerifiedIdentity. Lifting the load-time
+// refusal must not lift the run-time one: with no identity, or only one the agent
+// asserted, there is nobody to count for, and counting for nobody totals zero.
+func TestAPersonScopedRepetitionStillRefusesWithoutAVerifiedIdentity(t *testing.T) {
+	p := personLoop(t, "person")
+	for name, id := range map[string]*Identity{
+		"none":     nil,
+		"asserted": {Subject: "looping@example.com", Asserted: true},
+	} {
+		d := p.Evaluate(Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash",
+			History: &History{}, Identity: id})
+		if d.Effect != EffectDeny {
+			t.Errorf("%s: effect = %q, want deny", name, d.Effect)
 		}
-		if _, err := Parse([]byte("version: 1\nrules:\n  - id: loop\n    decision: deny\n    match:\n      " + body + "\n")); err != nil {
-			t.Errorf("repetition scope %q was refused: %v", ok, err)
-		}
+	}
+}
+
+// TestAnUnattributedPastActionCountsTowardsNobody. Records written before the log carried
+// an identity, or while nothing needed one, have none. Counting them against whoever is
+// asking would stop a person for history that is not theirs.
+func TestAnUnattributedPastActionCountsTowardsNobody(t *testing.T) {
+	now := time.Now()
+	p := personLoop(t, "person")
+	recs := []RecentAction{
+		{Time: now.Add(-time.Minute), Tool: "Bash"},
+		{Time: now.Add(-time.Minute), Tool: "Bash"},
+		{Time: now.Add(-time.Minute), Tool: "Bash"},
+	}
+	d := p.Evaluate(Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", At: now,
+		History: &History{Records: recs}, Identity: &Identity{Subject: "dev@example.com"}})
+	if d.Effect != EffectAllow {
+		t.Errorf("effect = %q, want allow: unattributed history was counted against a person", d.Effect)
 	}
 }
 
