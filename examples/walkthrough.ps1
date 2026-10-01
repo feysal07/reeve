@@ -1523,6 +1523,18 @@ Check "rotation and retention keep the decision log verifiable" `
     (($rot1 -eq 0) -and ($rot2 -eq 0) -and ($rotVerify -eq 0) -and (($rotOut -replace '\s+', ' ') -match "pruned decisions-")) `
     "rotate $rot1, rotate --keep $rot2, verify ${rotVerify}: $($rotOut.Trim())"
 
+# The two records of one session side by side. The decision log knows what was refused,
+# which no vendor telemetry can; the event store knows what it cost. This walkthrough's
+# events carry no session id, so each session here is guard-only - and the timeline has
+# to say so, rather than present half the evidence as the whole of it.
+$sessJson = (& $reeve sessions --log $decisions --store $events --json 2>&1 | Out-String)
+$sessDoc = $null
+try { $sessDoc = $sessJson | ConvertFrom-Json } catch { }
+$sessOne = (& $reeve session s1 --log $decisions --store $events 2>&1 | Out-String)
+Check "a session's timeline shows what was refused, and says which record is missing" `
+    (($null -ne $sessDoc) -and $sessDoc.schemaVersion -and (($sessOne -replace '\s+', ' ') -match "Partial: no telemetry.*DENY")) `
+    $sessOne.Trim()
+
 # Truncation is the easiest tampering there is, and a hash chain alone cannot see
 # it: a prefix of a valid chain is a valid chain. The recorded line count is what
 # catches it.

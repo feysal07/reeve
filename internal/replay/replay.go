@@ -60,7 +60,10 @@ type Record struct {
 	Environment string        `json:"environment,omitempty"`
 	Effect      policy.Effect `json:"effect"`
 	RuleID      string        `json:"ruleId,omitempty"`
-	DryRun      bool          `json:"dryRun,omitempty"`
+	// Reason is what the developer was shown. Replay does not use it; a timeline
+	// of the session does.
+	Reason string `json:"reason,omitempty"`
+	DryRun bool   `json:"dryRun,omitempty"`
 	// Who, Team and Identity are who the guard decided the action was taken by, and
 	// whether that identity was "verified" or "asserted". Empty when the guard
 	// resolved none, which it does whenever the policy in force had no rule that

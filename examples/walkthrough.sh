@@ -1670,6 +1670,17 @@ case "$ROT1:$ROT2:$ROT_VERIFY:$ROT_OUT" in
     *) check "rotation and retention keep the decision log verifiable" 0 "rotate $ROT1, rotate --keep $ROT2, verify $ROT_VERIFY: $ROT_OUT" ;;
 esac
 
+# The two records of one session side by side. The decision log knows what was refused,
+# which no vendor telemetry can; the event store knows what it cost. This walkthrough's
+# events carry no session id, so each session here is guard-only - and the timeline has
+# to say so, rather than present half the evidence as the whole of it.
+SESS_JSON=$("$REEVE" sessions --log "$DECISIONS" --store "$EVENTS" --json 2>&1 | tr -s '[:space:]' ' ')
+SESS_ONE=$("$REEVE" session s1 --log "$DECISIONS" --store "$EVENTS" 2>&1 | tr -s '[:space:]' ' ')
+case "$SESS_JSON|$SESS_ONE" in
+    *'"schemaVersion"'*'"sessions"'*'|'*"Partial: no telemetry"*"DENY"*) check "a session's timeline shows what was refused, and says which record is missing" 1 ;;
+    *) check "a session's timeline shows what was refused, and says which record is missing" 0 "$SESS_ONE" ;;
+esac
+
 # Truncation is the easiest tampering there is, and a hash chain alone cannot see
 # it: a prefix of a valid chain is a valid chain. The recorded line count is what
 # catches it.

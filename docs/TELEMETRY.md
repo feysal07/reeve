@@ -222,6 +222,37 @@ With no team map nothing is flagged: there was nothing to have matched. **Events
 collected before this release carry neither flag** and count as matched, so a window that
 spans the upgrade undercounts until those events age out of it.
 
+## A session, from both records
+
+```
+reeve sessions --since 24h
+reeve session 3f2a --stopped
+```
+
+Each record is half of what happened. The guard's decision log says what the agent tried
+and what was decided, including every refusal - which no vendor telemetry can carry,
+because a refused action never happened as far as the agent knows. The event store says
+what the session cost and which tools actually ran, and knows nothing of what was refused.
+`reeve sessions` puts them side by side, grouped by session id, newest first; `reeve
+session <id>` is one session's timeline. An unambiguous prefix of the id is enough, and an
+ambiguous one is an error naming the candidates rather than the first of them.
+
+Nothing guesses a join. Two records belong to one session only when they carry the same
+session id. **A session only one record knows about says so** - "no telemetry for this
+session" is not a session that cost nothing - and records with no session id are counted
+and left out of every session rather than folded into one.
+
+The identity shown is the guard's when it recorded a verified one, and is marked
+`(asserted)` otherwise: every identity in telemetry is the agent's own claim. Rotated
+segments of the decision log are read too, and a segment retention has removed is
+mentioned rather than silently missing. `--stopped` shows only what the guard asked about
+or denied, which in a long session is the part somebody opened it to find. Both commands
+take `--json`, with `schemaVersion` like every other output.
+
+The log and store are found the way `reeve report` finds them: `--log` and `--store`,
+then `REEVE_DECISION_LOG` and `REEVE_EVENT_STORE`, then whatever the installed guard
+writes to, and the commands say which files they read.
+
 ## The JSON report
 
 `reeve report --json` emits a documented, versioned shape you can build on.
