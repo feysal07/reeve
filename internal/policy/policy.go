@@ -36,7 +36,32 @@ type Rule struct {
 	Match       Match  `yaml:"match"`
 	Decision    Effect `yaml:"decision"`
 	Reason      string `yaml:"reason,omitempty"`
+
+	// Mode is enforce, the default, or observe. An observe rule is evaluated against
+	// every action and what it would have decided is recorded, but its decision is
+	// never applied: the agent is answered as though the rule were not there.
+	//
+	// It exists because dry run was the only way to try a rule, and dry run is the
+	// whole policy at once. On the first real installation that kept the guard in dry
+	// run, enforcing nothing, because one new rule would have asked about a hundred
+	// times a day and there was no way to keep the proven rules enforced while the new
+	// one was measured. A guard that enforces nothing looks exactly like a guard that
+	// enforces everything, until the day it matters.
+	Mode Mode `yaml:"mode,omitempty"`
 }
+
+// Mode says whether a rule's decision is applied or only recorded.
+type Mode string
+
+const (
+	// ModeEnforce applies the rule's decision. It is what an empty mode means.
+	ModeEnforce Mode = "enforce"
+	// ModeObserve records what the rule would have decided and applies nothing.
+	ModeObserve Mode = "observe"
+)
+
+// Observes reports whether this rule is only recorded, never applied.
+func (r Rule) Observes() bool { return r.Mode == ModeObserve }
 
 // Match narrows which actions a rule applies to. Every field that is set must match,
 // and a field with several values matches if any one of them does. An empty Match
@@ -273,6 +298,19 @@ func Parse(b []byte) (*Policy, error) {
 		if !validEffect(r.Decision) {
 			return nil, fmt.Errorf("rules[%d] (%s): decision %q is not allow, ask or deny", i, r.ID, r.Decision)
 		}
+		// A misspelt mode must not quietly mean enforce, and must not quietly mean
+		// observe either: one turns a rule being measured into one that stops people,
+		// the other turns a control into a note.
+		if r.Mode != "" && r.Mode != ModeEnforce && r.Mode != ModeObserve {
+			return nil, fmt.Errorf("rules[%d] (%s): mode %q is not enforce or observe", i, r.ID, r.Mode)
+		}
+		// An observed allow can never record anything. Allow is the weakest decision,
+		// so it is never stricter than what was applied, and a rule that can never
+		// appear in the log reads as one that never matched.
+		if r.Observes() && r.Decision == EffectAllow {
+			return nil, fmt.Errorf("rules[%d] (%s): an observe rule that allows can never be recorded, "+
+				"because allow is never stricter than what was applied; observe an ask or a deny", i, r.ID)
+		}
 		for _, k := range r.Match.Kinds {
 			if !validKind(k) {
 				return nil, fmt.Errorf("rules[%d] (%s): unknown kind %q", i, r.ID, k)
@@ -357,7 +395,36 @@ func validKind(k Kind) bool {
 // Every rule is considered, and the strictest matching decision wins. Rule order is
 // therefore irrelevant, which means an operator cannot accidentally weaken a deny by
 // adding an allow above it.
+//
+// Rules in observe mode are evaluated too, and never change the effect returned. When
+// one would have decided something stricter than what is applied, Observed says what,
+// and which rule.
 func (p *Policy) Evaluate(a Action) Decision {
+	d := p.evaluate(a, false)
+	if !p.observes() {
+		return d
+	}
+	// The full pass is a superset of the enforced one, so when it is stricter the
+	// difference can only have come from an observe rule.
+	all := p.evaluate(a, true)
+	if rank[all.Effect] > rank[d.Effect] {
+		d.Observed = &Verdict{Effect: all.Effect, RuleID: all.RuleID, Reason: all.Reason}
+	}
+	return d
+}
+
+// observes reports whether any rule is in observe mode.
+func (p *Policy) observes() bool {
+	for _, r := range p.Rules {
+		if r.Observes() {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluate decides an action with or without the rules in observe mode.
+func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 	d := Decision{
 		Effect:        p.Default,
 		PolicyName:    p.Name,
@@ -365,6 +432,12 @@ func (p *Policy) Evaluate(a Action) Decision {
 	}
 
 	for _, r := range p.Rules {
+		// Skipped before anything else, including the refusals below: an observe rule
+		// whose input cannot be read is a rule that would have refused, which is a
+		// verdict to record, not a reason to stop somebody.
+		if r.Observes() && !withObserved {
+			continue
+		}
 		// A rule that counts repetitions and has nothing to count with is not a rule
 		// that failed to match. It is a rule nobody can evaluate, and an absent
 		// history is not evidence that nothing happened.

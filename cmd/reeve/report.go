@@ -291,6 +291,9 @@ func renderReport(r telemetry.Report, top int) {
 		fmt.Printf("  decisions    : %d\n", o.Decisions)
 		fmt.Printf("  blocked      : %d\n", o.Blocked)
 		fmt.Printf("  sent to ask  : %d\n", o.Asked)
+		if o.NotApplied > 0 {
+			fmt.Printf("  not applied  : %d (dry run or observe mode: recorded, nobody was stopped)\n", o.NotApplied)
+		}
 	}
 
 	section("By team", r.ByTeam, top, costRow)

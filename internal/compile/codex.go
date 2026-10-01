@@ -87,6 +87,10 @@ func (c *codexCLI) Compile(p *policy.Policy, platform string) (Result, error) {
 	fs := &codexFilesystem{}
 
 	for _, r := range p.Rules {
+		if r.Observes() {
+			res.Coverage = append(res.Coverage, observeCoverage(r))
+			continue
+		}
 		cov, prefixes, denyRead := c.compileRule(r)
 		rules.PrefixRules = append(rules.PrefixRules, prefixes...)
 		fs.DenyRead = append(fs.DenyRead, denyRead...)

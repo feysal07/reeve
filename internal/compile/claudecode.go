@@ -56,6 +56,10 @@ func (c *claudeCode) Compile(p *policy.Policy, platform string) (Result, error) 
 	perms := &claudePermissions{}
 
 	for _, r := range p.Rules {
+		if r.Observes() {
+			res.Coverage = append(res.Coverage, observeCoverage(r))
+			continue
+		}
 		cov, deny, ask := c.compileRule(r)
 		perms.Deny = append(perms.Deny, deny...)
 		perms.Ask = append(perms.Ask, ask...)

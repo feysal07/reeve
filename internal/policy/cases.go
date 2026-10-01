@@ -136,13 +136,17 @@ func (c *Cases) Run(p *Policy) []CaseResult {
 		}
 		d := p.Evaluate(a)
 		r := CaseResult{Case: tc, Got: d, Pass: true}
+		// Against what the rules decide, observe rules included. A rule is observed to
+		// be measured before it is enforced, and the cases written for it must test it
+		// then, not start testing it the day it is switched on.
+		v := d.Strictest()
 		switch {
-		case d.Effect != tc.Expect.Effect:
+		case v.Effect != tc.Expect.Effect:
 			r.Pass = false
-			r.Why = fmt.Sprintf("decided %s (%s), expected %s", d.Effect, ruleOrDefault(d.RuleID), tc.Expect.Effect)
-		case tc.Expect.Rule != "" && d.RuleID != tc.Expect.Rule:
+			r.Why = fmt.Sprintf("decided %s (%s), expected %s", v.Effect, ruleOrDefault(v.RuleID), tc.Expect.Effect)
+		case tc.Expect.Rule != "" && v.RuleID != tc.Expect.Rule:
 			r.Pass = false
-			r.Why = fmt.Sprintf("decided %s by %s, expected rule %s", d.Effect, ruleOrDefault(d.RuleID), tc.Expect.Rule)
+			r.Why = fmt.Sprintf("decided %s by %s, expected rule %s", v.Effect, ruleOrDefault(v.RuleID), tc.Expect.Rule)
 		}
 		out = append(out, r)
 	}

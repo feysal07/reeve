@@ -637,6 +637,42 @@ case "$GEMINI_ASK" in
     *) check "an ask Gemini cannot ask is refused rather than allowed" 0 "exit was $GEMINI_ASK_CODE" ;;
 esac
 
+# Observe mode: one rule measured while the rest are enforced. Dry run is the whole
+# policy at once, and on the first real installation that kept a guard enforcing
+# nothing for weeks because one new rule was too noisy to switch on.
+OBSERVE_POLICY="$SANDBOX/observe.yaml"
+OBSERVE_LOG="$SANDBOX/observe.jsonl"
+cat > "$OBSERVE_POLICY" <<'YAML'
+version: 1
+rules:
+  - id: proven
+    decision: deny
+    match: {kind: [shell], commandRuns: ["curl"]}
+  - id: measured
+    mode: observe
+    decision: deny
+    match: {kind: [shell], commandRuns: ["terraform destroy"]}
+YAML
+printf '%s' '{"session_id":"o1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"terraform destroy -auto-approve"}}' |
+    "$REEVE" guard --agent claude-code --policy "$OBSERVE_POLICY" --log "$OBSERVE_LOG" >/dev/null 2>&1
+OBSERVE_CODE=$?
+if [ "$OBSERVE_CODE" = "0" ] && grep -q '"observe":true' "$OBSERVE_LOG" && grep -q '"ruleId":"measured"' "$OBSERVE_LOG"; then
+    check "a rule in observe mode records what it would decide and stops nobody" 1
+else
+    check "a rule in observe mode records what it would decide and stops nobody" 0 "exit was $OBSERVE_CODE"
+fi
+printf '%s' '{"session_id":"o1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://example.com"}}' |
+    "$REEVE" guard --agent claude-code --policy "$OBSERVE_POLICY" --log "$OBSERVE_LOG" >/dev/null 2>&1
+OBSERVE_CODE=$?
+[ "$OBSERVE_CODE" = "2" ] && check "an enforced rule beside it still stops the action" 1 ||
+    check "an enforced rule beside it still stops the action" 0 "exit was $OBSERVE_CODE"
+OBSERVE_COMPILE=$("$REEVE" policy compile "$OBSERVE_POLICY" --agent claude-code 2>&1)
+case "$OBSERVE_COMPILE" in
+    *"terraform destroy"*) check "native configuration carries nothing from a rule in observe mode" 0 "the compiled file names the observed command" ;;
+    *"observed only"*) check "native configuration carries nothing from a rule in observe mode" 1 ;;
+    *) check "native configuration carries nothing from a rule in observe mode" 0 "no observed rule in the coverage" ;;
+esac
+
 step 5 "Enforcement: what happens when Reeve itself is broken"
 note "This is what separates real enforcement from theatre."
 echo
