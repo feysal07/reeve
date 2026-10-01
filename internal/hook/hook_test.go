@@ -574,3 +574,35 @@ func TestClaudeCodesOwnToolsAreNotFilesNetworkOrCommands(t *testing.T) {
 		}
 	}
 }
+
+// TestAPostToolEventIsAnOutcomeAndNothingElseIs. A post-tool event comes after the
+// action, so the guard must record it rather than decide it; anything else decided as an
+// outcome would be an action allowed without a decision.
+func TestAPostToolEventIsAnOutcomeAndNothingElseIs(t *testing.T) {
+	o, ok := DecodeOutcome([]byte(`{"hook_event_name":"PostToolUse","session_id":"s","tool_use_id":"toolu_1","tool_name":"Bash","tool_response":{"stdout":"secret"}}`))
+	if !ok || o.SessionID != "s" || o.ToolUseID != "toolu_1" || o.ToolName != "Bash" || o.Failed {
+		t.Fatalf("PostToolUse = %+v, %v", o, ok)
+	}
+	// A field of the wrong type elsewhere in the payload must not turn an outcome into
+	// a request the guard then refuses.
+	if _, ok := DecodeOutcome([]byte(`{"hook_event_name":"PostToolUse","tool_use_id":"toolu_4","command":5,"workspace_roots":"x"}`)); !ok {
+		t.Error("a stray field of the wrong type stopped a post-tool event being an outcome")
+	}
+	if o, ok := DecodeOutcome([]byte(`{"hook_event_name":"PostToolUseFailure","session_id":"s","tool_use_id":"toolu_2"}`)); !ok || !o.Failed {
+		t.Errorf("PostToolUseFailure = %+v, %v", o, ok)
+	}
+	for _, raw := range []string{
+		`{"hook_event_name":"PreToolUse","tool_use_id":"toolu_3","tool_name":"Bash"}`,
+		`{"hookEventName":"preToolUse","toolName":"bash"}`,
+		`{"hook_event_name":"beforeShellExecution","command":"ls"}`,
+		`not json`,
+	} {
+		if _, ok := DecodeOutcome([]byte(raw)); ok {
+			t.Errorf("%s was taken for an outcome", raw)
+		}
+	}
+	a, err := Decode([]byte(`{"hook_event_name":"PreToolUse","tool_use_id":"toolu_3","tool_name":"Bash","tool_input":{"command":"ls"}}`), model.AgentClaudeCode)
+	if err != nil || a.ToolUseID != "toolu_3" {
+		t.Errorf("PreToolUse tool_use_id = %q, %v", a.ToolUseID, err)
+	}
+}

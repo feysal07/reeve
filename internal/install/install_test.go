@@ -474,3 +474,38 @@ func TestInstallingTwiceDoesNotFailOnCopilot(t *testing.T) {
 		t.Error("the second install failed on Copilot")
 	}
 }
+
+// TestClaudeCodeIsAlsoToldWhenAnActionRan. The guard decides before an action and never
+// learns what happened next; for an ask that is the whole question. The same command is
+// registered on the post-tool events, once, and goes again with the rest on uninstall.
+func TestClaudeCodeIsAlsoToldWhenAnActionRan(t *testing.T) {
+	opts := home(t, ".claude")
+	settings := filepath.Join(opts.Home, ".claude", "settings.json")
+	for i := 0; i < 2; i++ {
+		if _, err := Run(opts, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(read(t, settings)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	hooks := doc["hooks"].(map[string]any)
+	for _, ev := range []string{"PostToolUse", "PostToolUseFailure"} {
+		entries, _ := hooks[ev].([]any)
+		if len(entries) != 1 {
+			t.Fatalf("%s has %d entries after installing twice, want 1", ev, len(entries))
+		}
+		inner := entries[0].(map[string]any)["hooks"].([]any)
+		if cmd, _ := inner[0].(map[string]any)["command"].(string); !strings.Contains(cmd, "guard --agent claude-code") {
+			t.Errorf("%s runs %q, want the guard", ev, cmd)
+		}
+	}
+	if _, err := Run(opts, true); err != nil {
+		t.Fatal(err)
+	}
+	after := read(t, settings)
+	if strings.Contains(after, "PostToolUse") {
+		t.Errorf("uninstall left a post-tool hook behind: %s", after)
+	}
+}

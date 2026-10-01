@@ -184,6 +184,7 @@ rather than different severities:
 | `prices.unpriced` | requests on a model with no entry in the price table |
 | `identity.unmatched` | consumption recorded under subjects your team map does not name, even after aliases, which a per-person budget counts none of |
 | `identity.unattributed` | consumption from identities your team map matched nothing about, counted under its default team, which a team budget counts none of |
+| `ask.rubber-stamp` | an ask rule that asked at least twenty times and was let through at least ninety-five per cent of them |
 
 `--fail-on any` selects all of them. An unrecognised name is an error rather than a
 no-op: a gate configured with a typo that silently passes everything is worse than no
@@ -221,6 +222,53 @@ id on the event.
 With no team map nothing is flagged: there was nothing to have matched. **Events
 collected before this release carry neither flag** and count as matched, so a window that
 spans the upgrade undercounts until those events age out of it.
+
+### Whether an ask was answered yes
+
+The guard decides before an action and never learns what happened next. For an ask that
+is the whole question: it put the action in front of a person, and only the agent knows
+whether they said yes. An ask rule that fires two hundred times a week and is approved two
+hundred times looks, in the decision log, exactly like a control doing its job. It is a
+delay with a confirmation dialog, and the habit it teaches - approve without reading - is
+the one that lets through the time it mattered.
+
+`reeve install` therefore registers the same guard command on Claude Code's `PostToolUse`
+and `PostToolUseFailure` events. On those the guard decides nothing: it appends the
+session, the tool-use id and whether the tool ran or failed to `outcomes.jsonl` beside
+the decision log, prints nothing and exits 0. It never reads the tool's input or response.
+A separate file, because everything that reads the decision log reads each line as a
+decision, and a repetition rule would count each action twice.
+
+`reeve report --decisions` reads the outcome log beside each decision log and joins on
+session and tool-use id:
+
+```
+Policy
+  decisions    : 1204
+  blocked      : 3
+  sent to ask  : 291
+    dr-database                asked  288, went ahead  288, not seen to run    0  <- never refused
+    destructive-delete         asked    3, went ahead    1, not seen to run    2
+```
+
+The honest states are *went ahead* and *not seen to run*. A declined ask fires no event at
+all, so not seen to run is declined, interrupted, or never reached - never "declined".
+Only asks somebody was shown are measured: a dry-run or observed ask asked nobody. An ask
+in a session with no outcome at all is counted as unmeasured rather than as not seen to
+run, because that session is one where the post-tool hook was not running, and counting
+it would report every ask there as refused. With no outcome log the report says whether
+asks went ahead is not recorded, rather than printing an empty table.
+
+The outcome log is asserted, like the event store: it is written on the machine whose
+asks it measures, by a process the agent's own shell can reach. It measures how a rule is
+working in good faith, and is not evidence against somebody acting in bad faith -
+deleting the file reads as an outcome hook that was never installed, which the report
+cannot tell apart. A gate on `ask.rubber-stamp` is a prompt to fix a noisy rule, not a
+control on the person.
+
+Outcomes are recorded for Claude Code only, the one agent whose post-tool events have been
+seen on a real machine; `reeve trial` registers no outcome hook, since in dry run nobody
+is asked.
 
 ## A session, from both records
 

@@ -128,7 +128,10 @@ type Event struct {
 	// omitempty on a float cannot.
 	BillingKnown bool `json:"billingKnown,omitempty"`
 
-	ToolName   string `json:"toolName,omitempty"`
+	ToolName string `json:"toolName,omitempty"`
+	// ToolUseID names one tool call, on a guard decision, so the outcome that followed
+	// it can be found.
+	ToolUseID  string `json:"toolUseId,omitempty"`
 	Success    *bool  `json:"success,omitempty"`
 	DurationMS int64  `json:"durationMs,omitempty"`
 

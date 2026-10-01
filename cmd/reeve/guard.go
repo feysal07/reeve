@@ -47,6 +47,7 @@ func runGuard(args []string) error {
 	identityFlag := fs.String("identity", "", "who this machine belongs to, for rules totalled per person")
 	teamsPath := fs.String("teams", "", "team mapping, for rules totalled per team")
 	dryRun := fs.Bool("dry-run", false, "evaluate and log, but always allow")
+	outcomesPath := fs.String("outcomes", "", "where post-tool events are recorded (default: outcomes.jsonl beside the decision log)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -74,6 +75,14 @@ func runGuard(args []string) error {
 	// A shell on Windows can prepend a byte order mark when piping, which would
 	// make a perfectly good request unparseable and turn every action into a denial.
 	raw = config.StripBOM(raw)
+
+	// After the action, not before it: record that it ran and say nothing. Exit 0 with
+	// no output, whatever happens, because nothing can be refused after the fact and a
+	// non-zero exit here is shown to the agent as an error about work already done.
+	if o, ok := hook.DecodeOutcome(raw); ok {
+		recordOutcome(*outcomesPath, *logPath, agent, o, time.Now())
+		return nil
+	}
 
 	act, err := hook.Decode(raw, agent)
 	if err != nil {
@@ -375,6 +384,7 @@ type decisionRecord struct {
 	SessionID   string        `json:"sessionId,omitempty"`
 	Kind        policy.Kind   `json:"kind"`
 	Tool        string        `json:"tool,omitempty"`
+	ToolUseID   string        `json:"toolUseId,omitempty"`
 	Command     string        `json:"command,omitempty"`
 	Paths       []string      `json:"paths,omitempty"`
 	URLs        []string      `json:"urls,omitempty"`
@@ -477,6 +487,7 @@ func newDecisionRecord(a policy.Action, d policy.Decision, source string, elapse
 		SessionID:    a.SessionID,
 		Kind:         a.Kind,
 		Tool:         a.ToolName,
+		ToolUseID:    a.ToolUseID,
 		Command:      a.Command,
 		Paths:        a.Paths,
 		URLs:         a.URLs,
@@ -581,6 +592,37 @@ func readHistory(path string, window time.Duration) *policy.History {
 		h.Records = append(h.Records, ra)
 	}
 	return h
+}
+
+// recordOutcome appends that a tool call ran, to the outcome log beside the decision
+// log unless one is named. Every failure is silent: this runs after the action, and
+// nothing about recording it may reach the agent.
+func recordOutcome(explicit, logFlag string, agent model.AgentID, o hook.Outcome, now time.Time) {
+	path := explicit
+	if path == "" {
+		path = telemetry.OutcomesPathFor(decisionLogPath(logFlag))
+	}
+	if path == "" || o.ToolUseID == "" {
+		return
+	}
+	result := telemetry.OutcomeRan
+	if o.Failed {
+		result = telemetry.OutcomeFailed
+	}
+	b, err := json.Marshal(telemetry.Outcome{Time: now.UTC(), Agent: agent, SessionID: o.SessionID,
+		ToolUseID: o.ToolUseID, Tool: o.ToolName, Result: result})
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(append(b, '\n'))
 }
 
 // eventStorePath resolves the store a budget totals from.
