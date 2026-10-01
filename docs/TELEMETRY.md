@@ -545,6 +545,15 @@ Run one collector per environment, behind your own ingress. Nothing here authent
 the caller, so it must not be exposed to a network you do not control. Put it behind a
 proxy that terminates TLS and checks a token.
 
-Retention is your responsibility: rotate the store file the way you rotate any other
-log. Events carry who did what and when, which is personal data even without prompt
+Events carry who did what and when, which is personal data even without prompt
 content, so the store is created mode 0600 and should be treated accordingly.
+
+**Retention** is `reeve collect --retain 720h`: the collector removes events older than
+that, at start-up and hourly. It is done by the collector because the collector is the
+store's only writer and keeps it open; anything else rewriting the file would race the
+next batch, and on Windows could not replace it at all. A line the collector cannot read
+is kept rather than removed, and counted, because deleting what this build cannot parse
+would be retention quietly doubling as data loss. The default is to keep everything:
+forgetting is something an operator chooses, not something that happens to them. A
+budget whose window is longer than the retention period will total what is left, so keep
+the two consistent.

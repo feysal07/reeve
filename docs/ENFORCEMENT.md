@@ -864,6 +864,35 @@ A log that has never been sealed is reported as **not verified**, and exits 2. "
 breaks found" is true of it and means nothing, and that is exactly what a clean log
 looks like too.
 
+### Rotation and retention without losing the evidence
+
+```
+reeve audit rotate ~/.reeve/decisions.jsonl --keep 720h
+```
+
+A log that is never rotated grows for ever, and deleting the start of a sealed log makes
+every seal fail — which is exactly what tampering looks like. Retention that cannot be
+told apart from tampering is retention nobody can use. So rotation works in whole
+segments:
+
+1. **The log is sealed first.** Sealing refuses a log whose sealed part has changed, so a
+   tampered log cannot be rotated into a clean-looking segment.
+2. **It is moved aside with its chain**, as `decisions-<UTC time>.jsonl`, and the new log's
+   chain begins with a seal of nothing that names that segment and carries the hash of its
+   last seal. The chains of every segment are therefore one chain.
+3. **`--keep` removes the records of segments rotated longer ago than that, and keeps their
+   chains**: a few hundred bytes of counts, times and hashes. A segment that does not
+   verify is not removed, because deleting it on schedule would destroy the only evidence
+   of whatever changed it.
+
+`reeve audit verify` walks back through every segment and reports each as `intact`,
+`pruned` (records removed by retention, chain kept), `broken`, or `missing` — a segment
+whose chain has gone too, which retention never does. A pruned history verifies; a
+missing one does not.
+
+Run it from the same schedule that seals the log. On Windows a guard holding the log open
+stops the move; the rotation then changes nothing, says so, and the next run tries again.
+
 ## Compiling the policy into native configuration
 
 The guard is one layer. It is a process, and a process can be missing, misconfigured

@@ -1500,6 +1500,29 @@ $null = (& $reeve audit seal $auditLog 2>&1)
 Check "re-sealing an edited log refuses rather than covering it up" `
     ($LASTEXITCODE -ne 0) "exit was $LASTEXITCODE"
 
+# Retention that cannot be told from tampering is retention nobody can use. Rotation
+# seals the log, moves it aside and starts the next chain linked to it; retention then
+# removes old segments' records and keeps their chains, so verify can say "pruned on
+# schedule" rather than "missing". --keep 1ns makes the first segment old enough to
+# prune without waiting a month.
+$rotDir = Join-Path $Sandbox "rotation"
+New-Item -ItemType Directory -Force $rotDir | Out-Null
+$rotLog = Join-Path $rotDir "decisions.jsonl"
+foreach ($n in 1..3) {
+    $null = ($loopPayload | & $reeve guard --agent claude-code --policy $policy --log $rotLog 2>&1)
+}
+$null = (& $reeve audit rotate $rotLog 2>&1)
+$rot1 = $LASTEXITCODE
+$null = ($loopPayload | & $reeve guard --agent claude-code --policy $policy --log $rotLog 2>&1)
+$null = (& $reeve audit rotate $rotLog --keep 1ns 2>&1)
+$rot2 = $LASTEXITCODE
+$null = ($loopPayload | & $reeve guard --agent claude-code --policy $policy --log $rotLog 2>&1)
+$rotOut = (& $reeve audit verify $rotLog 2>&1 | Out-String)
+$rotVerify = $LASTEXITCODE
+Check "rotation and retention keep the decision log verifiable" `
+    (($rot1 -eq 0) -and ($rot2 -eq 0) -and ($rotVerify -eq 0) -and (($rotOut -replace '\s+', ' ') -match "pruned decisions-")) `
+    "rotate $rot1, rotate --keep $rot2, verify ${rotVerify}: $($rotOut.Trim())"
+
 # Truncation is the easiest tampering there is, and a hash chain alone cannot see
 # it: a prefix of a valid chain is a valid chain. The recorded line count is what
 # catches it.
