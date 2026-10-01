@@ -47,7 +47,7 @@ func CheckAddr(addr string) error {
 	if err != nil {
 		return fmt.Errorf("%q is not host:port: %w", addr, err)
 	}
-	if !loopbackName(host) {
+	if !loopbackName(host) || !bracketsOnlyAroundIPv6(addr, host) {
 		return fmt.Errorf("refusing to listen on %q: the viewer shows commands and file paths "+
 			"and has no login, so it listens on this machine only (127.0.0.1, ::1 or localhost)", host)
 	}
@@ -55,7 +55,15 @@ func CheckAddr(addr string) error {
 }
 
 func loopbackName(host string) bool {
-	switch strings.ToLower(strings.Trim(host, "[]")) {
+	// One matched pair of brackets, and only around an address: found by review,
+	// strings.Trim removed any number from either end and accepted "[localhost]".
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+		if !strings.Contains(host, ":") {
+			return false
+		}
+	}
+	switch strings.ToLower(host) {
 	case "127.0.0.1", "::1", "localhost":
 		return true
 	}
@@ -86,6 +94,13 @@ func checkBound(a net.Addr) error {
 		return fmt.Errorf("it bound to %s, which is not a loopback address", a)
 	}
 	return nil
+}
+
+// bracketsOnlyAroundIPv6 refuses "[localhost]:80" and "[127.0.0.1]:80". SplitHostPort
+// removes the brackets before anything else sees the host, so the original is checked:
+// brackets belong around an IPv6 address and nothing else.
+func bracketsOnlyAroundIPv6(original, host string) bool {
+	return !strings.HasPrefix(original, "[") || strings.Contains(host, ":")
 }
 
 // NewToken mints the per-run token.
@@ -147,7 +162,7 @@ func guard(next http.Handler) http.Handler {
 		if hh, _, err := net.SplitHostPort(r.Host); err == nil {
 			host = hh
 		}
-		if !loopbackName(host) {
+		if !loopbackName(host) || !bracketsOnlyAroundIPv6(r.Host, host) {
 			http.Error(w, "this viewer answers only to localhost", http.StatusMisdirectedRequest)
 			return
 		}
@@ -180,6 +195,7 @@ func api(token string, fn func(*http.Request) (any, error)) http.HandlerFunc {
 
 // Serve listens and serves until the listener closes.
 func Serve(ln net.Listener, h http.Handler) error {
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 2 * time.Minute}
 	return srv.Serve(ln)
 }

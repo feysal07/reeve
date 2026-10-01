@@ -44,7 +44,8 @@ func get(t *testing.T, h http.Handler, host, path, tok string) *http.Response {
 // login, so an address another machine could reach is refused, and the check is on what
 // the socket actually bound to as well as on the name given.
 func TestTheViewerListensOnThisMachineOnly(t *testing.T) {
-	for _, bad := range []string{"0.0.0.0:0", ":0", "192.168.1.10:0", "[::]:0", "example.com:80", "nonsense"} {
+	for _, bad := range []string{"0.0.0.0:0", ":0", "192.168.1.10:0", "[::]:0", "example.com:80", "nonsense",
+		"[localhost]:0", "[127.0.0.1]:0"} {
 		if err := CheckAddr(bad); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
@@ -77,7 +78,8 @@ func TestTheViewerListensOnThisMachineOnly(t *testing.T) {
 // header is the one thing that gives it away.
 func TestARequestForAnotherHostIsRefused(t *testing.T) {
 	h := Handler(fixture(), token)
-	for _, host := range []string{"attacker.example:7777", "attacker.example", "10.0.0.5:7777"} {
+	for _, host := range []string{"attacker.example:7777", "attacker.example", "10.0.0.5:7777",
+		"[localhost]", "]]localhost[[", "[127.0.0.1]:7777"} {
 		if r := get(t, h, host, "/api/sessions", token); r.StatusCode != http.StatusMisdirectedRequest {
 			t.Errorf("Host %s: status %d, want 421", host, r.StatusCode)
 		}
