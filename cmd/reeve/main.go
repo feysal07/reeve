@@ -59,6 +59,10 @@ func run(args []string) error {
 		return runPosture(args[1:])
 	case "audit":
 		return runAudit(args[1:])
+	case "sessions":
+		return runSessions(args[1:])
+	case "session":
+		return runSession(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
 	case "install":
@@ -93,7 +97,9 @@ Usage:
   reeve collect [flags]  Receive agent telemetry and normalise it
   reeve report [flags]   Cost, usage and policy decisions across every agent
   reeve posture <dir>    Aggregate many scan reports into one view of a fleet
-  reeve audit <cmd>      Seal and verify the decision log (seal, verify)
+  reeve audit <cmd>      Seal, verify and rotate the decision log (seal, verify, rotate)
+  reeve sessions         Sessions from the decision log and the event store, side by side
+  reeve session <id>     One session's timeline: what was tried, decided, run and spent
   reeve mcp <cmd>        Reconcile MCP servers against an approved list (check, list)
   reeve install          Register the guard in every agent on this machine
                          --policy, --store, --prices, --enforce, --plan
