@@ -189,6 +189,18 @@ var toolKinds = map[string]policy.Kind{
 	"glob":         policy.KindRead,
 	"grep":         policy.KindRead,
 
+	// Claude Code's own tools that touch no file, network or command, but whose
+	// names trip a heuristic below. Found in a tester's log: ToolSearch, which looks
+	// up the agent's own tool definitions, was recorded as a network fetch because
+	// its name contains "search", so a fetch rule with no URL condition would have
+	// fired on it. The others match "write", "create", "shell" or "bash" the same way.
+	"toolsearch": policy.KindOther,
+	"todowrite":  policy.KindOther,
+	"taskcreate": policy.KindOther,
+	"croncreate": policy.KindOther,
+	"bashoutput": policy.KindOther,
+	"killshell":  policy.KindOther,
+
 	// GitHub Copilot CLI
 	"shell":       policy.KindShell,
 	"powershell":  policy.KindShell,
@@ -220,6 +232,11 @@ var toolKinds = map[string]policy.Kind{
 	"update_plan": policy.KindOther,
 	"web_search":  policy.KindFetch,
 }
+
+// Classify maps a vendor tool name onto a neutral kind, exactly as the guard does. It is
+// exported so that policy test answers with the same kind the guard would record; the
+// two used to decide separately, and disagreed about ToolSearch.
+func Classify(tool string) policy.Kind { return classify(tool) }
 
 // classify maps a vendor tool name onto a neutral kind.
 func classify(tool string) policy.Kind {

@@ -553,3 +553,24 @@ func TestAnMCPCallsStringArgumentsAreRead(t *testing.T) {
 		t.Error("a non-string argument was read as a string")
 	}
 }
+
+// TestClaudeCodesOwnToolsAreNotFilesNetworkOrCommands.
+//
+// Found in a tester's log: ToolSearch was recorded as a network fetch, because its name
+// contains "search". The rest of these trip the write, create, shell and bash
+// heuristics the same way. The real ones those heuristics exist for must keep working.
+func TestClaudeCodesOwnToolsAreNotFilesNetworkOrCommands(t *testing.T) {
+	for _, tool := range []string{"ToolSearch", "TodoWrite", "TaskCreate", "CronCreate", "BashOutput", "KillShell"} {
+		if k := Classify(tool); k != policy.KindOther {
+			t.Errorf("%s classified as %s, want other", tool, k)
+		}
+	}
+	for tool, want := range map[string]policy.Kind{
+		"WebSearch": policy.KindFetch, "WebFetch": policy.KindFetch, "Bash": policy.KindShell,
+		"PowerShell": policy.KindShell, "Write": policy.KindWrite, "grep_search": policy.KindRead,
+	} {
+		if k := Classify(tool); k != want {
+			t.Errorf("%s classified as %s, want %s", tool, k, want)
+		}
+	}
+}
