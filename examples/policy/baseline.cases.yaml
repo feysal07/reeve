@@ -12,6 +12,12 @@ cases:
   - name: printing a .env file through the shell asks
     action: {kind: shell, command: "cat .env"}
     expect: {effect: ask, rule: print-secrets}
+  - name: printing a .env file by path asks
+    action: {kind: shell, command: 'type C:\src\app\.env'}
+    expect: {effect: ask, rule: print-secrets}
+  - name: os.environ in an inline script is not a credential file
+    action: {kind: shell, command: "python -c \"import os; print(os.environ['HOME'])\""}
+    expect: {effect: allow}
   - name: a recursive force delete asks
     action: {kind: shell, command: "rm -rf build/"}
     expect: {effect: ask, rule: destructive-delete}
