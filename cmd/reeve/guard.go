@@ -299,7 +299,26 @@ type decisionRecord struct {
 	PolicyFile  string        `json:"policyFile,omitempty"`
 	ElapsedUS   int64         `json:"elapsedMicros"`
 	DryRun      bool          `json:"dryRun,omitempty"`
+
+	// Who, Team and Identity record who the guard decided this action was taken by,
+	// and how much that is worth: "verified" for an identity a rule may rely on,
+	// "asserted" for one it may not. All three are empty when none was resolved,
+	// which happens whenever the policy has no rule that needs to know, because the
+	// guard does not read a token for a policy that never mentions a person.
+	//
+	// Recorded so a repetition rule can be scoped per person or per team. Before
+	// this, the log said what was done and never by whom, so such a rule counted
+	// nothing, totalled zero and could not fire, and Parse refused it for that reason.
+	Who      string `json:"who,omitempty"`
+	Team     string `json:"team,omitempty"`
+	Identity string `json:"identity,omitempty"`
 }
+
+// The two values the Identity field of a decision record takes.
+const (
+	identityVerified = "verified"
+	identityAsserted = "asserted"
+)
 
 // logDecision appends one record. A logging failure never changes the decision: the
 // guard's job is to enforce, and losing an audit line is not a reason to let an
@@ -331,6 +350,13 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 		PolicyFile:  source,
 		ElapsedUS:   elapsed.Microseconds(),
 		DryRun:      dryRun,
+	}
+	if id := a.Identity; id != nil && id.Key() != "" {
+		rec.Who, rec.Team = id.Key(), id.Team
+		rec.Identity = identityAsserted
+		if id.Verified() {
+			rec.Identity = identityVerified
+		}
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
@@ -408,12 +434,20 @@ func readHistory(path string, window time.Duration) *policy.History {
 		if rec.Time.Before(cutoff) {
 			break
 		}
-		h.Records = append(h.Records, policy.RecentAction{
+		ra := policy.RecentAction{
 			Time:      rec.Time,
 			SessionID: rec.SessionID,
 			Tool:      rec.Tool,
 			Command:   rec.Command,
-		})
+		}
+		// Only a verified identity attributes a past action to somebody. An asserted
+		// one is a claim the agent made, and counting it would let anyone on this
+		// machine push a colleague's per-person count over its line by claiming to
+		// be them — a denial of service aimed at somebody else, recorded as policy.
+		if rec.Identity == identityVerified {
+			ra.Who, ra.Team = rec.Who, rec.Team
+		}
+		h.Records = append(h.Records, ra)
 	}
 	return h
 }
