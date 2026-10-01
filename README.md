@@ -72,6 +72,19 @@ Builds for Linux, macOS and Windows on the
 [releases page](https://github.com/feysal07/reeve/releases), with checksums and signed
 build provenance. One static binary, no runtime, no dependencies.
 
+Check what you downloaded before running it - a tool that governs agents is a good
+thing to impersonate:
+
+```
+sha256sum --check --ignore-missing checksums.txt                     # not corrupted
+gh attestation verify reeve-linux-amd64.tar.gz --repo feysal07/reeve # built here, from this repository
+```
+
+On Windows, compare `(Get-FileHash reeve-windows-amd64.zip).Hash` with the line in
+`checksums.txt`. The checksum says the file arrived intact; only the attestation says
+who built it, since anybody who could replace the archive could replace the checksum
+beside it.
+
 To see all four planes end to end, run the walkthrough. It builds a throwaway
 sandbox of four badly configured agents and asserts 140 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
@@ -141,8 +154,34 @@ so telemetry there means reading their API rather than receiving OTLP.
 
 ## Status
 
-Pre-alpha. Discovery works for Claude Code, GitHub Copilot CLI, Codex CLI, Gemini CLI
-and Cursor:
+**Early access.** Everything the free tier promises is built; less of it has been seen
+working outside this repository's own tests, and this section says which. If you try it,
+the most useful thing you can send back is what it got wrong on your machine.
+
+| Agent | Discovery | Guard decides | Native config | Seen on a real machine |
+|---|---|---|---|---|
+| Claude Code | yes | yes | yes | **Yes.** About 9,000 decisions on one Windows machine over two weeks, a second developer's trial, and its telemetry session joined to the guard's |
+| GitHub Copilot CLI | yes | yes | yes | Its configuration read on a real machine; never seen making a decision, because nobody used it there |
+| Codex CLI | yes | yes | yes (a snippet to paste when a config already exists) | No - built from documentation and tested against fixtures |
+| Gemini CLI | yes | yes (an ask is refused, since its hooks cannot ask) | yes | No |
+| Cursor | yes | yes (installed failing closed) | hooks only | No |
+
+"No" in the last column is not "does not work": each of those adapters passes the
+conformance suite and `reeve doctor` probes it end to end, but both were written from the
+vendor's documentation, and a format nobody has seen in the wild is the failure this
+project was built to catch. `reeve doctor` says on each agent's line whether its request
+shape was captured from a real installation.
+
+Two more things that are true and worth knowing:
+
+- **Enforcement has been exercised by tests and the walkthrough, not yet by a team.** The
+  one real installation has run in dry run. [Per-rule observe mode](docs/ENFORCEMENT.md#one-rule-at-a-time-observe-mode)
+  exists so it can enforce the rules it has proven while measuring new ones.
+- **Identities in telemetry are the agent's own claim** unless the collector verifies
+  tokens (`reeve collect --auth oidc`). Per-person figures without it are a runaway
+  guardrail, not evidence.
+
+Discovery works for all five:
 
 ```
 reeve scan
