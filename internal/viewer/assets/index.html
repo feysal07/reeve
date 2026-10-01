@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Reeve sessions</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Sessions</h1>
+  <p class="sub">The guard's decisions and the agent's telemetry, side by side. This page is served
+  from this machine only, and reads the files again every time you open a session.</p>
+</header>
+<main>
+  <p id="status" class="note">Loading…</p>
+  <ul id="notes" class="notes"></ul>
+  <section id="list-view">
+    <table id="sessions">
+      <thead><tr>
+        <th>Session</th><th>Agent</th><th>Who</th><th>Last active</th>
+        <th class="n">Decided</th><th class="n">Denied</th><th class="n">Asked</th>
+        <th class="n">Tokens</th><th>Records</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+  <section id="detail-view" hidden>
+    <p><a href="#" id="back">← All sessions</a></p>
+    <h2 id="detail-title"></h2>
+    <dl id="detail-facts"></dl>
+    <p id="partial" class="partial" hidden></p>
+    <label class="toggle"><input type="checkbox" id="stopped"> Only what was asked about or denied</label>
+    <ol id="timeline"></ol>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

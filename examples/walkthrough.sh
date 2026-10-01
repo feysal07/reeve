@@ -1681,6 +1681,15 @@ case "$SESS_JSON|$SESS_ONE" in
     *) check "a session's timeline shows what was refused, and says which record is missing" 0 "$SESS_ONE" ;;
 esac
 
+# The same timeline in a browser. It shows commands and file paths and has no login, so
+# an address another machine could reach is refused before anything is read.
+VIEW_OUT=$("$REEVE" view --addr 0.0.0.0:0 --log "$DECISIONS" 2>&1 | tr -s '[:space:]' ' ')
+VIEW_CODE=$?
+case "$VIEW_OUT" in
+    *"refusing to listen"*"this machine only"*) check "the session viewer refuses to listen anywhere but this machine" 1 ;;
+    *) check "the session viewer refuses to listen anywhere but this machine" 0 "$VIEW_OUT" ;;
+esac
+
 # Truncation is the easiest tampering there is, and a hash chain alone cannot see
 # it: a prefix of a valid chain is a valid chain. The recorded line count is what
 # catches it.

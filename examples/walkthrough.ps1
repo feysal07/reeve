@@ -1535,6 +1535,12 @@ Check "a session's timeline shows what was refused, and says which record is mis
     (($null -ne $sessDoc) -and $sessDoc.schemaVersion -and (($sessOne -replace '\s+', ' ') -match "Partial: no telemetry.*DENY")) `
     $sessOne.Trim()
 
+# The same timeline in a browser. It shows commands and file paths and has no login, so
+# an address another machine could reach is refused before anything is read.
+$viewOut = (& $reeve view --addr 0.0.0.0:0 --log $decisions 2>&1 | Out-String)
+Check "the session viewer refuses to listen anywhere but this machine" `
+    (($LASTEXITCODE -ne 0) -and (($viewOut -replace '\s+', ' ') -match "refusing to listen.*this machine only")) $viewOut.Trim()
+
 # Truncation is the easiest tampering there is, and a hash chain alone cannot see
 # it: a prefix of a valid chain is a valid chain. The recorded line count is what
 # catches it.

@@ -63,6 +63,8 @@ func run(args []string) error {
 		return runSessions(args[1:])
 	case "session":
 		return runSession(args[1:])
+	case "view":
+		return runView(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
 	case "install":
@@ -100,6 +102,7 @@ Usage:
   reeve audit <cmd>      Seal, verify and rotate the decision log (seal, verify, rotate)
   reeve sessions         Sessions from the decision log and the event store, side by side
   reeve session <id>     One session's timeline: what was tried, decided, run and spent
+  reeve view             The same, in a browser, served from this machine only
   reeve mcp <cmd>        Reconcile MCP servers against an approved list (check, list)
   reeve install          Register the guard in every agent on this machine
                          --policy, --store, --prices, --enforce, --plan
