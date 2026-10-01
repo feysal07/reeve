@@ -131,7 +131,7 @@ func Rotate(logPath string, now time.Time, keep time.Duration, version string) (
 	}
 
 	if keep > 0 {
-		pruned, kept, err := prune(logPath, now.Add(-keep))
+		pruned, kept, err := prune(logPath, now, keep, version)
 		rot.Pruned, rot.Kept = pruned, kept
 		if err != nil {
 			return rot, err
@@ -166,7 +166,8 @@ func startChain(logPath, seg string, last Seal, now time.Time, version string) e
 // A segment that does not verify is not pruned. Deleting it would destroy the only
 // evidence of whatever changed it, on a schedule, with a message saying retention did
 // it.
-func prune(logPath string, cutoff time.Time) (pruned, kept []string, err error) {
+func prune(logPath string, now time.Time, keep time.Duration, version string) (pruned, kept []string, err error) {
+	cutoff := now.Add(-keep)
 	segs, err := Segments(logPath)
 	if err != nil {
 		return nil, nil, err
@@ -192,9 +193,37 @@ func prune(logPath string, cutoff time.Time) (pruned, kept []string, err error) 
 		if err := os.Remove(seg); err != nil {
 			return pruned, kept, err
 		}
+		// The tombstone after the removal, never before: if it cannot be written,
+		// the segment reads as deleted, which is loud, rather than as pruned with its
+		// records still there, which would be a lie in the other direction.
+		if err := appendTombstone(seg, seals[len(seals)-1], now, keep, version); err != nil {
+			return pruned, kept, fmt.Errorf("removed %s but could not record that retention did, "+
+				"so it will verify as deleted: %w", filepath.Base(seg), err)
+		}
 		pruned = append(pruned, filepath.Base(seg))
 	}
 	return pruned, kept, nil
+}
+
+// appendTombstone records, in a segment's own chain, that retention removed its records.
+func appendTombstone(seg string, last Seal, now time.Time, keep time.Duration, version string) error {
+	prevLine, err := json.Marshal(last)
+	if err != nil {
+		return err
+	}
+	t := Seal{SealedAt: now.UTC(), Lines: last.Lines, Hash: last.Hash, Prev: sealLineHash(prevLine),
+		Version: version, Pruned: true, Keep: keep.String()}
+	body, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(ChainPath(seg), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(append(body, '\n'))
+	return err
 }
 
 // SegmentStatus is one earlier segment as verify found it.
@@ -207,42 +236,130 @@ type SegmentStatus struct {
 }
 
 // verifyHistory walks back from a log through the segments it follows.
+//
+// Hardened after review. It followed Follows with no check on where it pointed or
+// whether it had been there before, so a chain naming "../" could send it outside the
+// log's directory and two chains naming each other made verify run for ever. It
+// reported a segment with lines added after its last seal as intact. And it inferred
+// "pruned" from a missing file, so a deletion a minute after rotation read exactly like
+// retention a month later.
 func verifyHistory(logPath string, seals []Seal) ([]SegmentStatus, []Break) {
 	var out []SegmentStatus
 	var breaks []Break
 	dir := filepath.Dir(logPath)
+	ext := filepath.Ext(logPath)
+	prefix := strings.TrimSuffix(filepath.Base(logPath), ext) + segmentSeparator
+	seen := map[string]bool{}
+	fail := func(at time.Time, detail string) {
+		breaks = append(breaks, Break{SealedAt: at, Detail: detail})
+	}
+
 	for len(seals) > 0 && seals[0].Follows != "" {
 		first := seals[0]
-		seg := filepath.Join(dir, first.Follows)
-		prev, err := ReadSeals(ChainPath(seg))
-		if err != nil || len(prev) == 0 {
-			out = append(out, SegmentStatus{Segment: first.Follows, State: "missing",
-				Detail: "its chain is gone, so nothing shows what it held or that it was pruned rather than deleted"})
-			breaks = append(breaks, Break{SealedAt: first.SealedAt,
-				Detail: fmt.Sprintf("the segment this log follows, %s, is missing along with its chain", first.Follows)})
+		name := first.Follows
+		// Exactly this log's name, a rotation stamp and its extension. A stamp holds no
+		// separator, so a name of that shape is a file in this directory and nothing
+		// else - which is what rules out "../".
+		stamp := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ext)
+		if prefix+stamp+ext != name {
+			stamp = ""
+		}
+		if _, err := time.Parse(stampLayout, stamp); err != nil {
+			fail(first.SealedAt, fmt.Sprintf("the chain names %q as the segment before it, which is "+
+				"not a segment of this log", name))
 			break
 		}
-		prevLine, err := json.Marshal(prev[len(prev)-1])
-		if err == nil && sealLineHash(prevLine) != first.Prev {
-			breaks = append(breaks, Break{SealedAt: first.SealedAt,
-				Detail: fmt.Sprintf("the first seal after %s does not follow its last seal: "+
-					"a segment has been replaced or its chain rewritten", first.Follows)})
+		if seen[name] {
+			fail(first.SealedAt, fmt.Sprintf("the chain returns to %s, which it has already passed "+
+				"through: segments do not form a loop unless their chains were rewritten", name))
+			break
 		}
-		st := SegmentStatus{Segment: first.Follows, Lines: prev[len(prev)-1].Lines}
-		if _, err := os.Stat(seg); errors.Is(err, os.ErrNotExist) {
-			st.State = "pruned"
-			st.Detail = fmt.Sprintf("records removed by retention; %d lines were sealed through %s",
-				st.Lines, prev[len(prev)-1].SealedAt.Format(time.RFC3339))
-		} else if rep, err := verifyOne(seg); err != nil || !rep.Intact() {
+		seen[name] = true
+
+		seg := filepath.Join(dir, name)
+		prev, err := ReadSeals(ChainPath(seg))
+		if err != nil || len(prev) == 0 {
+			out = append(out, SegmentStatus{Segment: name, State: "missing",
+				Detail: "its chain is gone, so nothing shows what it held or that it was pruned rather than deleted"})
+			fail(first.SealedAt, fmt.Sprintf("the segment this log follows, %s, is missing along with its chain", name))
+			break
+		}
+
+		// The link is to the last real seal; a tombstone comes after it.
+		real, tomb := prev, (*Seal)(nil)
+		if last := prev[len(prev)-1]; last.Pruned {
+			real, tomb = prev[:len(prev)-1], &last
+		}
+		if len(real) == 0 {
+			fail(first.SealedAt, fmt.Sprintf("%s's chain holds a tombstone and no seal", name))
+			break
+		}
+		lastReal := real[len(real)-1]
+		if prevLine, err := json.Marshal(lastReal); err == nil && sealLineHash(prevLine) != first.Prev {
+			fail(first.SealedAt, fmt.Sprintf("the first seal after %s does not follow its last seal: "+
+				"a segment has been replaced or its chain rewritten", name))
+		}
+
+		st := SegmentStatus{Segment: name, Lines: lastReal.Lines}
+		_, statErr := os.Stat(seg)
+		absent := errors.Is(statErr, os.ErrNotExist)
+		switch {
+		case absent && tomb != nil:
+			if why := tombstoneProblem(*tomb, lastReal); why != "" {
+				st.State, st.Detail = "deleted", why
+				fail(tomb.SealedAt, fmt.Sprintf("%s: %s", name, why))
+			} else {
+				st.State = "pruned"
+				st.Detail = fmt.Sprintf("records removed by retention (keep %s) at %s; %d lines were "+
+					"sealed through %s", tomb.Keep, tomb.SealedAt.Format(time.RFC3339), lastReal.Lines,
+					lastReal.SealedAt.Format(time.RFC3339))
+			}
+		case absent:
+			st.State = "deleted"
+			st.Detail = "its records are gone and retention recorded no removal: they were deleted"
+			fail(lastReal.SealedAt, fmt.Sprintf("%s's records were deleted, not pruned: its chain "+
+				"holds no retention tombstone", name))
+		case tomb != nil:
 			st.State = "broken"
-			st.Detail = "does not verify; run reeve audit verify on it"
-			breaks = append(breaks, Break{SealedAt: prev[len(prev)-1].SealedAt,
-				Detail: fmt.Sprintf("the earlier segment %s does not verify", first.Follows)})
-		} else {
-			st.State = "intact"
+			st.Detail = "its chain says retention removed its records, and they are still there"
+			fail(tomb.SealedAt, fmt.Sprintf("%s is marked pruned but its records are present", name))
+		default:
+			rep, err := verifyOne(seg)
+			switch {
+			case err != nil || !rep.Intact():
+				st.State, st.Detail = "broken", "does not verify; run reeve audit verify on it"
+				fail(lastReal.SealedAt, fmt.Sprintf("the earlier segment %s does not verify", name))
+			case rep.Unsealed > 0:
+				// A segment is never written to again once it is rotated, so a line
+				// after its last seal was added afterwards: by a guard still holding
+				// the old file when it was moved, or by an edit. Either way it is
+				// covered by nothing, in a file that should not have grown.
+				st.State = "broken"
+				st.Detail = fmt.Sprintf("%d line(s) were added after it was rotated and are covered by nothing", rep.Unsealed)
+				fail(lastReal.SealedAt, fmt.Sprintf("%s has %d line(s) added after it was rotated", name, rep.Unsealed))
+			default:
+				st.State = "intact"
+			}
 		}
 		out = append(out, st)
 		seals = prev
 	}
 	return out, breaks
+}
+
+// tombstoneProblem says why a tombstone is not one retention wrote, or "" when it is.
+func tombstoneProblem(t, last Seal) string {
+	prevLine, err := json.Marshal(last)
+	if err != nil || sealLineHash(prevLine) != t.Prev || t.Hash != last.Hash || t.Lines != last.Lines {
+		return "its retention tombstone does not follow its last seal, so it was not written by pruning"
+	}
+	keep, err := time.ParseDuration(t.Keep)
+	if err != nil || keep <= 0 {
+		return "its retention tombstone names no retention period"
+	}
+	if t.SealedAt.Sub(last.SealedAt) < keep {
+		return fmt.Sprintf("its records were removed %s after its last seal, sooner than the %s "+
+			"retention its tombstone claims", t.SealedAt.Sub(last.SealedAt).Round(time.Second), t.Keep)
+	}
+	return ""
 }
