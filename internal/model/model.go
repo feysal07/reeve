@@ -310,7 +310,12 @@ type Finding struct {
 
 // Report is the output of one scan.
 type Report struct {
-	SchemaVersion string         `json:"schemaVersion"`
+	SchemaVersion string `json:"schemaVersion"`
+	// ReeveVersion is the build that wrote this report. Never omitted: a report
+	// shared by a colleague arrived with nothing to say it came from the very first
+	// build, and every gap in it read as a defect in the current one until somebody
+	// remembered. "dev" for a local build, "unknown" when nothing was passed in.
+	ReeveVersion  string         `json:"reeveVersion"`
 	ScannedAt     time.Time      `json:"scannedAt"`
 	Host          HostInfo       `json:"host"`
 	Installations []Installation `json:"installations"`
