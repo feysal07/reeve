@@ -885,10 +885,26 @@ segments:
    verify is not removed, because deleting it on schedule would destroy the only evidence
    of whatever changed it.
 
-`reeve audit verify` walks back through every segment and reports each as `intact`,
-`pruned` (records removed by retention, chain kept), `broken`, or `missing` — a segment
-whose chain has gone too, which retention never does. A pruned history verifies; a
-missing one does not.
+Pruning records itself: it appends a tombstone to the segment's chain, chained to its
+last seal, naming when it ran and the retention period it ran under.
+
+`reeve audit verify` walks back through every segment and reports each as:
+
+- `intact` — its records match every seal, and nothing was added after it was rotated;
+- `pruned` — its records were removed by retention, and the tombstone says so, follows its
+  last seal, and names a retention period that had actually elapsed;
+- `deleted` — its records are gone without that tombstone, or with one claiming a
+  retention period that had not elapsed;
+- `broken` — its records do not verify, or grew after rotation, when nothing should have
+  written to it again;
+- `missing` — its chain has gone too, which retention never does.
+
+Only a history of `intact` and `pruned` segments verifies. Found by review, and fixed
+before this shipped: the first version inferred `pruned` from a missing file, so a
+segment deleted a minute after rotation read exactly like one removed on schedule; it
+reported a segment with lines appended after its last seal as intact; it followed a
+chain's `follows` wherever it pointed, including out of the directory and round in a
+loop; and nothing checked that a chain still had its first seal.
 
 Run it from the same schedule that seals the log. On Windows a guard holding the log open
 stops the move; the rotation then changes nothing, says so, and the next run tries again.
