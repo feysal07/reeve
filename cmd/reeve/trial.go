@@ -485,6 +485,26 @@ rules:
         - "**/id_rsa"
         - "**/*.pem"
 
+  # The same files, read through the shell instead of the read tool. Found in a
+  # tester's log: an agent ran "cat .../backend-services/.env" as part of a longer
+  # command, and the trial recorded nothing, because read-secrets only sees the read
+  # tool. Same effect, different tool, so the trial measured less than the baseline
+  # it is meant to preview. Ask rather than deny, as the baseline does: these are
+  # substrings, and ".env" also appears in commands that only mention one.
+  - id: print-secrets
+    description: Printing a credential file through a shell command
+    decision: ask
+    reason: >-
+      Reading a credential file through the shell bypasses a file-read rule while
+      having exactly the same effect.
+    match:
+      kind: [shell]
+      commandRuns:
+        - ".env"
+        - "id_rsa"
+        - ".aws/credentials"
+        - ".kube/config"
+
   - id: destructive-delete
     description: Recursive force delete
     decision: deny

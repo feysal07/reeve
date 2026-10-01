@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/feysal07/reeve/internal/policy"
 )
 
 // These tests guard the only code in Reeve that writes to a file someone else owns.
@@ -229,6 +231,32 @@ func TestBuiltinTrialPolicyIsValid(t *testing.T) {
 	}
 	if len(p) == 0 {
 		t.Fatal("the built-in trial policy has no rules")
+	}
+}
+
+// TestTheTrialSeesASecretPrintedThroughTheShell.
+//
+// Found in a tester's log. An agent printed a .env file with cat, at the end of a
+// longer command, and the trial recorded an allow with no rule: read-secrets only sees
+// the read tool. A trial that misses what the baseline catches understates the policy
+// it is meant to preview, and the tester concludes there was nothing to find.
+func TestTheTrialSeesASecretPrintedThroughTheShell(t *testing.T) {
+	pol, err := policy.Parse([]byte(builtinTrialPolicy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decide := func(cmd string) policy.Decision {
+		return pol.Evaluate(policy.Action{Agent: "claude-code", Kind: policy.KindShell, ToolName: "Bash",
+			Command: cmd, History: &policy.History{}, Spend: &policy.Spend{}})
+	}
+	printed := "find ./project -maxdepth 2 -iname \"README*\"\necho \"---\"\ncat ./project/docker/services/.env 2>/dev/null"
+	if d := decide(printed); d.RuleID != "print-secrets" || d.Effect != policy.EffectAsk {
+		t.Errorf("printing a .env through the shell: %s by %q, want ask by print-secrets", d.Effect, d.RuleID)
+	}
+	for _, ordinary := range []string{"mvn -q test", "git status", "ls -la"} {
+		if d := decide(ordinary); d.Effect != policy.EffectAllow {
+			t.Errorf("%q was %s by %s", ordinary, d.Effect, d.RuleID)
+		}
 	}
 }
 
