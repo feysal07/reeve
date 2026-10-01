@@ -51,10 +51,17 @@ func toolOf(fields []string) string {
 		"sudo": true, "command": true, "env": true, "nohup": true, "time": true,
 		"exec": true, "doas": true,
 	}
-	for _, f := range fields {
+	for i, f := range fields {
 		// An assignment prefix such as FOO=bar is not the program.
 		if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
 			continue
+		}
+		// `command -v helm` asks whether helm exists and runs nothing. Found in a
+		// real decision log: skipping "command" as a wrapper resolved it as a helm
+		// invocation with an unknown target, and a rule about infrastructure whose
+		// target cannot be determined asked about a lookup.
+		if (f == "-v" || f == "-V") && i > 0 && strings.EqualFold(filepath.Base(fields[i-1]), "command") {
+			return ""
 		}
 		if strings.HasPrefix(f, "-") {
 			continue

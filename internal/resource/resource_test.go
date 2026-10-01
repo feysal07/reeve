@@ -362,3 +362,26 @@ func TestExampleRegistryIsValid(t *testing.T) {
 		}
 	}
 }
+
+// TestALookupIsNotAnInvocation. Found in a real decision log: `command -v helm` asks
+// whether helm exists, and skipping "command" as a wrapper resolved it as a helm call
+// with an unknown target, so a rule about infrastructure asked about a lookup. Plain
+// `command helm ...` still runs helm and still resolves.
+func TestALookupIsNotAnInvocation(t *testing.T) {
+	for _, tc := range []struct {
+		cmd  string
+		want string
+	}{
+		{"command -v helm", ""},
+		{"command -V kubectl", ""},
+		{"command kubectl get pods", "kubectl"},
+		{"sudo kubectl delete pod x", "kubectl"},
+	} {
+		if got := toolOf(splitCommand(tc.cmd)); got != tc.want {
+			t.Errorf("%q: tool = %q, want %q", tc.cmd, got, tc.want)
+		}
+	}
+	if got := Resolve("command -v helm", testEnv(t)); got.Kind != KindNone {
+		t.Errorf("a lookup resolved as a %s target", got.Kind)
+	}
+}

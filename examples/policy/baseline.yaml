@@ -84,10 +84,20 @@ rules:
     reason: >-
       Reading a credential file through the shell bypasses a file-read rule while
       having exactly the same effect.
+    #
+    # ".env" as a path rather than as a substring: found in a real decision log, the
+    # bare substring asked about every os.environ in an inline Python script. The
+    # forms below need it to follow a space, a separator or a quote, which a file
+    # name does and an attribute does not. It still asks about .env.example, which
+    # is usually a template and sometimes holds real values; check it.
     match:
       kind: [shell]
       commandRuns:
-        - ".env"
+        - " .env"
+        - "/.env"
+        - '\.env'
+        - '".env'
+        - "'.env"
         - "id_rsa"
         - ".aws/credentials"
         - ".kube/config"
