@@ -17,6 +17,21 @@ cases:
   - name: gradle excluding the test task mid-line asks
     action: {kind: shell, command: "./gradlew -x test build"}
     expect: {effect: ask, rule: skip-verification}
+  - name: installing without tests asks
+    action: {kind: shell, command: "mvn -q -pl common-domain -am install -DskipTests"}
+    expect: {effect: ask, rule: skip-verification}
+  - name: a compile check that skips tests is not interrupted
+    action: {kind: shell, command: "mvn -T1C clean test-compile -DskipTests"}
+    expect: {effect: allow}
+  - name: a plain compile that skips tests is not interrupted
+    action: {kind: shell, command: "mvn -q compile -DskipTests"}
+    expect: {effect: allow}
+  - name: a gradle compile excluding tests is not interrupted
+    action: {kind: shell, command: "./gradlew compileJava -x test"}
+    expect: {effect: allow}
+  - name: a directory named build is not a build goal
+    action: {kind: shell, command: "cd /src/build-tools && mvn compile -DskipTests"}
+    expect: {effect: allow}
   - name: curl through a proxy is not a skipped test
     action: {kind: shell, command: "curl -x test-proxy.internal:8080 https://example.com"}
     expect: {effect: allow}
