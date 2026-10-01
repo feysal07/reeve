@@ -241,8 +241,13 @@ rules:
     # Requires a resource registry; see examples/resources/resources.yaml. Without
     # one every target resolves to unknown and this rule never fires, which is why
     # the companion rule below exists.
+    #
+    # MCP is included because a Kubernetes MCP server reaches the same clusters as
+    # kubectl does. Written for shell alone, this rule was found not to see a single
+    # one of those calls on a real machine; the registry's mcp section says which
+    # server reaches what.
     match:
-      kind: [shell]
+      kind: [shell, mcp]
       environment: [production]
 
   - id: infrastructure-unknown-target

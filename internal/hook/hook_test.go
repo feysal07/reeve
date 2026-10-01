@@ -524,3 +524,32 @@ func TestCursorCanAsk(t *testing.T) {
 		t.Errorf("exit = %d: an ask must not block", r.Exit)
 	}
 }
+
+// TestAnMCPCallWithNoArgumentsStillNamesItsServer. The server was only split out of the
+// tool name when the call carried arguments, so a call with none reached the guard
+// naming no server at all, and every rule about MCP servers passed it by.
+func TestAnMCPCallWithNoArgumentsStillNamesItsServer(t *testing.T) {
+	a, err := Decode([]byte(`{"tool_name":"mcp__kubernetes__configuration_view"}`), model.AgentClaudeCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.MCPServer != "kubernetes" || a.MCPTool != "configuration_view" {
+		t.Errorf("server %q tool %q, want kubernetes and configuration_view", a.MCPServer, a.MCPTool)
+	}
+}
+
+// TestAnMCPCallsStringArgumentsAreRead. The registry reads a namespace or a context from
+// them; nothing else does.
+func TestAnMCPCallsStringArgumentsAreRead(t *testing.T) {
+	a, err := Decode([]byte(`{"tool_name":"mcp__k__pods_list","tool_input":{"namespace":"payments","limit":5}}`),
+		model.AgentClaudeCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.MCPArguments["namespace"] != "payments" {
+		t.Errorf("arguments = %v, want namespace payments", a.MCPArguments)
+	}
+	if _, ok := a.MCPArguments["limit"]; ok {
+		t.Error("a non-string argument was read as a string")
+	}
+}

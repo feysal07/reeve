@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/feysal07/reeve/internal/adapter"
@@ -169,5 +171,137 @@ func TestInspectMalformedConfigDoesNotFail(t *testing.T) {
 	}
 	if !seen {
 		t.Error("malformed file was not reported as existing")
+	}
+}
+
+const desktopConfig = `{
+	"mcpServers": {
+		"kubernetes": {"command": "npx", "args": ["-y", "kubernetes-mcp-server@latest"]}
+	},
+	"preferences": {"sidebarMode": "chat"}
+}`
+
+// TestTheDesktopApplicationsServersAreInTheInventory.
+//
+// Found on a real machine. Claude Code running inside the desktop application is handed
+// the MCP servers configured there, and none of the files this adapter read mentioned
+// them: scan reported no MCP servers while a Kubernetes server was answering calls, and
+// the guard could not say what that server ran.
+func TestTheDesktopApplicationsServersAreInTheInventory(t *testing.T) {
+	for _, tc := range []struct {
+		goos string
+		path func(env adapter.Env) string
+	}{
+		{"linux", func(env adapter.Env) string {
+			return filepath.Join(env.Home, ".config", "Claude", "claude_desktop_config.json")
+		}},
+		{"darwin", func(env adapter.Env) string {
+			return filepath.Join(env.Home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+		}},
+		{"windows", func(env adapter.Env) string {
+			return filepath.Join(env.Home, "AppData", "Roaming", "Claude", "claude_desktop_config.json")
+		}},
+		// The packaged application keeps a virtualised copy of AppData, which is the
+		// only place the file exists as far as some processes can tell.
+		{"windows", func(env adapter.Env) string {
+			return filepath.Join(env.Home, "AppData", "Local", "Packages", "Claude_pzs8sxrjxfjjc",
+				"LocalCache", "Roaming", "Claude", "claude_desktop_config.json")
+		}},
+	} {
+		env := testEnv(t)
+		env.GOOS = tc.goos
+		p := tc.path(env)
+		writeFile(t, p, desktopConfig)
+
+		inst, err := New().Inspect(context.Background(), env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inst.MCPServers) != 1 || inst.MCPServers[0].Name != "kubernetes" ||
+			inst.MCPServers[0].Command != "npx" {
+			t.Errorf("%s %s: servers = %+v, want the desktop's kubernetes server", tc.goos, p, inst.MCPServers)
+		}
+		listed := false
+		for _, f := range inst.ConfigFiles {
+			if f.Path == p && f.Exists {
+				listed = true
+			}
+		}
+		if !listed {
+			t.Errorf("%s: the desktop configuration is not listed among the files read", tc.goos)
+		}
+	}
+}
+
+// TestTwoDifferentServersUnderOneNameAreBothReported. Collapsing them would report
+// whichever was read first while the agent might be running the other, and the guard
+// needs both to know that it cannot tell which.
+func TestTwoDifferentServersUnderOneNameAreBothReported(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.Home, ".claude", "settings.json"),
+		`{"mcpServers": {"kubernetes": {"command": "npx", "args": ["-y", "a-different-server"]}}}`)
+	writeFile(t, filepath.Join(env.Home, ".config", "Claude", "claude_desktop_config.json"), desktopConfig)
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inst.MCPServers) != 2 {
+		t.Fatalf("servers = %+v, want both definitions", inst.MCPServers)
+	}
+}
+
+// TestServersAddedWithTheCLIAreInTheInventory. `claude mcp add` writes to ~/.claude.json,
+// at the top level for user scope and under the project directory for local scope, and
+// neither is in a settings file. Before this, scan reported none of them.
+func TestServersAddedWithTheCLIAreInTheInventory(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.Home, ".claude.json"), `{
+		"mcpServers": {"user-wide": {"command": "uvx", "args": ["some-server"]}},
+		"projects": {
+			"`+filepath.ToSlash(env.WorkDir)+`": {"mcpServers": {"this-project": {"url": "https://mcp.example/x"}}},
+			"/somewhere/else": {"mcpServers": {"another-project": {"command": "npx"}}}
+		},
+		"numStartups": 42
+	}`)
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, s := range inst.MCPServers {
+		names[s.Name] = true
+	}
+	if !names["user-wide"] || !names["this-project"] {
+		t.Errorf("servers = %v, want user-wide and this-project", names)
+	}
+	if names["another-project"] {
+		t.Error("a server local to a different project was reported for this one")
+	}
+}
+
+// TestTheMCPListerAgreesWithInspect. The guard uses the lister and scan uses Inspect; a
+// server one of them sees and the other does not is a server the guard cannot classify
+// while the inventory says it exists, or the reverse.
+func TestTheMCPListerAgreesWithInspect(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.Home, ".claude", "settings.json"),
+		`{"mcpServers": {"a": {"command": "npx", "args": ["-y", "a"]}}}`)
+	writeFile(t, filepath.Join(env.WorkDir, ".mcp.json"), `{"mcpServers": {"b": {"url": "https://b.example"}}}`)
+	writeFile(t, filepath.Join(env.Home, ".claude.json"), `{"mcpServers": {"c": {"command": "uvx"}}}`)
+	writeFile(t, filepath.Join(env.Home, ".config", "Claude", "claude_desktop_config.json"), desktopConfig)
+
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := New().MCPServers(context.Background(), env)
+	// Both walk maps, so the order is not the point; the set is.
+	byName := func(s []model.MCPServer) {
+		sort.Slice(s, func(i, j int) bool { return s[i].Name < s[j].Name })
+	}
+	byName(listed)
+	byName(inst.MCPServers)
+	if len(listed) != 4 || !reflect.DeepEqual(listed, inst.MCPServers) {
+		t.Fatalf("lister %+v\ninspect %+v", listed, inst.MCPServers)
 	}
 }

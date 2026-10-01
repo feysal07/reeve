@@ -61,3 +61,29 @@ environments:
     terraform:
       workspaces: ["dev", "default", "local"]
       varFiles: ["dev.tfvars", "local.tfvars"]
+
+# MCP servers, and which environment a call to each one reaches.
+#
+# Without this, a Kubernetes MCP server is a second door into every cluster your
+# kubeconfig can reach, and a production rule written about shell commands never sees
+# what comes through it. Found on a real machine: pods listed and resources read
+# through MCP, every call allowed without a prompt, while the rule looked configured.
+#
+# A server is identified by what it runs - the program's base name and its arguments,
+# or its URL - and never by the name in the agent's configuration, which is a label the
+# developer chose. The guard looks the definition up in the agent's own configuration,
+# the same files `reeve scan` reads.
+#
+# A server not listed here is "unknown", never assumed harmless.
+mcp:
+  # A server that reaches whichever cluster its kubeconfig says. Each call is resolved
+  # the way a kubectl command would be: the namespace or context from the call's own
+  # arguments when it names one, and from the kubeconfig the server reads otherwise.
+  - command: "npx -y kubernetes-mcp-server*"
+    kubernetes:
+      contextArg: context
+      namespaceArg: namespace
+
+  # A server bound to one place, such as a database MCP pointed at a replica.
+  # - url: "https://db-mcp.internal.example/*"
+  #   environment: production
