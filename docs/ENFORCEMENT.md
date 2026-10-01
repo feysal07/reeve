@@ -331,6 +331,56 @@ an older log carries none, and replay refuses rather than reporting every action
 refused for want of an identity. An identity recorded as asserted is replayed as
 asserted, and refused as it was at the time.
 
+## Testing a policy: cases files
+
+A policy is code, and a cases file is its tests: named actions, and the decision each
+one must get.
+
+```yaml
+# baseline.cases.yaml
+cases:
+  - name: reading a .env file is stopped
+    action: {kind: read, paths: ["/src/app/.env"]}
+    expect: {effect: deny, rule: read-secrets}
+  - name: running the tests is not interrupted
+    action: {kind: shell, command: "go test ./..."}
+    expect: {effect: allow}
+```
+
+```
+reeve policy test baseline.yaml --cases baseline.cases.yaml
+```
+
+It exits non-zero when any case fails, so it can gate the pull request that changes the
+policy. Rename a rule, narrow a glob, reorder two rules of equal strictness, and the case
+that depended on it fails before anybody's agent does. Write the cases a rule must leave
+alone as well as the ones it must catch: a rule that fires on ordinary work gets removed,
+and takes the rest of the policy with it.
+
+A cases file that could not test anything is refused rather than passed: one with no
+cases, one naming a rule the policy does not have, and one with a misspelt field, which
+would otherwise silently drop the condition it meant to set. Each action is decided on
+its own, with nothing before it and nothing spent, so counting rules and budgets are not
+what cases are for; replay a real log for those.
+
+## Policy packs
+
+[`examples/policy/packs/`](../examples/policy/packs/) holds focused policies for what the
+baseline does not cover, each with its cases file beside it:
+
+| Pack | What it is for |
+|---|---|
+| `kubernetes` | Changes to production clusters, through the shell **and** through a Kubernetes MCP server; each rule comes in both forms, because one rule cannot carry a command and an MCP tool at once. |
+| `agent-self-defence` | The agent editing its own controls: Reeve's policy and binary, administrator-owned settings, and the per-user settings files that register its hooks. |
+| `supply-chain` | New dependencies, a package manager pointed at another registry, the repository's shared MCP servers, and CI workflows. |
+| `java` | Editing an applied Liquibase or Flyway changeset, dropping a schema, and building without the tests. |
+
+Deploy one as it is, or copy its rules into your own policy together with its cases.
+
+`reeve policy check` warns about the gap the Kubernetes pack exists for: a rule that
+matches an environment for shell commands only, when nothing else in the policy matches
+an MCP call reaching the same environment.
+
 ## Circuit breakers: matching on what already happened
 
 Every rule above is a pure function of the action in front of it. One is not.

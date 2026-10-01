@@ -1,0 +1,25 @@
+cases:
+  - name: adding an npm package asks
+    action: {kind: shell, command: "npm install left-pad"}
+    expect: {effect: ask, rule: new-dependency}
+  - name: adding a Go module asks
+    action: {kind: shell, command: "go get github.com/some/module@latest"}
+    expect: {effect: ask, rule: new-dependency}
+  - name: installing the lockfile is not interrupted
+    action: {kind: shell, command: "npm install"}
+    expect: {effect: allow}
+  - name: npm ci is not interrupted
+    action: {kind: shell, command: "npm ci"}
+    expect: {effect: allow}
+  - name: a different package index asks
+    action: {kind: shell, command: "pip download --index-url https://pypi.example/simple requests"}
+    expect: {effect: ask, rule: package-source-override}
+  - name: editing the repository's MCP servers asks
+    action: {kind: write, paths: ["/src/app/.mcp.json"]}
+    expect: {effect: ask, rule: edit-project-mcp}
+  - name: editing a workflow asks
+    action: {kind: write, paths: ["/src/app/.github/workflows/release.yml"]}
+    expect: {effect: ask, rule: edit-ci}
+  - name: editing source is not interrupted
+    action: {kind: write, paths: ["/src/app/internal/server.go"]}
+    expect: {effect: allow}

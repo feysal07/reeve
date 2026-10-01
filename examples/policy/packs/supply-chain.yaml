@@ -1,0 +1,78 @@
+# What gets into the build, and what runs in CI.
+#
+# An agent asked to fix something will add a dependency to do it, and the package it
+# picks is the one it has seen most rather than the one your organisation has vetted.
+# The same agent will edit a CI workflow to make a check pass. Neither is wrong in
+# itself, and both are how code nobody reviewed ends up running with the repository's
+# secrets - so both ask, and neither denies.
+version: 1
+name: supply-chain
+default: allow
+
+rules:
+  - id: new-dependency
+    description: Adding a dependency
+    decision: ask
+    reason: >-
+      This adds a package to the build. Check it is the one you meant, from the
+      publisher you expect, and not a similarly named one.
+    # Installing from a lockfile (npm ci, go mod download) adds nothing and is not
+    # matched. The trailing spaces keep a bare "npm install", which installs the
+    # lockfile, out of it.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "npm install "
+        - "npm i "
+        - "pnpm add"
+        - "yarn add"
+        - "pip install "
+        - "uv add"
+        - "poetry add"
+        - "go get "
+        - "cargo add"
+        - "gem install"
+        - "dotnet add package"
+
+  - id: package-source-override
+    description: Pointing a package manager at a different registry
+    decision: ask
+    reason: >-
+      This fetches packages from somewhere other than the configured registry, which
+      is how a dependency-confusion attack gets its package installed.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "--registry"
+        - "--index-url"
+        - "--extra-index-url"
+        - "GOPROXY="
+        - "GOINSECURE="
+
+  - id: edit-project-mcp
+    description: Changing the MCP servers a repository gives every agent
+    decision: ask
+    reason: >-
+      This file is shared through the repository, so every developer's agent that
+      opens it starts these servers. Check what is being added.
+    match:
+      kind: [write]
+      path:
+        - "**/.mcp.json"
+        - "**/.cursor/mcp.json"
+        - "**/.vscode/mcp.json"
+
+  - id: edit-ci
+    description: Changing what CI runs
+    decision: ask
+    reason: >-
+      CI runs with the repository's secrets. Check the change does what the task
+      needed and nothing more.
+    match:
+      kind: [write]
+      path:
+        - "**/.github/workflows/**"
+        - "**/.gitlab-ci.yml"
+        - "**/Jenkinsfile"
+        - "**/azure-pipelines.yml"
+        - "**/bitbucket-pipelines.yml"

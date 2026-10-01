@@ -1,0 +1,28 @@
+cases:
+  - name: deleting a production deployment from the shell is stopped
+    action: {kind: shell, command: "kubectl delete deploy api", environment: production}
+    expect: {effect: deny, rule: kube-change-production-shell}
+  - name: exec into a production pod through MCP is stopped
+    action: {kind: mcp, mcpServer: kubernetes, mcpTool: pods_exec, environment: production}
+    expect: {effect: deny, rule: kube-change-production-mcp}
+  - name: scaling production through MCP is stopped
+    action: {kind: mcp, mcpServer: kubernetes, mcpTool: resources_scale, environment: production}
+    expect: {effect: deny, rule: kube-change-production-mcp}
+  - name: listing production pods through MCP is not interrupted
+    action: {kind: mcp, mcpServer: kubernetes, mcpTool: pods_list_in_namespace, environment: production}
+    expect: {effect: allow}
+  - name: reading production logs from the shell is not interrupted
+    action: {kind: shell, command: "kubectl logs deploy/api --tail 100", environment: production}
+    expect: {effect: allow}
+  - name: applying to development is not interrupted
+    action: {kind: shell, command: "kubectl apply -f k8s/", environment: development}
+    expect: {effect: allow}
+  - name: a change through an unclassified MCP server asks
+    action: {kind: mcp, mcpServer: kubernetes, mcpTool: resources_delete, environment: unknown}
+    expect: {effect: ask, rule: kube-change-unknown-mcp}
+  - name: helm upgrade against an unresolved cluster asks
+    action: {kind: shell, command: "helm upgrade api ./chart", environment: unknown}
+    expect: {effect: ask, rule: kube-change-unknown-shell}
+  - name: exec into a pod on an unresolved cluster asks
+    action: {kind: shell, command: "kubectl exec -it api-0 -- sh", environment: unknown}
+    expect: {effect: ask, rule: kube-change-unknown-shell}

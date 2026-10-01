@@ -1,0 +1,72 @@
+# Java services with a managed database schema.
+#
+# Written for Spring Boot services using Liquibase or Flyway, which is where an agent
+# does the most damage with the least warning. An applied changeset is part of the
+# database's history: edit it and the next deployment fails checksum validation, or -
+# with validation off - silently diverges from every environment it already ran in. The
+# fix an agent reaches for is to edit the changeset that is failing, because that is
+# the file in front of it.
+version: 1
+name: java
+default: allow
+
+rules:
+  - id: edit-applied-migration
+    description: Editing a database changeset or migration
+    decision: ask
+    reason: >-
+      A changeset that has run anywhere is part of that database's history. Editing
+      it breaks checksum validation on the next deployment. Add a new changeset
+      instead, unless this one has never left your machine.
+    match:
+      kind: [write]
+      path:
+        - "**/db/changelog/**"
+        - "**/db/migration/**"
+
+  - id: drop-schema
+    description: Dropping every object in a schema
+    decision: deny
+    reason: >-
+      This drops everything in the schema the tool is pointed at, and the tool does
+      not ask which one that is.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "flyway clean"
+        - "flyway:clean"
+        - "liquibase dropAll"
+        - "liquibase drop-all"
+        - "liquibase:dropAll"
+
+  - id: skip-verification
+    description: Building without running the tests or checks
+    decision: ask
+    reason: >-
+      This builds without the tests or checks that would have caught the problem.
+      Fine for a quick local compile; not for anything that gets committed.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "-DskipTests"
+        - "-Dmaven.test.skip"
+        - "-Dcheckstyle.skip"
+        - "-Dspotbugs.skip"
+        - "-Djacoco.skip"
+        # With the trailing space: a bare "-x test" also matched curl's proxy flag,
+        # as in curl -x test-proxy:8080. The form at the very end of a command is
+        # the next rule, because a substring cannot say "end of line".
+        - "-x test "
+        - "--exclude-task test"
+
+  - id: skip-verification-at-the-end
+    description: Building with the test task excluded, as the last argument
+    decision: ask
+    reason: >-
+      This builds without the tests that would have caught the problem. Fine for a
+      quick local compile; not for anything that gets committed.
+    match:
+      kind: [shell]
+      command:
+        - "*gradle*-x test"
+        - "*gradlew*-x test"
