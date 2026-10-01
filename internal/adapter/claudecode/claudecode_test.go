@@ -2,10 +2,12 @@ package claudecode
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/feysal07/reeve/internal/adapter"
@@ -303,5 +305,135 @@ func TestTheMCPListerAgreesWithInspect(t *testing.T) {
 	byName(inst.MCPServers)
 	if len(listed) != 4 || !reflect.DeepEqual(listed, inst.MCPServers) {
 		t.Fatalf("lister %+v\ninspect %+v", listed, inst.MCPServers)
+	}
+}
+
+// pluginHome lays out two installed plugins: tracker, declaring a server in .mcp.json,
+// and docs, declaring one in its manifest. settings is the user settings file.
+func pluginHome(t *testing.T, settings string) adapter.Env {
+	t.Helper()
+	env := testEnv(t)
+	tracker := filepath.Join(env.Home, ".claude", "plugins", "cache", "mkt", "tracker", "1.0.0")
+	docs := filepath.Join(env.Home, ".claude", "plugins", "cache", "mkt", "docs", "2.0.0")
+	reg := `{"version": 2, "plugins": {
+		"tracker@mkt": [{"scope": "user", "installPath": ` + jsonString(tracker) + `}],
+		"docs@mkt": [{"scope": "user", "installPath": ` + jsonString(docs) + `}]}}`
+	writeFile(t, filepath.Join(env.Home, ".claude", "plugins", "installed_plugins.json"), reg)
+	writeFile(t, filepath.Join(tracker, ".mcp.json"),
+		`{"mcpServers": {"issues": {"command": "npx", "args": ["-y", "tracker-mcp"], "env": {"TRACKER_TOKEN": "x"}}}}`)
+	writeFile(t, filepath.Join(docs, ".claude-plugin", "plugin.json"),
+		`{"name": "docs", "mcpServers": {"search": {"url": "https://docs.example/mcp"}}}`)
+	writeFile(t, filepath.Join(env.Home, ".claude", "settings.json"), settings)
+	return env
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func serversByName(t *testing.T, env adapter.Env) map[string]model.MCPServer {
+	t.Helper()
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]model.MCPServer{}
+	for _, s := range inst.MCPServers {
+		out[s.Name] = s
+	}
+	return out
+}
+
+// TestAPluginsMCPServersAreInTheInventory.
+//
+// Found in a tester's log: Jira and Postman calls went through MCP servers two plugins
+// provided, some of them changing Postman environments, and the scan of the same
+// machine listed no MCP servers at all. Named as the agent names their tools, so the
+// guard can find them by the name a tool call carries.
+func TestAPluginsMCPServersAreInTheInventory(t *testing.T) {
+	env := pluginHome(t, `{"enabledPlugins": {"tracker@mkt": true, "docs@mkt": true}}`)
+	got := serversByName(t, env)
+	issues, ok := got["plugin_tracker_issues"]
+	if !ok || issues.Scope != model.ScopePlugin || issues.Command != "npx" {
+		t.Errorf("the .mcp.json server: %+v (all: %v)", issues, got)
+	}
+	if len(issues.EnvKeys) != 1 || issues.EnvKeys[0] != "TRACKER_TOKEN" {
+		t.Errorf("env keys = %v", issues.EnvKeys)
+	}
+	if s, ok := got["plugin_docs_search"]; !ok || s.URL != "https://docs.example/mcp" {
+		t.Errorf("the manifest's server: %+v", s)
+	}
+}
+
+// TestADisabledPluginsServersAreNotConfigured. They do not run, and reporting them as
+// configured would put servers in the inventory that nothing starts.
+func TestADisabledPluginsServersAreNotConfigured(t *testing.T) {
+	got := serversByName(t, pluginHome(t, `{"enabledPlugins": {"tracker@mkt": true, "docs@mkt": false}}`))
+	if _, ok := got["plugin_docs_search"]; ok {
+		t.Error("a disabled plugin's server was reported")
+	}
+	if _, ok := got["plugin_tracker_issues"]; !ok {
+		t.Error("the enabled plugin's server is missing")
+	}
+	if got := serversByName(t, pluginHome(t, `{}`)); len(got) != 0 {
+		t.Errorf("plugins nobody enabled were reported: %v", got)
+	}
+}
+
+// TestTheMostSpecificSettingsFileDecidesWhetherAPluginIsOn. A project's local settings
+// switching a plugin off override the user's switching it on, as they do for the agent.
+func TestTheMostSpecificSettingsFileDecidesWhetherAPluginIsOn(t *testing.T) {
+	env := pluginHome(t, `{"enabledPlugins": {"tracker@mkt": true}}`)
+	writeFile(t, filepath.Join(env.WorkDir, ".claude", "settings.local.json"), `{"enabledPlugins": {"tracker@mkt": false}}`)
+	if _, ok := serversByName(t, env)["plugin_tracker_issues"]; ok {
+		t.Error("a plugin local settings turned off was reported as running")
+	}
+}
+
+// TestAManifestCannotPointOutsideItsPlugin. A path in a manifest is not a reason to read
+// files anywhere else on the machine; the refusal is reported against the manifest.
+func TestAManifestCannotPointOutsideItsPlugin(t *testing.T) {
+	env := pluginHome(t, `{"enabledPlugins": {"docs@mkt": true}}`)
+	docs := filepath.Join(env.Home, ".claude", "plugins", "cache", "mkt", "docs", "2.0.0")
+	writeFile(t, filepath.Join(env.Home, "elsewhere.json"), `{"mcpServers": {"x": {"command": "evil"}}}`)
+	writeFile(t, filepath.Join(docs, ".claude-plugin", "plugin.json"), `{"mcpServers": "../../../../../../elsewhere.json"}`)
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range inst.MCPServers {
+		if s.Command == "evil" {
+			t.Fatal("a manifest path outside the plugin was read")
+		}
+	}
+	refused := false
+	for _, f := range inst.ConfigFiles {
+		if strings.HasSuffix(filepath.ToSlash(f.Path), "docs/2.0.0/.claude-plugin/plugin.json") && strings.Contains(f.ParseError, "outside the plugin") {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Error("the refusal was not reported against the manifest")
+	}
+
+	// A path inside the plugin is followed.
+	writeFile(t, filepath.Join(docs, "servers.json"), `{"mcpServers": {"inside": {"command": "ok"}}}`)
+	writeFile(t, filepath.Join(docs, ".claude-plugin", "plugin.json"), `{"mcpServers": "./servers.json"}`)
+	if s, ok := serversByName(t, env)["plugin_docs_inside"]; !ok || s.Command != "ok" {
+		t.Errorf("a manifest path inside the plugin was not followed: %+v", s)
+	}
+}
+
+// TestTheListerSeesPluginServersToo. The guard uses the lister and scan uses Inspect; a
+// plugin server only one of them saw would be in the inventory and unclassifiable.
+func TestTheListerSeesPluginServersToo(t *testing.T) {
+	env := pluginHome(t, `{"enabledPlugins": {"tracker@mkt": true, "docs@mkt": true}}`)
+	names := map[string]bool{}
+	for _, s := range New().MCPServers(context.Background(), env) {
+		names[s.Name] = true
+	}
+	if !names["plugin_tracker_issues"] || !names["plugin_docs_search"] {
+		t.Errorf("lister = %v", names)
 	}
 }

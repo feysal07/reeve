@@ -8,8 +8,10 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/feysal07/reeve/internal/adapter"
@@ -47,7 +49,10 @@ type settings struct {
 	AllowedMCPServers []string                   `json:"allowedMcpServers"`
 	DeniedMCPServers  []string                   `json:"deniedMcpServers"`
 	MCPServers        map[string]mcpServerConfig `json:"mcpServers"`
-	Sandbox           *struct {
+	// EnabledPlugins says which installed plugins are switched on. A plugin can
+	// bring MCP servers of its own; see loadPluginSources.
+	EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	Sandbox        *struct {
 		Enabled *bool `json:"enabled"`
 	} `json:"sandbox"`
 }
@@ -169,7 +174,18 @@ func (a *Adapter) Inspect(ctx context.Context, env adapter.Env) (model.Installat
 			Lenient:    d.doc.Lenient,
 		})
 	}
-	inst.MCPServers = collectMCPServers(env, sources, desktop)
+	plugins := loadPluginSources(env, sources)
+	for _, p := range plugins {
+		inst.ConfigFiles = append(inst.ConfigFiles, model.ConfigFile{
+			Path:       p.path,
+			Scope:      model.ScopePlugin,
+			Exists:     true,
+			Writable:   writableByUser(p.path),
+			ParseError: errText(p.doc.Err),
+			Lenient:    p.doc.Lenient,
+		})
+	}
+	inst.MCPServers = collectMCPServers(env, sources, append(desktop, plugins...))
 	inst.Auth = detectAuth(env, sources)
 
 	return inst, nil
@@ -187,7 +203,8 @@ func (a *Adapter) MCPServers(ctx context.Context, env adapter.Env) []model.MCPSe
 		load(filepath.Join(env.WorkDir, ".claude", "settings.json"), model.ScopeProject),
 		load(filepath.Join(env.WorkDir, ".claude", "settings.local.json"), model.ScopeUser),
 	)
-	return collectMCPServers(env, dedupeSources(sources), loadMCPSources(env))
+	sources = dedupeSources(sources)
+	return collectMCPServers(env, sources, append(loadMCPSources(env), loadPluginSources(env, sources)...))
 }
 
 // load reads and parses one settings file. A missing file is not an error: it is the
@@ -407,8 +424,12 @@ func collectMCPServers(env adapter.Env, sources []source, extra []mcpSource) []m
 		}
 	}
 	for _, d := range extra {
+		scope := d.scope
+		if scope == "" {
+			scope = model.ScopeUser
+		}
 		for _, n := range d.servers {
-			add(n.name, n.cfg, model.ScopeUser)
+			add(n.name, n.cfg, scope)
 		}
 	}
 	return out
@@ -433,6 +454,8 @@ type mcpSource struct {
 	path    string
 	doc     config.Document
 	servers []namedServer
+	// scope is where the servers come from; empty means the user's own files.
+	scope model.Scope
 }
 
 type namedServer struct {
@@ -623,4 +646,158 @@ func detectVersion(env adapter.Env) (version, source string) {
 		return "", ""
 	}
 	return doc.VersionTo, path
+}
+
+// Plugins, and the MCP servers they bring.
+//
+// Found in a tester's log. The agent called Jira and Postman through MCP servers that
+// two plugins provided - some of those calls changed Postman environments - and the
+// scan of the same machine listed no MCP servers at all, because this adapter never
+// read a plugin. An MCP server the inventory cannot see is also one the resource
+// registry cannot classify, so the guard reported every call to it as unknown for a
+// reason nobody could find.
+//
+// The layout: installed_plugins.json names each plugin and where it is installed;
+// enabledPlugins in the settings files says which are switched on; and a plugin
+// declares servers in a .mcp.json at its root, or under mcpServers in its manifest.
+// The agent names such a server's tools mcp__plugin_<plugin>_<server>__<tool>, so it is
+// reported under that name, which is the name a tool call carries.
+
+type installedPlugins struct {
+	Plugins map[string][]struct {
+		InstallPath string `json:"installPath"`
+	} `json:"plugins"`
+}
+
+type pluginManifest struct {
+	// MCPServers is an object of servers, or a path to a file holding one.
+	MCPServers json.RawMessage `json:"mcpServers"`
+}
+
+// enabledPlugin answers whether a plugin is switched on, by the most specific settings
+// file that mentions it: managed, then local, then project, then user.
+func enabledPlugin(sources []source, key string) bool {
+	rank := func(s source) int {
+		switch {
+		case s.scope == model.ScopeManaged:
+			return 0
+		case filepath.Base(s.path) == "settings.local.json":
+			return 1
+		case s.scope == model.ScopeProject:
+			return 2
+		default:
+			return 3
+		}
+	}
+	best, found, on := 99, false, false
+	for _, s := range sources {
+		if s.data == nil {
+			continue
+		}
+		v, ok := s.data.EnabledPlugins[key]
+		if !ok || rank(s) >= best {
+			continue
+		}
+		best, found, on = rank(s), true, v
+	}
+	return found && on
+}
+
+// loadPluginSources reads the MCP servers of every enabled plugin. A disabled plugin's
+// servers do not run, so they are not reported as configured.
+func loadPluginSources(env adapter.Env, sources []source) []mcpSource {
+	var reg installedPlugins
+	doc := config.ReadJSON(filepath.Join(env.Home, ".claude", "plugins", "installed_plugins.json"), &reg)
+	if !doc.OK() || len(reg.Plugins) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(reg.Plugins))
+	for k := range reg.Plugins {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var out []mcpSource
+	for _, key := range keys {
+		if !enabledPlugin(sources, key) {
+			continue
+		}
+		name := key
+		if i := strings.Index(key, "@"); i >= 0 {
+			name = key[:i]
+		}
+		for _, inst := range reg.Plugins[key] {
+			if inst.InstallPath == "" {
+				continue
+			}
+			out = append(out, pluginServers(name, inst.InstallPath)...)
+		}
+	}
+	return out
+}
+
+// pluginServers reads one installed plugin's declared servers, from both places a
+// plugin can declare them.
+func pluginServers(plugin, root string) []mcpSource {
+	var out []mcpSource
+	read := func(path string, f func([]byte) (map[string]mcpServerConfig, error)) {
+		s := mcpSource{path: path, scope: model.ScopePlugin}
+		var raw json.RawMessage
+		s.doc = config.ReadJSON(path, &raw)
+		if !s.doc.Found {
+			return
+		}
+		if s.doc.OK() {
+			servers, err := f(raw)
+			if err != nil {
+				s.doc.Err = err
+			}
+			names := make([]string, 0, len(servers))
+			for n := range servers {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				s.servers = append(s.servers, namedServer{"plugin_" + plugin + "_" + n, servers[n]})
+			}
+		}
+		out = append(out, s)
+	}
+
+	read(filepath.Join(root, ".mcp.json"), func(b []byte) (map[string]mcpServerConfig, error) {
+		var f mcpFile
+		err := json.Unmarshal(b, &f)
+		return f.MCPServers, err
+	})
+	read(filepath.Join(root, ".claude-plugin", "plugin.json"), func(b []byte) (map[string]mcpServerConfig, error) {
+		var m pluginManifest
+		if err := json.Unmarshal(b, &m); err != nil || len(m.MCPServers) == 0 {
+			return nil, err
+		}
+		var servers map[string]mcpServerConfig
+		if json.Unmarshal(m.MCPServers, &servers) == nil {
+			return servers, nil
+		}
+		// A path to a file of servers, relative to the plugin. Read it only when it
+		// stays inside the plugin: a manifest is not a reason to read anywhere else.
+		var rel string
+		if err := json.Unmarshal(m.MCPServers, &rel); err != nil {
+			return nil, fmt.Errorf("mcpServers is neither servers nor a path to them")
+		}
+		p := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(rel, "./")))
+		if r, err := filepath.Rel(root, p); err != nil || strings.HasPrefix(r, "..") {
+			return nil, fmt.Errorf("mcpServers points outside the plugin: %s", rel)
+		}
+		b2, err := config.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		var f mcpFile
+		if err := json.Unmarshal(b2, &f); err == nil && len(f.MCPServers) > 0 {
+			return f.MCPServers, nil
+		}
+		err = json.Unmarshal(b2, &servers)
+		return servers, err
+	})
+	return out
 }

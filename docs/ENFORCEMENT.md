@@ -794,6 +794,16 @@ Finding the server's definition meant finding two places `reeve scan` had never 
 Claude desktop application's configuration, whose servers Claude Code is handed when it
 runs inside the desktop application. Both are now in the inventory.
 
+**Plugins bring servers too.** An enabled Claude Code plugin can declare MCP servers in a
+`.mcp.json` at its root or under `mcpServers` in its manifest, and the agent names their
+tools `mcp__plugin_<plugin>_<server>__<tool>`. Found in a tester's log: Jira and Postman
+calls went through two plugins' servers while the scan of the same machine listed none.
+They are now in the inventory under that name, with scope `plugin`, so a registry entry
+can classify them. A plugin's servers are reported only while the most specific settings
+file that mentions the plugin has it enabled, because a disabled plugin's servers do not
+run. Servers that come from the claude.ai account rather than from a file — remote
+connectors, and the desktop application's own tools — are not on disk and stay unknown.
+
 ## The decision log
 
 Each decision appends one JSON line: what was attempted, what was decided, which rule
