@@ -1601,6 +1601,31 @@ DOC_AFTER=$(wc -l < "$INST_HOME/.reeve/decisions.jsonl" 2>/dev/null || echo 0)
     check "doctor does not write its own probe into the audit trail" 0 \
         "the log went from $DOC_BEFORE to $DOC_AFTER lines"
 
+# A log sealed once, or never, reads exactly like one under tamper-evidence: the guard
+# answers, the log grows, and every line is covered by nothing.
+SEAL_DOCTOR=$(env $INST_ENV "$REEVE" doctor 2>&1)
+case "$SEAL_DOCTOR" in
+    *"NEVER SEALED"*"reeve audit schedule"*) check "doctor says a decision log nobody has sealed is covered by nothing" 1 ;;
+    *) check "doctor says a decision log nobody has sealed is covered by nothing" 0 "$SEAL_DOCTOR" ;;
+esac
+env $INST_ENV "$REEVE" audit seal "$INST_HOME/.reeve/decisions.jsonl" >/dev/null 2>&1
+SEAL_DOCTOR=$(env $INST_ENV "$REEVE" doctor 2>&1)
+case "$SEAL_DOCTOR" in
+    *"NEVER SEALED"*) check "once sealed, doctor reports the seal instead" 0 "$SEAL_DOCTOR" ;;
+    *"seals        : 1,"*) check "once sealed, doctor reports the seal instead" 1 ;;
+    *) check "once sealed, doctor reports the seal instead" 0 "$SEAL_DOCTOR" ;;
+esac
+# Printed, never installed: a timer outlives the command that made it.
+SCHEDULE_OUT=$(env $INST_ENV MSYS_NO_PATHCONV=1 "$REEVE" audit schedule --platform linux --binary /opt/reeve/reeve \
+    --log /var/log/reeve/decisions.jsonl --home "/home/dev" 2>&1)
+case "$SCHEDULE_OUT" in
+    *"reeve-seal.timer"*"OnUnitActiveSec=60min"*"systemctl --user enable --now"*)
+        [ -e "$INST_HOME/.config/systemd" ] &&
+            check "audit schedule prints the timers and installs nothing" 0 "it wrote unit files" ||
+            check "audit schedule prints the timers and installs nothing" 1 ;;
+    *) check "audit schedule prints the timers and installs nothing" 0 "$SCHEDULE_OUT" ;;
+esac
+
 # A hook pointing at a binary that is gone is the commonest way this breaks, and
 # the one that looks like nothing at all. Installed from a copy which is then
 # deleted, rather than by editing the hook, so this tests what actually happens
