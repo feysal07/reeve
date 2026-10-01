@@ -8,25 +8,31 @@ import (
 
 // Claims is what a verified token says, reduced to what a policy can use.
 type Claims struct {
-	Subject  string
-	Email    string
-	Groups   []string
-	IssuedAt time.Time
-	Expires  time.Time
+	Subject string
+	Email   string
+	// EmailVerified is the provider saying it checked the address. Without it the email
+	// is whatever the person typed into their profile, which on many providers is
+	// anything at all - including a colleague's address.
+	EmailVerified bool
+	Groups        []string
+	IssuedAt      time.Time
+	Expires       time.Time
 }
 
 // rawClaims mirrors the wire form. Audience and groups are json.RawMessage because both
 // are published as either a string or an array of strings, by different providers, and a
 // decoder that accepts only one shape rejects half the world.
 type rawClaims struct {
-	Iss    string          `json:"iss"`
-	Sub    string          `json:"sub"`
-	Aud    json.RawMessage `json:"aud"`
-	Exp    int64           `json:"exp"`
-	Iat    int64           `json:"iat"`
-	Nbf    int64           `json:"nbf"`
-	Email  string          `json:"email"`
-	Groups json.RawMessage `json:"groups"`
+	Iss   string          `json:"iss"`
+	Sub   string          `json:"sub"`
+	Aud   json.RawMessage `json:"aud"`
+	Exp   int64           `json:"exp"`
+	Iat   int64           `json:"iat"`
+	Nbf   int64           `json:"nbf"`
+	Email string          `json:"email"`
+	// EmailVerified is a boolean on most providers and the string "true" on some.
+	EmailVerified json.RawMessage `json:"email_verified"`
+	Groups        json.RawMessage `json:"groups"`
 }
 
 // leeway forgives a small clock difference on claims about the past.
@@ -110,12 +116,14 @@ func Validate(payload []byte, t *Trust, now time.Time) (*Claims, error) {
 		return nil, fmt.Errorf("groups: %w", err)
 	}
 
+	verified := string(r.EmailVerified) == "true" || string(r.EmailVerified) == `"true"`
 	return &Claims{
-		Subject:  r.Sub,
-		Email:    r.Email,
-		Groups:   groups,
-		IssuedAt: iat,
-		Expires:  exp,
+		Subject:       r.Sub,
+		Email:         r.Email,
+		EmailVerified: verified,
+		Groups:        groups,
+		IssuedAt:      iat,
+		Expires:       exp,
 	}, nil
 }
 

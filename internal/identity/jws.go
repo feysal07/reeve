@@ -45,6 +45,33 @@ type header struct {
 	Typ string `json:"typ"`
 }
 
+// VerifyFor checks a token as Verify does, and first that its algorithm is one the
+// operator's trust configuration allows.
+//
+// Found by review: Trust.Algorithms was parsed, validated and documented, and nothing
+// called Allows, so an operator who wrote `algorithms: [ES256]` to retire RSA keys still
+// had RS256 tokens accepted. The setting read as a control and constrained nothing.
+func VerifyFor(token string, keys *KeySet, t *Trust) ([]byte, error) {
+	if t != nil {
+		parts := strings.Split(token, ".")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("not a compact JWS: want three dot-separated parts, got %d", len(parts))
+		}
+		rawHeader, err := decodeSegment(parts[0])
+		if err != nil {
+			return nil, fmt.Errorf("header: %w", err)
+		}
+		var h header
+		if err := json.Unmarshal(rawHeader, &h); err != nil {
+			return nil, fmt.Errorf("header is not JSON: %w", err)
+		}
+		if !t.Allows(h.Alg) {
+			return nil, fmt.Errorf("algorithm %q is not one this trust configuration allows", h.Alg)
+		}
+	}
+	return Verify(token, keys)
+}
+
 // Verify checks a compact JWS against a key set and returns its payload.
 //
 // It returns the raw payload rather than parsed claims so that claim checking is a

@@ -111,7 +111,7 @@ See docs/ENFORCEMENT.md`)
 	if err != nil {
 		return err
 	}
-	payload, err := identity.Verify(token, keys)
+	payload, err := identity.VerifyFor(token, keys, trust)
 	if err != nil {
 		return fmt.Errorf("the provider returned a token this build cannot verify: %w", err)
 	}

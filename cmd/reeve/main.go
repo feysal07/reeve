@@ -71,6 +71,8 @@ func run(args []string) error {
 		return runInstall(args[1:])
 	case "uninstall":
 		return runUninstall(args[1:])
+	case "otel-headers":
+		return runOtelHeaders(args[1:])
 	case "login":
 		return runLogin(args[1:])
 	case "doctor":
@@ -108,6 +110,7 @@ Usage:
                          --policy, --store, --prices, --enforce, --plan
   reeve uninstall        Remove it again, leaving your own hooks alone
   reeve login            Sign in, so a per-person rule has an identity nobody can forge
+  reeve otel-headers     Print the login token as telemetry headers (for otelHeadersHelper)
   reeve doctor           Check the guard is registered AND actually answering
   reeve trial <cmd>      Run a safe dry-run trial against your own Claude Code
   reeve version          Print the version
