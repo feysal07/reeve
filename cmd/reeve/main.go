@@ -233,6 +233,7 @@ func runScan(args []string) error {
 		WorkDir:         *dir,
 		IncludeHostname: *includeHostname,
 		DecisionLog:     decisionLog,
+		Version:         version,
 	})
 	if err != nil {
 		return err

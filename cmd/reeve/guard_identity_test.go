@@ -150,3 +150,16 @@ func TestATeamMapThatCannotBeReadIsSaid(t *testing.T) {
 		t.Errorf("nothing said about the unreadable map: %q", msg)
 	}
 }
+
+// TestEveryDecisionSaysWhichBuildMadeIt. A log shared from somebody else's machine
+// carried nothing to say it came from the very first build.
+func TestEveryDecisionSaysWhichBuildMadeIt(t *testing.T) {
+	old := version
+	version = "v9.9.9-test"
+	defer func() { version = old }()
+	log := filepath.Join(t.TempDir(), "decisions.jsonl")
+	logDecision(log, policy.Action{Agent: "claude-code", Kind: policy.KindShell}, policy.Decision{Effect: policy.EffectAllow}, "", 0, false)
+	if got := decisionLines(t, log)[0].ReeveVersion; got != "v9.9.9-test" {
+		t.Errorf("decision recorded build %q", got)
+	}
+}

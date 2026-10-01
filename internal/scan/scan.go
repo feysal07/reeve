@@ -37,6 +37,8 @@ type Options struct {
 	// IncludeHostname records the machine name in the report. Off by default,
 	// because a report may be shared and the name may identify a person.
 	IncludeHostname bool
+	// Version is the build running the scan, recorded in the report.
+	Version string
 }
 
 // Run inspects every agent the registry knows about and evaluates the finding rules.
@@ -48,11 +50,15 @@ func Run(ctx context.Context, reg *adapter.Registry, opts Options) (model.Report
 
 	report := model.Report{
 		SchemaVersion: SchemaVersion,
+		ReeveVersion:  opts.Version,
 		ScannedAt:     now(),
 		Host: model.HostInfo{
 			OS:   runtime.GOOS,
 			Arch: runtime.GOARCH,
 		},
+	}
+	if report.ReeveVersion == "" {
+		report.ReeveVersion = "unknown"
 	}
 	if opts.IncludeHostname {
 		if h, err := os.Hostname(); err == nil {

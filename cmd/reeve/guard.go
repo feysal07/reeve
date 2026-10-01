@@ -388,8 +388,12 @@ type decisionRecord struct {
 	RuleID      string        `json:"ruleId,omitempty"`
 	Reason      string        `json:"reason,omitempty"`
 	PolicyFile  string        `json:"policyFile,omitempty"`
-	ElapsedUS   int64         `json:"elapsedMicros"`
-	DryRun      bool          `json:"dryRun,omitempty"`
+	// ReeveVersion is the build that made the decision. A log shared from somebody
+	// else's machine carried nothing to say it came from the very first build, so
+	// its gaps were read as defects in the current one.
+	ReeveVersion string `json:"reeveVersion,omitempty"`
+	ElapsedUS    int64  `json:"elapsedMicros"`
+	DryRun       bool   `json:"dryRun,omitempty"`
 
 	// Who, Team and Identity record who the guard decided this action was taken by,
 	// and how much that is worth: "verified" for an identity a rule may rely on,
@@ -422,25 +426,26 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 		return
 	}
 	rec := decisionRecord{
-		Time:        time.Now().UTC(),
-		Agent:       a.Agent,
-		Event:       a.Event,
-		SessionID:   a.SessionID,
-		Kind:        a.Kind,
-		Tool:        a.ToolName,
-		Command:     a.Command,
-		Paths:       a.Paths,
-		URLs:        a.URLs,
-		MCPServer:   a.MCPServer,
-		MCPTool:     a.MCPTool,
-		Environment: a.Environment,
-		EnvDetail:   a.EnvironmentDetail,
-		Effect:      d.Effect,
-		RuleID:      d.RuleID,
-		Reason:      d.Reason,
-		PolicyFile:  source,
-		ElapsedUS:   elapsed.Microseconds(),
-		DryRun:      dryRun,
+		Time:         time.Now().UTC(),
+		Agent:        a.Agent,
+		Event:        a.Event,
+		SessionID:    a.SessionID,
+		Kind:         a.Kind,
+		Tool:         a.ToolName,
+		Command:      a.Command,
+		Paths:        a.Paths,
+		URLs:         a.URLs,
+		MCPServer:    a.MCPServer,
+		MCPTool:      a.MCPTool,
+		Environment:  a.Environment,
+		EnvDetail:    a.EnvironmentDetail,
+		Effect:       d.Effect,
+		RuleID:       d.RuleID,
+		Reason:       d.Reason,
+		PolicyFile:   source,
+		ReeveVersion: version,
+		ElapsedUS:    elapsed.Microseconds(),
+		DryRun:       dryRun,
 	}
 	if id := a.Identity; id != nil && id.Key() != "" {
 		rec.Who, rec.Team = id.Key(), id.Team
