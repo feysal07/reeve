@@ -148,6 +148,10 @@ jobs:
           render --set networkPolicy.enabled=true
           render --set collector.metrics.enabled=false
           render --set serviceMonitor.enabled=true --set prometheusRule.enabled=true
+          render --set grafanaDashboard.enabled=true --set grafanaDashboard.namespace=monitoring
+          # The dashboard reaches the ConfigMap whole, not as an empty key.
+          helm template t "$chart" --set grafanaDashboard.enabled=true \
+            --show-only templates/dashboard.yaml | grep -q '"uid": "reeve-overview"'
           render --set networkPolicy.enabled=true --set serviceMonitor.enabled=true \
                  --set 'networkPolicy.scrapeFrom[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=monitoring'
           render --set ingress.enabled=true \
@@ -199,6 +203,10 @@ jobs:
             --set serviceMonitor.enabled=true --set collector.metrics.enabled=false
           refuses "alerts on metrics that are never published" \
             --set prometheusRule.enabled=true --set collector.metrics.enabled=false
+          refuses "a dashboard over metrics that are switched off" \
+            --set grafanaDashboard.enabled=true --set collector.metrics.enabled=false
+          refuses "a dashboard no sidecar can find" \
+            --set grafanaDashboard.enabled=true --set grafanaDashboard.labels=null
           refuses "an auth mode that does not exist" --set collector.auth.mode=jwt
           refuses "oidc with no key set" \
             --set collector.auth.mode=oidc --set collector.auth.trustConfigMap=t

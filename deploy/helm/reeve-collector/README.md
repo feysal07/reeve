@@ -10,8 +10,8 @@ single binary is the point. Only the collector belongs in a cluster.
 
 A StatefulSet of exactly one pod, a Service on 4318, a second ClusterIP Service for
 metrics, a PersistentVolumeClaim for the event store, and optionally ConfigMaps for
-the team mapping and price table, an Ingress, a NetworkPolicy, a ServiceMonitor and a
-PrometheusRule.
+the team mapping and price table, an Ingress, a NetworkPolicy, a ServiceMonitor, a
+PrometheusRule and a Grafana dashboard.
 
 ## Before you start
 
@@ -95,6 +95,10 @@ conclude the collector was being watched.
 evaluate against a metric that is never published. Most would stay silent for ever,
 which reads as healthy.
 
+**A dashboard with `collector.metrics.enabled=false`, or with no label.** The first
+draws nothing, and an empty dashboard about consumption looks like a quiet week. The
+second is a ConfigMap Grafana's sidecar never loads.
+
 ## Reaching it from a developer machine
 
 Agents run outside the cluster, so a ClusterIP Service reaches nothing that matters.
@@ -130,6 +134,18 @@ helm upgrade reeve ./deploy/helm/reeve-collector --reuse-values   --set serviceM
 
 Both need the Prometheus operator's CRDs, which is why both are off by default.
 Without the operator, scrape `<release>-reeve-collector-metrics:9464/metrics`.
+
+The dashboard is a ConfigMap for Grafana's dashboard sidecar, which the
+kube-prometheus-stack and grafana charts both run:
+
+```bash
+helm upgrade reeve ./deploy/helm/reeve-collector --reuse-values   --set grafanaDashboard.enabled=true --set grafanaDashboard.namespace=monitoring
+```
+
+It carries the label `grafana_dashboard: "1"`, both charts' default; set
+`grafanaDashboard.labels` if your sidecar watches for another. It is the same
+dashboard the compose quickstart provisions - a test keeps the two identical - and its
+datasource is a variable, so it works against whichever Prometheus your Grafana has.
 
 What is published: batches received and rejected by signal, events written by agent
 and kind, tokens and computed cost by agent, requests whose model was not in the

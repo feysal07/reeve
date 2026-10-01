@@ -62,6 +62,24 @@ func TestTheShippedDashboardOnlyUsesMetricsThisBuildEmits(t *testing.T) {
 	}
 }
 
+// TestTheChartShipsTheSameDashboardAsTheQuickstart. Two copies of one dashboard drift:
+// a panel fixed in one and not the other shows a different picture depending on how
+// somebody deployed, and nobody compares them by eye.
+func TestTheChartShipsTheSameDashboardAsTheQuickstart(t *testing.T) {
+	compose, err := os.ReadFile(filepath.Join("..", "..", "deploy", "compose", "config", "grafana", "dashboards", "reeve.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chart, err := os.ReadFile(filepath.Join("..", "..", "deploy", "helm", "reeve-collector", "dashboards", "reeve.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(compose) != string(chart) {
+		t.Error("deploy/helm/reeve-collector/dashboards/reeve.json differs from the compose " +
+			"dashboard; copy one over the other")
+	}
+}
+
 // exportedNames renders a recorder with every optional feature switched on and
 // collects the family names, so the dashboard is checked against what a fully
 // configured collector actually serves.
