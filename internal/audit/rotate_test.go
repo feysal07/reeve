@@ -278,3 +278,127 @@ func TestAForgedFirstSealIsABreak(t *testing.T) {
 		t.Fatalf("a forged first seal verified: %+v %v", rep, err)
 	}
 }
+
+func historyState(t *testing.T, path, segment string) (string, Report) {
+	t.Helper()
+	rep, err := Verify(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range rep.History {
+		if h.Segment == filepath.Base(segment) {
+			return h.State, rep
+		}
+	}
+	return "", rep
+}
+
+// TestALineAddedToASegmentAfterRotationIsABreak.
+//
+// Found by review. A segment is never written to again once it is rotated, and the
+// first version reported one with lines added after its last seal as intact, because
+// intact ignored unsealed lines. Anybody could append a fabricated decision to an old
+// segment without touching a chain.
+func TestALineAddedToASegmentAfterRotationIsABreak(t *testing.T) {
+	path := logWith(t, 2)
+	seg := mustRotate(t, path, at, 0).Segment
+	appendLine(t, seg, `{"fabricated":"decision"}`)
+	state, rep := historyState(t, path, seg)
+	if state != "broken" || rep.Intact() {
+		t.Fatalf("a segment that grew after rotation is %q, intact %v", state, rep.Intact())
+	}
+}
+
+// TestAChainThatLoopsEnds. Found by review: two chains naming each other made verify run
+// for ever.
+func TestAChainThatLoopsEnds(t *testing.T) {
+	path := logWith(t, 1)
+	older := mustRotate(t, path, at, 0).Segment
+	appendLine(t, path, `{"b":1}`)
+	newer := mustRotate(t, path, at.Add(time.Hour), 0).Segment
+	// Make the older segment's chain claim to follow the newer one.
+	chain := lines(t, ChainPath(older))
+	first := strings.Replace(chain[0], `{"sealedAt"`, `{"follows":"`+filepath.Base(newer)+`","prev":"sha256:x","sealedAt"`, 1)
+	if err := os.WriteFile(ChainPath(older), []byte(strings.Join(append([]string{first}, chain[1:]...), "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan Report, 1)
+	go func() { rep, _ := Verify(path); done <- rep }()
+	select {
+	case rep := <-done:
+		if rep.Intact() {
+			t.Error("a looping history verified")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("verify did not finish on a looping history")
+	}
+}
+
+// TestADeletionIsNotPresentedAsRetention.
+//
+// Found by review. "Pruned" was inferred from a missing file, so deleting a segment's
+// records a minute after rotation was reported exactly like retention a month later.
+// Pruning now records itself in the segment's chain; a gap without that record, or with
+// one claiming a retention period that had not elapsed, is a deletion.
+func TestADeletionIsNotPresentedAsRetention(t *testing.T) {
+	path := logWith(t, 2)
+	seg := mustRotate(t, path, at, 0).Segment
+	if err := os.Remove(seg); err != nil {
+		t.Fatal(err)
+	}
+	if state, rep := historyState(t, path, seg); state != "deleted" || rep.Intact() {
+		t.Fatalf("a deleted segment is %q, intact %v", state, rep.Intact())
+	}
+
+	// A tombstone forged after the fact, claiming a month's retention an hour in.
+	last, _ := ReadSeals(ChainPath(seg))
+	if err := appendTombstone(seg, last[len(last)-1], at.Add(time.Hour), 720*time.Hour, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if state, _ := historyState(t, path, seg); state != "deleted" {
+		t.Errorf("a tombstone claiming retention that had not elapsed was accepted: %q", state)
+	}
+}
+
+// TestAFollowsThatLeavesTheDirectoryIsABreak. Found by review: the name was joined to
+// the directory unchecked, so "../" pointed verify at files elsewhere.
+func TestAFollowsThatLeavesTheDirectoryIsABreak(t *testing.T) {
+	path := logWith(t, 1)
+	mustRotate(t, path, at, 0)
+	chain := lines(t, ChainPath(path))[0]
+	forged := strings.Replace(chain, `"follows":"decisions-`, `"follows":"../decisions-`, 1)
+	if forged == chain {
+		t.Fatal("test setup: no follows to forge")
+	}
+	if err := os.WriteFile(ChainPath(path), []byte(forged+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Verify(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Intact() || len(rep.History) != 0 {
+		t.Fatalf("a follows outside the directory was followed: %+v", rep)
+	}
+}
+
+// TestRemovingTheFirstSealIsABreak. Found by review: nothing checked a chain's first
+// entry, so deleting it went unnoticed - and after rotation that also cut the link to
+// every earlier segment.
+func TestRemovingTheFirstSealIsABreak(t *testing.T) {
+	path := logWith(t, 2)
+	if _, err := Add(path, at, "test"); err != nil {
+		t.Fatal(err)
+	}
+	appendLine(t, path, `{"c":1}`)
+	if _, err := Add(path, at.Add(time.Hour), "test"); err != nil {
+		t.Fatal(err)
+	}
+	chain := lines(t, ChainPath(path))
+	if err := os.WriteFile(ChainPath(path), []byte(chain[1]+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := Verify(path); err != nil || rep.Intact() {
+		t.Fatalf("a chain with its first seal removed verified: %+v %v", rep, err)
+	}
+}

@@ -92,6 +92,12 @@ type Seal struct {
 	// rotated log only. Prev on that seal is the hash of the segment's last seal, so
 	// the chains of every segment are one chain. See rotate.go.
 	Follows string `json:"follows,omitempty"`
+	// Pruned marks the tombstone retention appends to a segment's chain when it
+	// removes the segment's records, and Keep is the retention period it did so
+	// under. Found by review: without it, a segment deleted a minute after rotation
+	// was reported exactly as one removed on schedule a month later.
+	Pruned bool   `json:"pruned,omitempty"`
+	Keep   string `json:"keep,omitempty"`
 }
 
 // ChainPath returns the sidecar path for a log.
@@ -379,6 +385,20 @@ func verifyOne(logPath string) (Report, error) {
 	if len(seals) == 0 {
 		rep.Unsealed = lines
 		return rep, nil
+	}
+
+	// A first seal that names a predecessor, and is not the first seal of a rotated
+	// log, had one: a seal has been removed from the start of the chain. Found by
+	// review. Nothing checked the first entry, so deleting it went unnoticed, and
+	// once rotation existed that also silently cut the link to every earlier segment.
+	if seals[0].Prev != "" && seals[0].Follows == "" {
+		rep.Breaks = append(rep.Breaks, Break{
+			FromLine: 0,
+			ToLine:   seals[0].Lines,
+			SealedAt: seals[0].SealedAt,
+			Detail: "the first seal names a predecessor that is not in the chain: a seal " +
+				"has been removed from its start",
+		})
 	}
 
 	// The sidecar's own chain first. A seal that does not name its predecessor
