@@ -1,0 +1,36 @@
+{{- /*
+The dashboard, as a ConfigMap for Grafana's dashboard sidecar to load. The JSON is the
+same file the compose stack provisions - a test requires the two to be identical - so the
+chart and the quickstart cannot drift into showing different things.
+*/ -}}
+{{- if .Values.grafanaDashboard.enabled }}
+{{- if not .Values.collector.metrics.enabled }}
+{{- fail `reeve-collector: grafanaDashboard.enabled is true but collector.metrics.enabled is false.
+
+Every panel queries the collector's own metrics. With them switched off the dashboard
+loads, draws nothing, and an empty dashboard about consumption looks like a quiet week.` }}
+{{- end }}
+{{- if not .Values.grafanaDashboard.labels }}
+{{- fail `reeve-collector: grafanaDashboard.enabled is true but grafanaDashboard.labels is empty.
+
+Grafana's sidecar finds dashboards by label. Without one this is a ConfigMap nothing
+loads, and the absence of a dashboard is easy to mistake for a dashboard nobody opened.` }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "reeve-collector.fullname" . }}-dashboard
+  {{- with .Values.grafanaDashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "reeve-collector.labels" . | nindent 4 }}
+    {{- toYaml .Values.grafanaDashboard.labels | nindent 4 }}
+  {{- with .Values.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  reeve.json: |-
+{{ .Files.Get "dashboards/reeve.json" | indent 4 }}
+{{- end }}
