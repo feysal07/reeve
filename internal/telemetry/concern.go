@@ -68,12 +68,20 @@ const (
 	// is a delay with a confirmation dialog, and the habit it teaches - approve without
 	// reading - is the one that lets through the time it mattered.
 	ConcernRubberStamp = "ask.rubber-stamp"
+	// ConcernQuiet: the agent's telemetry says tools ran in a session the guard did
+	// not decide - never, or not after some point.
+	//
+	// The one doctor cannot see. A hook that fired for a week and then stopped leaves a
+	// decision log that ends, and a log that ends reads exactly like a developer who
+	// went home.
+	ConcernQuiet = "guard.quiet"
 )
 
 // AllConcerns is every identifier, for --fail-on any and for validating input.
 var AllConcerns = []string{
 	ConcernOverSeat, ConcernOverTotal, ConcernPace, ConcernUndeclared,
 	ConcernSilent, ConcernUnpriced, ConcernUnmatched, ConcernUnattributed, ConcernRubberStamp,
+	ConcernQuiet,
 }
 
 // Concerns lists what in this report is worth failing a build over.
@@ -150,6 +158,22 @@ func (r Report) Concerns() []Concern {
 			}
 		}
 	}
+	if q := r.Quiet; q != nil {
+		if n := len(q.Unguarded); n > 0 {
+			s := q.Unguarded[0]
+			out = append(out, Concern{ConcernQuiet, s.Agent, fmt.Sprintf("%d session(s) where tools "+
+				"ran and the guard recorded no decision at all, the latest %s with %d tool events on %s. "+
+				"The hook was not running for them: check the agent's settings still register it, "+
+				"and run reeve doctor", n, shortID(s.SessionID), s.Tools, s.LastTool.Format("2006-01-02 15:04"))})
+		}
+		if n := len(q.Stopped); n > 0 {
+			s := q.Stopped[0]
+			out = append(out, Concern{ConcernQuiet, s.Agent, fmt.Sprintf("%d session(s) where the guard "+
+				"stopped recording while tools went on running, the latest %s: last decision %s, then %d "+
+				"tool events until %s. Something removed or bypassed the hook mid-session",
+				n, shortID(s.SessionID), s.LastDecision.Format("15:04"), s.Tools, s.LastTool.Format("15:04"))})
+		}
+	}
 	if n := r.Overall.UnpricedRequests; n > 0 {
 		out = append(out, Concern{ConcernUnpriced, "", fmt.Sprintf(
 			"%d request(s) used a model with no entry in the price table, so their "+
@@ -163,6 +187,14 @@ func (r Report) Concerns() []Concern {
 		return out[i].Agent < out[j].Agent
 	})
 	return out
+}
+
+// shortID is enough of a session id to find it with reeve session.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // humanCount renders an amount in its own unit. Tokens run to the millions and want
