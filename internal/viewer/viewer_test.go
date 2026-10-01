@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/feysal07/reeve/internal/mcp"
+	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
 	"github.com/feysal07/reeve/internal/replay"
 	"github.com/feysal07/reeve/internal/session"
@@ -77,7 +79,7 @@ func TestTheViewerListensOnThisMachineOnly(t *testing.T) {
 // name it controls at 127.0.0.1, and its scripts read the answers as same-origin. The Host
 // header is the one thing that gives it away.
 func TestARequestForAnotherHostIsRefused(t *testing.T) {
-	h := Handler(fixture(), token)
+	h := Handler(fixture(), nil, token)
 	for _, host := range []string{"attacker.example:7777", "attacker.example", "10.0.0.5:7777",
 		"[localhost]", "]]localhost[[", "[127.0.0.1]:7777"} {
 		if r := get(t, h, host, "/api/sessions", token); r.StatusCode != http.StatusMisdirectedRequest {
@@ -97,13 +99,13 @@ func TestARequestForAnotherHostIsRefused(t *testing.T) {
 // TestDataNeedsTheToken. Another account on a shared machine reaches a loopback port as
 // easily as the owner; it cannot read the owner's terminal, where the token was printed.
 func TestDataNeedsTheToken(t *testing.T) {
-	h := Handler(fixture(), token)
+	h := Handler(fixture(), nil, token)
 	for _, tok := range []string{"", "wrong", token[:31]} {
 		if r := get(t, h, "127.0.0.1:1", "/api/sessions", tok); r.StatusCode != http.StatusUnauthorized {
 			t.Errorf("token %q: status %d, want 401", tok, r.StatusCode)
 		}
 	}
-	if r := get(t, Handler(fixture(), ""), "127.0.0.1:1", "/api/sessions", ""); r.StatusCode != http.StatusUnauthorized {
+	if r := get(t, Handler(fixture(), nil, ""), "127.0.0.1:1", "/api/sessions", ""); r.StatusCode != http.StatusUnauthorized {
 		t.Error("an empty server token let an empty request through")
 	}
 
@@ -126,7 +128,7 @@ func TestDataNeedsTheToken(t *testing.T) {
 // TestThePageHoldsNoData. It is served without the token, so it must carry nothing but
 // the code that asks for data with one.
 func TestThePageHoldsNoData(t *testing.T) {
-	r := get(t, Handler(fixture(), token), "127.0.0.1:1", "/", "")
+	r := get(t, Handler(fixture(), nil, token), "127.0.0.1:1", "/", "")
 	body, _ := io.ReadAll(r.Body)
 	if r.StatusCode != http.StatusOK || strings.Contains(string(body), "rm -rf") {
 		t.Errorf("page: %d, carries data: %v", r.StatusCode, strings.Contains(string(body), "rm -rf"))
@@ -135,7 +137,7 @@ func TestThePageHoldsNoData(t *testing.T) {
 
 // TestEveryResponseCarriesTheProtectiveHeaders, the error ones included.
 func TestEveryResponseCarriesTheProtectiveHeaders(t *testing.T) {
-	h := Handler(fixture(), token)
+	h := Handler(fixture(), nil, token)
 	for _, tc := range []struct{ host, path, tok string }{
 		{"127.0.0.1:1", "/", ""}, {"127.0.0.1:1", "/api/sessions", token},
 		{"127.0.0.1:1", "/api/sessions", ""}, {"attacker.example", "/", ""},
@@ -176,5 +178,87 @@ func TestThePageNeverParsesRecordsAsMarkup(t *testing.T) {
 	html, _ := os.ReadFile("assets/index.html")
 	if regexp.MustCompile(`<script>`).Match(html) || regexp.MustCompile(`\son[a-z]+=`).Match(html) {
 		t.Error("index.html carries inline script, which the policy forbids")
+	}
+}
+
+func mcpFixture() MCPLoader {
+	return func() (MCPView, error) {
+		reg := &mcp.Registry{Servers: []mcp.Entry{{Name: "kubernetes", Command: []string{"npx", "-y", "kubernetes-mcp-server"}, Status: mcp.StatusApproved}}}
+		observed := []mcp.Observed{
+			{Server: model.MCPServer{Name: "kubernetes", Command: "npx", Args: []string{"-y", "kubernetes-mcp-server"}}, Agent: "claude-code"},
+			{Server: model.MCPServer{Name: "kubernetes", Command: "node", Args: []string{"evil.js"}}, Agent: "cursor"},
+		}
+		return MCPView{Registry: "mcp-registry.yaml", Report: mcp.Reconcile(reg, observed)}, nil
+	}
+}
+
+// TestTheMCPPageShowsEachServerAgainstTheApprovedList. The approved server reads as
+// approved; the one using its name to run something else reads as the mismatch it is.
+func TestTheMCPPageShowsEachServerAgainstTheApprovedList(t *testing.T) {
+	r := get(t, Handler(fixture(), mcpFixture(), token), "127.0.0.1:1", "/api/mcp", token)
+	var doc struct {
+		MCP MCPView `json:"mcp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, %v", r.StatusCode, err)
+	}
+	verdicts := map[model.AgentID]mcp.Verdict{}
+	for _, res := range doc.MCP.Report.Results {
+		verdicts[res.Agent] = res.Verdict
+	}
+	if verdicts["claude-code"] != mcp.VerdictApproved || verdicts["cursor"] != mcp.VerdictMismatch {
+		t.Errorf("verdicts = %v", verdicts)
+	}
+	if doc.MCP.Registry != "mcp-registry.yaml" {
+		t.Errorf("registry = %q", doc.MCP.Registry)
+	}
+}
+
+// TestTheMCPInventoryIsGuardedLikeEverythingElse: it needs the token, and a viewer with
+// no inventory says so rather than showing an empty one, which would read as a machine
+// with no servers.
+func TestTheMCPInventoryIsGuardedLikeEverythingElse(t *testing.T) {
+	if r := get(t, Handler(fixture(), mcpFixture(), token), "127.0.0.1:1", "/api/mcp", ""); r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("no token: %d", r.StatusCode)
+	}
+	r := get(t, Handler(fixture(), nil, token), "127.0.0.1:1", "/api/mcp", token)
+	body, _ := io.ReadAll(r.Body)
+	if r.StatusCode == http.StatusOK || !strings.Contains(string(body), "not available") {
+		t.Errorf("no loader: %d %s", r.StatusCode, body)
+	}
+}
+
+// TestTheMCPPageHasNoWayToChangeAnything. Approving a server is a change to the registry
+// file, reviewed where that file is reviewed; an approval workflow is the paid tier's.
+// A button here would be a second, unreviewed way to change what agents may reach.
+func TestTheMCPPageHasNoWayToChangeAnything(t *testing.T) {
+	page, err := os.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(page)
+	start := strings.Index(s, `<section id="mcp-view"`)
+	end := strings.Index(s[start:], "</section>")
+	if start < 0 || end < 0 {
+		t.Fatal("no MCP section in the page")
+	}
+	section := strings.ToLower(s[start : start+end])
+	for _, control := range []string{"<form", "<button", "<input", "<select", "<textarea", "contenteditable"} {
+		if strings.Contains(section, control) {
+			t.Errorf("the MCP section holds %s", control)
+		}
+	}
+	js, _ := os.ReadFile("assets/app.js")
+	if strings.Contains(string(js), "method:") {
+		t.Error("the page script sends something other than a GET")
+	}
+	h := Handler(fixture(), mcpFixture(), token)
+	req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader("{}"))
+	req.Host = "127.0.0.1:1"
+	req.Header.Set("X-Reeve-Token", token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /api/mcp: %d", w.Code)
 	}
 }
