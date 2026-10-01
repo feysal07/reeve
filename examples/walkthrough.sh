@@ -1654,6 +1654,12 @@ case "$DOCTOR_OUT" in
     *"answers in"*) check "doctor proves the registered hook actually answers" 1 ;;
     *) check "doctor proves the registered hook actually answers" 0 "$DOCTOR_OUT" ;;
 esac
+# Answering is not refusing: a reply the agent parses and finds no decision in lets
+# the tool run. The probe removes dry run and reads the reply as the agent would.
+case "$DOCTOR_OUT" in
+    *"refuses in the shape Claude Code reads"*) check "doctor proves a refusal reaches the agent as one" 1 ;;
+    *) check "doctor proves a refusal reaches the agent as one" 0 "$DOCTOR_OUT" ;;
+esac
 
 # The probe runs the real guard, so it must not write a synthetic action into
 # the record of what an agent actually attempted.
