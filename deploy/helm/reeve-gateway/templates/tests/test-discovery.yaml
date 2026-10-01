@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "reeve-gateway.fullname" . }}-test"
+  labels:
+    {{- include "reeve-gateway.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: discovery
+      image: curlimages/curl:8.10.1
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      # /readyz says the store answers; the discovery document says the whole boot
+      # succeeded, OIDC discovery and migrations included.
+      args:
+        - -sf
+        - http://{{ include "reeve-gateway.fullname" . }}:{{ .Values.service.port }}/.well-known/oauth-authorization-server

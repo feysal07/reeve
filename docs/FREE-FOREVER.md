@@ -29,15 +29,18 @@ list. **Planned** means it has not been written yet; it does not soften the prom
   Helm chart, dashboards are *planned*.
 - **The audit store.** The event and decision record, retained for as long as you
   configure and no less. Reeve will never shorten what the free edition keeps, or gate
-  reading back what it has already written. A viewer for it is *planned*.
+  reading back what it has already written, including rotation with tamper-evident
+  retention. It is read back with `reeve sessions`, `reeve session` and `reeve view`.
 - **The MCP inventory and allow-lists.** What each agent is connected to, and the
   administrator-owned lists that restrict it. A registry with its own interface is
   *planned*.
 - **Single sign-on.** OIDC login and group-based policy, against any compliant identity
   provider. Authentication is not a premium feature. It was the most expensive promise
   on this page, and the reason for making it in writing rather than deciding later under
-  revenue pressure. `reeve login` ships in v0.6.0; group-based policy follows it.
-- **Deployment.** Container images and Helm charts for everything above.
+  revenue pressure. `reeve login` and group-based policy ship in v0.6.0.
+- **Deployment.** Container images and Helm charts for everything above, including the
+  module that runs the Claude apps gateway behind your identity provider
+  (`deploy/helm/reeve-gateway`).
 
 ## What is intended to be paid
 

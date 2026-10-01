@@ -1,0 +1,24 @@
+apiVersion: v2
+name: reeve-gateway
+description: >-
+  Runs the Claude apps gateway on Kubernetes, behind your identity provider, with its
+  telemetry relayed to the Reeve collector. Optional; for organisations that want Claude
+  Code's model traffic to pass through a gateway they operate.
+type: application
+
+# Versioned independently of Reeve and of the gateway. The gateway's version is the
+# binary you build into your image; see image/Dockerfile.
+version: 0.1.0
+appVersion: "0.1.0"
+
+home: https://github.com/feysal07/reeve
+sources:
+  - https://github.com/feysal07/reeve
+keywords:
+  - ai-agents
+  - governance
+  - oidc
+  - gateway
+maintainers:
+  - name: Feysal Rujbally
+    url: https://github.com/feysal07

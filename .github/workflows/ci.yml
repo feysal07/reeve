@@ -202,6 +202,78 @@ jobs:
             -v "$PWD/rules.yaml:/rules.yaml" \
             prom/prometheus:latest check rules /rules.yaml
 
+  gateway-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.0
+
+      - name: Lint
+        run: helm lint --strict deploy/helm/reeve-gateway -f deploy/helm/reeve-gateway/ci/complete-values.yaml
+
+      - name: Render every supported shape
+        run: |
+          set -eu
+          chart=deploy/helm/reeve-gateway
+          base="-f $chart/ci/complete-values.yaml"
+          render() {
+            echo "  rendering: $*"
+            helm template t "$chart" $base "$@" > /dev/null
+          }
+          render
+          render --set image.digest= --set image.tag=2.1.290
+          render --set reeveCollector.url=https://reeve.corp.example
+          render --set replicaCount=1
+          render --set networkPolicy.enabled=true \
+                 --set 'networkPolicy.ingressFrom[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=ingress-nginx' \
+                 --set 'networkPolicy.egressTo[0].to[0].ipBlock.cidr=10.0.0.0/8' \
+                 --set 'networkPolicy.egressTo[0].ports[0].port=443'
+          # The collector really is added to telemetry.forward_to, not merely accepted.
+          helm template t "$chart" $base --set reeveCollector.url=https://reeve.corp.example \
+            --show-only templates/configmap.yaml | grep -q 'url: https://reeve.corp.example'
+          # A secret reference reaches gateway.yaml as a reference, never resolved.
+          helm template t "$chart" $base --show-only templates/configmap.yaml | grep -q 'api_key: ${ANTHROPIC_API_KEY}'
+
+      # Each refusal is a configuration that would deploy and then be wrong in a way
+      # nothing reports. One that stops refusing is a silent regression.
+      - name: Refuse what would be quietly wrong
+        run: |
+          set -eu
+          chart=deploy/helm/reeve-gateway
+          base="-f $chart/ci/complete-values.yaml"
+          refuses() {
+            desc="$1"; shift
+            if helm template t "$chart" $base "$@" > /dev/null 2>&1; then
+              echo "REGRESSION: the chart accepted $desc"
+              exit 1
+            fi
+            echo "  refused: $desc"
+          }
+          refuses "the defaults alone"  --set image.repository=
+          refuses "no image pin"        --set image.digest= --set image.tag=
+          refuses "image tag latest"    --set image.digest= --set image.tag=latest
+          refuses "no Secret"           --set existingSecret=
+          refuses "a literal API key"   --set 'gateway.upstreams[0].auth.api_key=sk-ant-literal'
+          refuses "a literal client secret" --set gateway.oidc.client_secret=literal
+          refuses "a literal JWT secret" --set gateway.session.jwt_secret=literal
+          refuses "a password in the database URL" \
+            --set gateway.store.postgres_url=postgres://u:p@db:5432/g
+          refuses "a plain-HTTP public URL" --set gateway.listen.public_url=http://claude-gateway.corp.example
+          refuses "a public URL that is not the Ingress host" \
+            --set gateway.listen.public_url=https://elsewhere.corp.example
+          refuses "no trusted proxies"  --set 'gateway.listen.trusted_proxies=null'
+          refuses "no upstream"         --set 'gateway.upstreams=null'
+          refuses "an Ingress without TLS" --set ingress.tlsSecretName=
+          refuses "a redirecting Ingress annotation" \
+            --set 'ingress.annotations.nginx\.ingress\.kubernetes\.io/ssl-redirect=true'
+          refuses "a plain-HTTP collector" --set reeveCollector.url=http://reeve-collector:4318
+          refuses "a network policy admitting nobody" --set networkPolicy.enabled=true \
+            --set 'networkPolicy.egressTo[0].to[0].ipBlock.cidr=10.0.0.0/8'
+          refuses "a network policy allowing nowhere" --set networkPolicy.enabled=true \
+            --set 'networkPolicy.ingressFrom[0].podSelector.matchLabels.app=ingress'
+
   image:
     runs-on: ubuntu-latest
     steps:
