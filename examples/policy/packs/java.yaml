@@ -16,8 +16,12 @@ rules:
     decision: ask
     reason: >-
       A changeset that has run anywhere is part of that database's history. Editing
-      it breaks checksum validation on the next deployment. Add a new changeset
-      instead, unless this one has never left your machine.
+      it breaks checksum validation on the next deployment. Appending a new changeset
+      to the end of the file is fine; changing one that has already run is not.
+    # Still asks on every edit to these files, because whether an edit appends a new
+    # changeset or changes an old one is not visible from the action. Measured on a
+    # tester's five days of real work: five asks, all edits to the cumulative
+    # release changelog, which is the file where both happen.
     match:
       kind: [write]
       path:
@@ -43,10 +47,25 @@ rules:
     description: Building without running the tests or checks
     decision: ask
     reason: >-
-      This builds without the tests or checks that would have caught the problem.
-      Fine for a quick local compile; not for anything that gets committed.
+      This builds an artefact without the tests or checks that would have caught the
+      problem. Fine for a quick local compile; not for anything that gets installed,
+      published or committed.
+    # Only with a goal that produces, installs, publishes or deploys something.
+    # Measured on a tester's five days of real work: the flag alone would have asked
+    # twenty-three times, and fourteen of those were compile or test-compile, which run
+    # no tests whatever the flag says. A prompt on those is noise, and noise gets a
+    # rule removed. The leading spaces keep a directory such as build-tools from
+    # counting as a goal.
     match:
       kind: [shell]
+      commandContains: &artefact-goals
+        - " install"
+        - " package"
+        - " verify"
+        - " deploy"
+        - " publish"
+        - " build"
+        - " check"
       commandRuns:
         - "-DskipTests"
         - "-Dmaven.test.skip"
@@ -67,6 +86,7 @@ rules:
       quick local compile; not for anything that gets committed.
     match:
       kind: [shell]
+      commandContains: *artefact-goals
       command:
         - "*gradle*-x test"
         - "*gradlew*-x test"
