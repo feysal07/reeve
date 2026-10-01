@@ -121,6 +121,9 @@ func printCoverage(res compile.Result) {
 	if s.Unenforceable > 0 {
 		fmt.Printf(", %d NOT ENFORCED ANYWHERE", s.Unenforceable)
 	}
+	if s.Observe > 0 {
+		fmt.Printf(", %d observed only", s.Observe)
+	}
 	fmt.Print("\n\n")
 
 	for _, c := range res.Coverage {

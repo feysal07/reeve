@@ -426,6 +426,32 @@ type Decision struct {
 	// can be reproduced later.
 	PolicyName    string `json:"policyName,omitempty"`
 	PolicyVersion string `json:"policyVersion,omitempty"`
+
+	// Observed is what a rule in observe mode would have decided, when that is
+	// stricter than Effect. It is never applied. Nil when no observe rule would have
+	// changed anything.
+	Observed *Verdict `json:"observed,omitempty"`
+}
+
+// Verdict is a decision a rule reached, apart from whether it was applied.
+type Verdict struct {
+	Effect Effect `json:"effect"`
+	RuleID string `json:"ruleId,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// Strictest is what the whole policy decided, observe rules included, as though every
+// rule were enforced.
+//
+// This is the reading for anything that asks what the rules do rather than what the
+// agent was told: a cases file, a replay, a decision log line. A rule is observed so
+// that its verdict can be seen, and a check that only saw the applied effect would
+// pass whatever the rule did.
+func (d Decision) Strictest() Verdict {
+	if d.Observed != nil {
+		return *d.Observed
+	}
+	return Verdict{Effect: d.Effect, RuleID: d.RuleID, Reason: d.Reason}
 }
 
 // now is the clock this action is decided against.

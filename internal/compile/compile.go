@@ -50,6 +50,14 @@ const (
 	// and nothing complains, which is the most convincing way for a control to be
 	// absent.
 	StatusUnenforceable Status = "unenforceable"
+	// StatusObserve means the rule is in observe mode, so nothing enforces it by
+	// design: the guard records what it would have decided and applies nothing.
+	//
+	// Emitting it natively would be the worst outcome available here. Managed
+	// configuration has no observe mode, so a rule the operator is still measuring
+	// would start refusing people on every machine the file reached, including the
+	// ones where the guard is not installed to record why.
+	StatusObserve Status = "observe"
 )
 
 // Coverage records what happened to one rule, and why.
@@ -170,7 +178,7 @@ var effectRank = map[policy.Effect]int{
 // ones an operator most needs to look at.
 func sortCoverage(c []Coverage) {
 	statusRank := map[Status]int{
-		StatusUnenforceable: -1, StatusGuardOnly: 0, StatusPartial: 1, StatusNative: 2,
+		StatusUnenforceable: -1, StatusGuardOnly: 0, StatusPartial: 1, StatusNative: 2, StatusObserve: 3,
 	}
 	sort.SliceStable(c, func(i, j int) bool {
 		if statusRank[c[i].Status] != statusRank[c[j].Status] {
@@ -178,6 +186,19 @@ func sortCoverage(c []Coverage) {
 		}
 		return effectRank[c[i].Decision] < effectRank[c[j].Decision]
 	})
+}
+
+// observeCoverage is the entry every compiler returns for a rule in observe mode.
+func observeCoverage(r policy.Rule) Coverage {
+	return Coverage{
+		RuleID:   r.ID,
+		Decision: r.Decision,
+		Status:   StatusObserve,
+		Reason: "This rule is in observe mode, so nothing is emitted: this agent's " +
+			"configuration has no way to record a decision without applying it. The " +
+			"guard records what the rule would have decided and lets the action " +
+			"through. Remove mode: observe to enforce it.",
+	}
 }
 
 // guardOnly builds a coverage record for a rule nothing native can express.
@@ -196,6 +217,9 @@ type Summary struct {
 	Partial       int
 	GuardOnly     int
 	Unenforceable int
+	// Observe counts rules in observe mode. They are not a gap: nothing enforcing
+	// them is what the operator asked for.
+	Observe int
 }
 
 // Summarise counts a coverage list.
@@ -211,6 +235,8 @@ func Summarise(c []Coverage) Summary {
 			s.GuardOnly++
 		case StatusUnenforceable:
 			s.Unenforceable++
+		case StatusObserve:
+			s.Observe++
 		}
 	}
 	return s

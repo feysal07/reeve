@@ -152,7 +152,11 @@ func runSession(args []string) error {
 	fmt.Printf("  who       : %s\n", who)
 	fmt.Printf("  from      : %s\n", s.Start.Local().Format(time.RFC3339))
 	fmt.Printf("  to        : %s  (%s)\n", s.End.Local().Format(time.RFC3339), s.End.Sub(s.Start).Round(time.Second))
-	fmt.Printf("  decisions : %d  (%d denied, %d asked)\n", s.Decisions, s.Denied, s.Asked)
+	fmt.Printf("  decisions : %d  (%d denied, %d asked", s.Decisions, s.Denied, s.Asked)
+	if s.NotApplied > 0 {
+		fmt.Printf(", %d recorded and not applied", s.NotApplied)
+	}
+	fmt.Println(")")
 	fmt.Printf("  requests  : %d, %s tokens, $%.2f equivalent\n", s.Requests, shortCount(s.Tokens), s.CostUSD)
 	if p := s.Partial(); p != "" {
 		fmt.Printf("\n  %s\n", wrap("Partial: "+p+".", 74, "  "))
@@ -172,16 +176,9 @@ func runSession(args []string) error {
 			day = d
 			fmt.Printf("  %s\n", d)
 		}
-		mark := "      "
-		switch {
-		case e.Source == session.SourceGuard && e.Effect == "deny" && e.DryRun:
-			mark = "WOULD "
-		case e.Source == session.SourceGuard && e.Effect == "deny":
-			mark = "DENY  "
-		case e.Source == session.SourceGuard && e.Effect == "ask":
-			mark = "ASK   "
-		case e.Source == session.SourceGuard:
-			mark = "allow "
+		mark := ""
+		if e.Source == session.SourceGuard {
+			mark = rulingMark(e)
 		}
 		detail := e.Summary
 		if e.Source == session.SourceTelemetry && e.Tokens > 0 {
@@ -190,16 +187,41 @@ func runSession(args []string) error {
 		// One line per entry, whatever the command held: found on a real log, a
 		// multi-line command spilled into the rows below it.
 		detail = strings.Join(strings.Fields(detail), " ")
-		fmt.Printf("  %s %-9s %s %-11s %s\n", e.Time.Local().Format("15:04:05"), e.Source, mark, e.Kind, short(detail, 90))
+		fmt.Printf("  %s %-9s %-10s %-11s %s\n", e.Time.Local().Format("15:04:05"), e.Source, mark, e.Kind, short(detail, 90))
 		if e.RuleID != "" {
 			fmt.Printf("  %s rule %s\n", strings.Repeat(" ", 30), e.RuleID)
+		}
+		if e.Observed != "" {
+			fmt.Printf("  %s would %s by rule %s, in observe mode\n", strings.Repeat(" ", 30), e.Observed, e.ObservedRule)
 		}
 	}
 	if hidden > 0 {
 		fmt.Printf("\n  %d allowed or telemetry entries hidden by --stopped.\n", hidden)
 	}
+	if s.NotApplied > 0 {
+		fmt.Printf("\n  %s\n", wrap("Rulings marked \"would\" were recorded and not applied: the guard ran in "+
+			"dry run, or the rule is in observe mode. They stopped and asked nobody.", 74, "  "))
+	}
 	printSessionNotes(loaded.Notes, 0)
 	return nil
+}
+
+// rulingMark is how a guard entry reads in the timeline.
+//
+// A ruling that was not applied reads "would", never as the ruling itself. Found on the
+// first real installation: in dry run every ask was printed ASK, and the person reading
+// the timeline asked whether the guard had been interrupting them all week. It had not
+// interrupted anybody once.
+func rulingMark(e session.Entry) string {
+	switch {
+	case e.DryRun && e.Effect != "allow":
+		return "would " + e.Effect
+	case e.Effect == "deny":
+		return "DENY"
+	case e.Effect == "ask":
+		return "ASK"
+	}
+	return "allow"
 }
 
 func printSessionNotes(notes []string, unplaced int) {

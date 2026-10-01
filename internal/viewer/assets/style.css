@@ -40,6 +40,8 @@ dd { margin: 0; }
 .entry .time, .entry .kind { color: var(--muted); font-variant-numeric: tabular-nums; }
 .entry.deny .mark { color: var(--deny); font-weight: 600; }
 .entry.ask .mark { color: var(--ask); font-weight: 600; }
+.entry.unapplied { background: none; }
+.entry.unapplied .mark { font-weight: 400; font-style: italic; }
 .entry .summary { overflow-wrap: anywhere; font-size: .85rem; }
 .entry .rule, .entry .reason { grid-column: 4; color: var(--muted); font-size: .85rem; }
 @media (max-width: 640px) {

@@ -323,3 +323,51 @@ func TestOnlyAVerifiedLineCountsInReplayedHistory(t *testing.T) {
 		t.Errorf("allowed = %d, want 1: asserted history was counted", last)
 	}
 }
+
+// TestACandidateObservingARuleReplaysItsVerdict. Replay is how a rule is tuned before it
+// is enforced, and observe mode is how it is measured; replaying an observed rule as
+// though it were absent would make the two tools disagree about the same rule. Its
+// verdicts are counted apart, because none of them would interrupt anybody.
+func TestACandidateObservingARuleReplaysItsVerdict(t *testing.T) {
+	records := []Record{shell("terraform destroy -auto-approve", policy.EffectAllow, "", base)}
+	r := Run(parse(t, `
+version: 1
+rules:
+  - id: measured
+    mode: observe
+    decision: deny
+    match: {kind: [shell], commandRuns: ["terraform destroy"]}
+`), records, Options{})
+	if len(r.Stricter) != 1 || r.Stricter[0].NowRule != "measured" {
+		t.Fatalf("stricter = %+v, want the observed deny", r.Stricter)
+	}
+	if r.ObservedNow != 1 {
+		t.Errorf("observedNow = %d, want 1", r.ObservedNow)
+	}
+}
+
+// TestALineWithAnObservedVerdictReplaysAgainstThatVerdict. The line says an enforced ask
+// was applied and an observe rule would have denied. Replayed against the same policy it
+// must show no change: comparing the candidate's verdict with the applied ask would
+// report every such line as made stricter by a policy that has not changed.
+func TestALineWithAnObservedVerdictReplaysAgainstThatVerdict(t *testing.T) {
+	rec := shell("git push --force origin main", policy.EffectAsk, "proven", base)
+	rec.Observed = &policy.Verdict{Effect: policy.EffectDeny, RuleID: "measured"}
+	r := Run(parse(t, `
+version: 1
+rules:
+  - id: proven
+    decision: ask
+    match: {kind: [shell], commandRuns: ["git push"]}
+  - id: measured
+    mode: observe
+    decision: deny
+    match: {kind: [shell], commandRuns: ["--force"]}
+`), []Record{rec}, Options{})
+	if len(r.Stricter)+len(r.Looser) != 0 {
+		t.Errorf("the same policy replayed as a change: stricter %d looser %d", len(r.Stricter), len(r.Looser))
+	}
+	if v := rec.Verdict(); v.Effect != policy.EffectDeny || v.RuleID != "measured" {
+		t.Errorf("verdict = %+v", v)
+	}
+}
