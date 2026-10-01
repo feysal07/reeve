@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
 )
@@ -321,6 +322,14 @@ func runPolicyTest(args []string) error {
 // inferKind guesses the kind from whichever field the operator supplied, so a quick
 // test does not require naming the kind explicitly.
 func inferKind(a policy.Action) policy.Kind {
+	// A tool name decides the kind exactly as it does in the guard. Found in a tester's
+	// log: the guard recorded ToolSearch as a fetch while this command, guessing from
+	// the other flags, called it other - so the command for checking a rule disagreed
+	// with the guard that enforces it. The guessing below is only for an action
+	// described without a tool.
+	if a.ToolName != "" {
+		return hook.Classify(a.ToolName)
+	}
 	switch {
 	case a.MCPServer != "" || a.MCPTool != "":
 		return policy.KindMCP

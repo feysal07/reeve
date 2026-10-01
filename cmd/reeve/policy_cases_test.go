@@ -4,6 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/feysal07/reeve/internal/hook"
+	"github.com/feysal07/reeve/internal/policy"
 )
 
 // TestAFailingCaseFailsTheCommand. A cases run that printed FAIL and exited zero would
@@ -94,5 +97,17 @@ func TestPolicyCheckWarnsAboutAnEnvironmentRuleNoMCPCallCanReach(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(strings.Fields(out), " "), `rule "prod" matches the production environment for shell commands only`) {
 		t.Errorf("a command-only rule was counted as covering MCP:\n%s", out)
+	}
+}
+
+// TestPolicyTestAndTheGuardAgreeOnAToolsKind. Found in a tester's log: the guard called
+// ToolSearch a fetch while policy test called it other, so the command for checking a
+// rule disagreed with the guard that enforces it.
+func TestPolicyTestAndTheGuardAgreeOnAToolsKind(t *testing.T) {
+	for _, tool := range []string{"ToolSearch", "WebSearch", "Bash", "Read", "Edit", "TodoWrite",
+		"mcp__jira__getIssue", "run_shell_command", "SomeNewTool"} {
+		if got, want := inferKind(policy.Action{ToolName: tool}), hook.Classify(tool); got != want {
+			t.Errorf("%s: policy test says %s, the guard says %s", tool, got, want)
+		}
 	}
 }
