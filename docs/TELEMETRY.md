@@ -184,6 +184,7 @@ rather than different severities:
 | `prices.unpriced` | requests on a model with no entry in the price table |
 | `identity.unmatched` | consumption recorded under subjects your team map does not name, even after aliases, which a per-person budget counts none of |
 | `identity.unattributed` | consumption from identities your team map matched nothing about, counted under its default team, which a team budget counts none of |
+| `guard.quiet` | the agent's own telemetry says tools ran in a session the guard decided nothing in, or after it stopped deciding |
 | `ask.rubber-stamp` | an ask rule that asked at least twenty times and was let through at least ninety-five per cent of them |
 
 `--fail-on any` selects all of them. An unrecognised name is an error rather than a
@@ -222,6 +223,32 @@ id on the event.
 With no team map nothing is flagged: there was nothing to have matched. **Events
 collected before this release carry neither flag** and count as matched, so a window that
 spans the upgrade undercounts until those events age out of it.
+
+### When the guard went quiet
+
+A decision log that stops reads, on its own, exactly like a developer who went home.
+`reeve doctor` catches a hook that has never fired; it cannot catch one that fired for a
+week and then stopped - an agent that rewrote its own settings, a second installation
+that shadowed the first, an agent started with hooks disabled. The event store is the
+other witness, so when a report is given both records it compares them:
+
+```
+The guard was not deciding
+  3f2a91c0-7d1e  claude-code   41 tool events, no decision at all, last 2026-10-03 16:12
+  8b04e2aa-11c9  claude-code   last decision 2026-10-04 09:40, then 17 tool events until 11:05
+```
+
+A session is named when the agent reported at least three tool events with no decision
+to account for them - none at all, or none in the ten minutes before them, which allows
+for a long command's result arriving late. `--fail-on guard.quiet` turns it into a gate.
+Sessions that began before the agent's first recorded decision are skipped, because they
+predate the guard rather than escaping it, and so is an agent the guard never decided for
+at all, which the report already marks on the agent's row as measured but not governed.
+
+Only Claude Code, the one agent whose telemetry session id has been seen to be the hook's
+session id - checked on a real machine, where an export's `session.id` was the name of the
+session's transcript and the hook's `session_id` the same. The finding rests entirely on
+that join, and for an agent where it does not hold it would name every session.
 
 ### Whether an ask was answered yes
 

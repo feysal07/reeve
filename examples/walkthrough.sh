@@ -707,6 +707,26 @@ case "$STAMP_OUT" in
     *) check "an ask rule nobody ever refuses is named, and can fail a build" 0 "$STAMP_OUT" ;;
 esac
 
+# The guard went quiet. The agent's own telemetry says tools ran in a session the guard
+# has no record of deciding anything in - a log that stops reads like a developer who
+# went home, and only the other record can tell them apart.
+QUIET_DIR="$SANDBOX/quiet"
+mkdir -p "$QUIET_DIR"
+printf '%s\n' '{"time":"2026-09-30T09:00:00Z","agent":"claude-code","sessionId":"q-guarded","kind":"shell","effect":"allow"}' > "$QUIET_DIR/decisions.jsonl"
+: > "$QUIET_DIR/events.jsonl"
+for m in 10 11 12 13; do
+    printf '{"time":"2026-09-30T10:%s:00Z","kind":"tool_result","agent":"claude-code","sessionId":"q-unguarded","identity":{},"source":"otlp"}\n' $m >> "$QUIET_DIR/events.jsonl"
+done
+QUIET_OUT=$("$REEVE" report --store "$QUIET_DIR/events.jsonl" --decisions "$QUIET_DIR/decisions.jsonl" --fail-on guard.quiet 2>&1)
+QUIET_CODE=$?
+case "$QUIET_OUT" in
+    *"The guard was not deciding"*"q-unguarded"*"guard.quiet"*)
+        [ "$QUIET_CODE" != "0" ] &&
+            check "a session where tools ran and the guard decided nothing is named" 1 ||
+            check "a session where tools ran and the guard decided nothing is named" 0 "the gate passed" ;;
+    *) check "a session where tools ran and the guard decided nothing is named" 0 "$QUIET_OUT" ;;
+esac
+
 step 5 "Enforcement: what happens when Reeve itself is broken"
 note "This is what separates real enforcement from theatre."
 echo
