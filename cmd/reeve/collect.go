@@ -32,6 +32,9 @@ func runCollect(args []string) error {
 	pricesPath := fs.String("prices", "", "price table, for cost computed at your rates rather than list")
 	verbose := fs.Bool("verbose", false, "log every batch received")
 	metricsAddr := fs.String("metrics-addr", "", "serve Prometheus metrics on this address, on its own listener")
+	authMode := fs.String("auth", authNone, "none, oidc (every batch needs a token from your identity provider) or mixed (verify a token when sent)")
+	trustPath := fs.String("trust", "", "identity provider trust configuration, for --auth oidc or mixed")
+	keysPath := fs.String("keys", "", "the identity provider's published key set (JWKS) as a file, for --auth oidc or mixed")
 	retain := fs.Duration("retain", 0, "remove events older than this from the store, at start-up and hourly (for example 720h); zero keeps everything")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -111,8 +114,21 @@ See docs/TELEMETRY.md`)
 	}
 
 	dec := &telemetry.Decoder{Prices: prices}
+	var resolver telemetry.TeamResolver
 	if teams != nil {
 		dec.Teams = teams
+		resolver = teams
+	}
+	auth, err := newCollectorAuth(*authMode, *trustPath, *keysPath, resolver)
+	if err != nil {
+		return err
+	}
+	if *authMode != authNone && !strings.HasPrefix(*addr, "127.0.0.1:") && !strings.HasPrefix(*addr, "localhost:") && !strings.HasPrefix(*addr, "[::1]:") {
+		// The collector speaks plain HTTP. A bearer token is replayable by anybody who
+		// sees it until it expires, so on any address but loopback it needs TLS in front.
+		fmt.Fprintln(os.Stderr,
+			"warning: --auth on a non-loopback address. The collector speaks plain HTTP, and a bearer\n"+
+				"         token can be replayed by anyone who sees it until it expires: terminate TLS in front.")
 	}
 
 	metrics := telemetry.NewMetrics(version, st.Path())
@@ -121,7 +137,7 @@ See docs/TELEMETRY.md`)
 	if prices.Billing.Declared() {
 		metrics.WatchAllowances(prices.Billing)
 	}
-	c := &collector{dec: dec, store: st, verbose: *verbose, metrics: metrics}
+	c := &collector{dec: dec, store: st, verbose: *verbose, metrics: metrics, auth: auth}
 
 	// Metrics get their own listener rather than another route on the OTLP mux.
 	//
@@ -200,6 +216,7 @@ In a container, keep 4318 on the inside and remap it on the outside:
 	fmt.Printf("  teams  : %s\n", orDash(*teamsPath))
 	fmt.Printf("  prices : %s\n", orDash(*pricesPath))
 	fmt.Printf("  metrics: %s\n", orDash(*metricsAddr))
+	fmt.Printf("  auth   : %s\n", authLine(*authMode, *trustPath))
 	fmt.Printf("\nPoint agents at it with OTLP over HTTP using JSON encoding, for example:\n")
 	fmt.Printf("  OTEL_EXPORTER_OTLP_ENDPOINT=http://%s\n", *addr)
 	fmt.Printf("  OTEL_EXPORTER_OTLP_PROTOCOL=http/json\n\n")
@@ -240,6 +257,7 @@ type collector struct {
 	store   *telemetry.Store
 	verbose bool
 	metrics *telemetry.Metrics
+	auth    *collectorAuth
 
 	mu       sync.Mutex
 	received int
@@ -263,6 +281,13 @@ func (c *collector) handle(signal string, decodeJSON, decodeProto func([]byte) (
 			return
 		}
 
+		// Before the body is read, so an unauthenticated sender costs a header check
+		// rather than a 32 MB read.
+		verified, ok := c.authorise(w, r)
+		if !ok {
+			return
+		}
+
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
 		if err != nil {
 			http.Error(w, "read body", http.StatusBadRequest)
@@ -280,6 +305,15 @@ func (c *collector) handle(signal string, decodeJSON, decodeProto func([]byte) (
 			c.metrics.BatchRejected(signal)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+
+		// A verified token says who sent the batch, and that replaces whatever the
+		// agent claimed on every event in it. The agent's own user.id is the value a
+		// developer can set; the token is the one they cannot.
+		if verified != nil {
+			for i := range events {
+				events[i].Identity = *verified
+			}
 		}
 
 		c.count(&c.received, 1)
@@ -318,11 +352,37 @@ func (c *collector) handle(signal string, decodeJSON, decodeProto func([]byte) (
 // an agent whose trace export fails may log errors or back off its other exports, and
 // traces add little that the event stream does not already carry.
 func (c *collector) acceptAndIgnore(w http.ResponseWriter, r *http.Request) {
+	// Authenticated like the signals that are kept. Found by review: the traces route
+	// drained up to 32 MB from anybody, on a collector whose other routes refuse an
+	// unauthenticated sender before reading a byte.
+	if _, ok := c.authorise(w, r); !ok {
+		return
+	}
 	io.Copy(io.Discard, io.LimitReader(r.Body, maxBody))
 	c.metrics.BatchReceived("traces")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "{}")
+}
+
+// authorise checks a request's token and answers a refusal itself. It returns the
+// verified identity, if any, and whether to carry on.
+func (c *collector) authorise(w http.ResponseWriter, r *http.Request) (*telemetry.Identity, bool) {
+	verified, refused := c.auth.authenticate(r, time.Now())
+	switch refused {
+	case "":
+		return verified, true
+	case rejectKeys:
+		c.count(&c.rejected, 1)
+		c.metrics.BatchUnauthenticated(refused)
+		http.Error(w, "the collector cannot read its key set; retry later", http.StatusServiceUnavailable)
+	default:
+		c.count(&c.rejected, 1)
+		c.metrics.BatchUnauthenticated(refused)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="reeve"`)
+		http.Error(w, "a valid bearer token from the identity provider is required", http.StatusUnauthorized)
+	}
+	return nil, false
 }
 
 func (c *collector) count(field *int, n int) {
@@ -332,11 +392,25 @@ func (c *collector) count(field *int, n int) {
 }
 
 func (c *collector) stats(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.authorise(w, r); !ok {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"batchesReceived":%d,"eventsWritten":%d,"batchesRejected":%d}`+"\n",
 		c.received, c.written, c.rejected)
+}
+
+// authLine says how the collector decides who sent a batch.
+func authLine(mode, trust string) string {
+	switch mode {
+	case authOIDC:
+		return "oidc: every batch needs a verified token (" + trust + ")"
+	case authMixed:
+		return "mixed: tokens verified when sent; batches without one recorded as asserted (" + trust + ")"
+	}
+	return "none: identities are whatever each agent claims, recorded as asserted"
 }
 
 // pruneStore applies the retention period and says what it did. A run that removed
