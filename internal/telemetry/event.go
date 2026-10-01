@@ -52,6 +52,18 @@ type Identity struct {
 	// Asserted records that the identity came from the client rather than from a
 	// verified token, so a consumer knows how much weight it carries.
 	Asserted bool `json:"asserted,omitempty"`
+
+	// Unattributed records that the operator's team map matched nothing about this
+	// identity, so its team is the map's default rather than a team anybody chose.
+	// UnknownSubject records that the map names people by subject and this subject
+	// is not one of them, even after aliases. Both are set only when a team map was
+	// in use; without one there is nothing to have matched.
+	//
+	// Recorded at collection, where the map is, because the report has no other way
+	// to tell a person the organisation named from one it never heard of: both look
+	// like a row with some tokens against it. See ConcernUnmatched.
+	Unattributed   bool `json:"unattributed,omitempty"`
+	UnknownSubject bool `json:"unknownSubject,omitempty"`
 }
 
 // Tokens counts one request's usage. Cache reads are separated because they are

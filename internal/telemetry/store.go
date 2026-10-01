@@ -340,6 +340,44 @@ func LoadTeams(path string) (*TeamMap, error) {
 }
 
 // Team resolves an identity, from most specific to least.
+// Matched says whether a mapping decided this identity's team rather than the default,
+// and whether its subject is one the organisation named — in subjects, or as the target
+// of an alias.
+//
+// The subject half is asked of every map. An earlier version skipped it for a map built
+// from domains alone, on the grounds that such a map never claims to know anybody's
+// subject. Found by review: that is exactly the map the nine-million-token incident
+// happens under. A person-scoped budget does not consult the map at all; it compares
+// the guard's identity against the subject recorded on each event, and a domain match
+// fixes the team while leaving the vendor's id in place. The noise that worried the
+// earlier version is handled by reporting the two halves as separate conditions, so an
+// organisation with no per-person budget simply does not gate on this one.
+func (t *TeamMap) Matched(id Identity) (team, subject bool) {
+	if t == nil {
+		return true, true
+	}
+	_, bySubject := t.Subjects[id.Subject]
+	_, byEmail := t.Emails[strings.ToLower(id.Email)]
+	byDomain := false
+	if i := strings.LastIndex(id.Email, "@"); i >= 0 {
+		_, byDomain = t.Domains[strings.ToLower(id.Email[i+1:])]
+	}
+	team = (bySubject && id.Subject != "") || (byEmail && id.Email != "") || byDomain
+
+	if id.Subject == "" {
+		return team, false
+	}
+	if bySubject {
+		return team, true
+	}
+	for _, canonical := range t.Aliases {
+		if canonical == id.Subject {
+			return team, true
+		}
+	}
+	return team, false
+}
+
 func (t *TeamMap) Team(id Identity) string {
 	if t == nil {
 		return ""

@@ -182,6 +182,8 @@ rather than different severities:
 | `billing.undeclared` | priced usage belonging to an agent whose arrangement nobody declared |
 | `billing.silent` | an allowance was declared and **nothing has ever been measured against it** |
 | `prices.unpriced` | requests on a model with no entry in the price table |
+| `identity.unmatched` | consumption recorded under subjects your team map does not name, even after aliases, which a per-person budget counts none of |
+| `identity.unattributed` | consumption from identities your team map matched nothing about, counted under its default team, which a team budget counts none of |
 
 `--fail-on any` selects all of them. An unrecognised name is an error rather than a
 no-op: a gate configured with a typo that silently passes everything is worse than no
@@ -192,6 +194,33 @@ no per-token telemetry, so declare an allowance for it, never finish wiring the 
 and every report and every dashboard says nought per cent for ever — which is exactly
 what an organisation comfortably inside its limits looks like. See
 [the alerts](#the-alerts-are-shipped-not-described) for the rule that catches it.
+
+`identity.unmatched` is the detection half of the alias map. A budget compared against
+events it cannot attribute totals zero, and zero permits: measured, a per-person budget
+allowed somebody nine million tokens over a thousand-token limit because the events were
+recorded under an Anthropic account UUID and the guard asked about an SSO subject. The
+collector now records, per event, whether the subject is one your team map names — in
+`subjects`, or as the target of an alias — and whether the map matched the identity at
+all. The report counts both, with the tokens behind them and the heaviest few by name, so
+the alias to write is not a search:
+
+```
+identity.unmatched: 1 identity whose subject the team map does not name, even after
+aliases (9.0M tokens), so a per-person budget keyed on your subjects counts none of it.
+Heaviest: dev@example.com. Add an alias for them
+```
+
+They are two conditions because they answer to two kinds of budget. Gate on
+`identity.unmatched` if any policy has a per-person rule; an organisation without one has
+no use for it, since every subject it never named will appear there. Gate on
+`identity.unattributed` if any policy has a per-team rule. The subject half is asked of
+every map, including one built from domains alone: found by review, that is exactly the
+map the incident happens under, because a domain fixes the team and leaves the vendor's
+id on the event.
+
+With no team map nothing is flagged: there was nothing to have matched. **Events
+collected before this release carry neither flag** and count as matched, so a window that
+spans the upgrade undercounts until those events age out of it.
 
 ## The JSON report
 

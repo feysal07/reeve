@@ -156,6 +156,7 @@ type Decoder struct {
 type TeamResolver interface {
 	Team(id Identity) string
 	Canonical(id Identity) Identity
+	Matched(id Identity) (team, subject bool)
 }
 
 // agentFromResource identifies which agent sent a payload.
@@ -234,6 +235,8 @@ func (d *Decoder) identity(a map[string]otlpValue) Identity {
 	if d.Teams != nil {
 		id = d.Teams.Canonical(id)
 		id.Team = d.Teams.Team(id)
+		team, subject := d.Teams.Matched(id)
+		id.Unattributed, id.UnknownSubject = !team, !subject
 	}
 	return id
 }

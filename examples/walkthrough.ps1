@@ -970,6 +970,16 @@ billing:
     Check "a misspelled condition is an error, not a no-op" `
         ($typo -match "not a condition") $typo.Trim()
 
+    # The detection half of the alias map. A per-person budget compared a verified
+    # subject against events recorded under an address nobody had aliased, totalled
+    # zero, and permitted - measured at nine million tokens over a thousand-token limit.
+    # teams.yaml names people by subject, and this store holds senders it never named,
+    # so a gate asking about unmatched identities must fail and say whom to alias.
+    $unmatched = (& $reeve report --store $events --fail-on identity.unmatched 2>&1 | Out-String)
+    $unmatchedCode = $LASTEXITCODE
+    Check "consumption no budget can count is a condition the gate can fail on" `
+        (($unmatchedCode -ne 0) -and (($unmatched -replace '\s+', ' ') -match "identity\.unmatched.*Add an alias")) "exit ${unmatchedCode}: $($unmatched.Trim())"
+
     # An allowance declared for an agent nothing reports against reads nought per cent
     # for ever, which on a dashboard is what staying inside the limit looks like.
     Write-Text (Join-Path $Sandbox "silent-prices.yaml") @'
