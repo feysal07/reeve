@@ -240,6 +240,18 @@ func writeRegistrySkeleton(observed []mcp.Observed) error {
 		if o.Server.URL != "" {
 			fmt.Printf("    url: %q\n", o.Server.URL)
 		}
+		// Known only from being called. Connector ids and the desktop app's names are
+		// identities a registry can match; anything else stays a name.
+		if o.Server.Scope == model.ScopeObserved {
+			switch o.Server.Transport {
+			case mcp.OriginConnector:
+				fmt.Printf("    connector: %q   # a claude.ai connector, seen in the guard's log\n", o.Server.Name)
+				continue
+			case mcp.OriginBuiltin:
+				fmt.Printf("    builtin: %q   # built into the desktop app, seen in the guard's log\n", o.Server.Name)
+				continue
+			}
+		}
 		if o.Server.Command == "" && len(o.Server.Args) == 0 && o.Server.URL == "" {
 			fmt.Printf("    # No command or URL was configured, so this entry can only ever be\n")
 			fmt.Printf("    # matched by name, which the developer chooses. Fill one in if you can.\n")
