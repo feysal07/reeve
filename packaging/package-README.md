@@ -2,6 +2,12 @@
 
 A vendor-neutral, self-hosted control plane for AI coding agents.
 
+Early access. Everything listed as free is built; Claude Code is the agent that has been
+seen working on real machines, and the other four are built from their vendors'
+documentation and tested against fixtures. The Status section of the project's README
+says how far each one is proven, and `./reeve doctor` says it for the agents on this
+machine. What it gets wrong on yours is the most useful thing you could report.
+
 ## Start here
 
     ./reeve scan

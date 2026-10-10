@@ -148,12 +148,27 @@ jobs:
           render --set networkPolicy.enabled=true
           render --set collector.metrics.enabled=false
           render --set serviceMonitor.enabled=true --set prometheusRule.enabled=true
+          render --set grafanaDashboard.enabled=true --set grafanaDashboard.namespace=monitoring
+          # The dashboard reaches the ConfigMap whole, not as an empty key.
+          helm template t "$chart" --set grafanaDashboard.enabled=true \
+            --show-only templates/dashboard.yaml | grep -q '"uid": "reeve-overview"'
           render --set networkPolicy.enabled=true --set serviceMonitor.enabled=true \
                  --set 'networkPolicy.scrapeFrom[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=monitoring'
           render --set ingress.enabled=true \
                  --set ingress.authenticatedByProxy=true \
                  --set ingress.tls[0].secretName=tls \
                  --set ingress.tls[0].hosts[0]=reeve.internal
+          render --set collector.auth.mode=mixed \
+                 --set collector.auth.trustConfigMap=t --set collector.auth.keysConfigMap=k
+          # oidc is authentication, so it satisfies the ingress gate on its own.
+          render --set collector.auth.mode=oidc \
+                 --set collector.auth.trustConfigMap=t --set collector.auth.keysConfigMap=k \
+                 --set ingress.enabled=true \
+                 --set ingress.tls[0].secretName=tls \
+                 --set ingress.tls[0].hosts[0]=reeve.internal
+          helm template t "$chart" --set collector.auth.mode=oidc \
+            --set collector.auth.trustConfigMap=t --set collector.auth.keysConfigMap=k \
+            --show-only templates/statefulset.yaml | grep -q -- '--auth=oidc'
 
       # The chart refuses configurations that would deploy cleanly and be wrong. A
       # refusal that stops refusing is a silent regression, so each one is asserted
@@ -188,6 +203,21 @@ jobs:
             --set serviceMonitor.enabled=true --set collector.metrics.enabled=false
           refuses "alerts on metrics that are never published" \
             --set prometheusRule.enabled=true --set collector.metrics.enabled=false
+          refuses "a dashboard over metrics that are switched off" \
+            --set grafanaDashboard.enabled=true --set collector.metrics.enabled=false
+          refuses "a dashboard no sidecar can find" \
+            --set grafanaDashboard.enabled=true --set grafanaDashboard.labels=null
+          refuses "an auth mode that does not exist" --set collector.auth.mode=jwt
+          refuses "oidc with no key set" \
+            --set collector.auth.mode=oidc --set collector.auth.trustConfigMap=t
+          refuses "trust mounted and never read" --set collector.auth.trustConfigMap=t
+          # mixed still accepts a batch with no token, so it is not authentication.
+          refuses "an ingress in front of mixed auth with nothing else" \
+            --set collector.auth.mode=mixed \
+            --set collector.auth.trustConfigMap=t --set collector.auth.keysConfigMap=k \
+            --set ingress.enabled=true \
+            --set ingress.tls[0].secretName=tls \
+            --set ingress.tls[0].hosts[0]=reeve.internal
 
       # An alert expression with a typo loads and then simply never fires, so the
       # rules are checked by the tool Prometheus itself ships.

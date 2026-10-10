@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/feysal07/reeve/internal/mcp"
 	"github.com/feysal07/reeve/internal/session"
 )
 
@@ -112,8 +113,28 @@ func NewToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// Handler serves the page and its API.
-func Handler(load Loader, token string) http.Handler {
+// MCPView is what the MCP page shows: the servers this machine's agents are configured
+// with, reconciled against the approved list.
+type MCPView struct {
+	// Registry is the approved list read, empty when there was none.
+	Registry string `json:"registry"`
+	// Notes say what a reader would otherwise have to infer, such as that no list was
+	// found and so every server reads as unregistered.
+	Notes  []string   `json:"notes"`
+	Report mcp.Report `json:"report"`
+}
+
+// MCPLoader produces the MCP page's data, reading the configuration afresh each time.
+type MCPLoader func() (MCPView, error)
+
+// Handler serves the page and its API. mcpLoad may be nil, and the MCP page then says
+// it is not available rather than showing an empty inventory.
+//
+// The MCP page is read-only, like everything here: the guard below refuses anything but
+// GET and HEAD. Approving or refusing a server is a change to the registry file, made
+// where it is reviewed - an approval workflow is the paid tier's, and a button here
+// would be a second, unreviewed way to change what agents may reach.
+func Handler(load Loader, mcpLoad MCPLoader, token string) http.Handler {
 	static, _ := fs.Sub(assets, "assets")
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(static)))
@@ -143,6 +164,22 @@ func Handler(load Loader, token string) http.Handler {
 			return nil, err
 		}
 		return map[string]any{"schemaVersion": session.SchemaVersion, "partial": s.Partial(), "session": s}, nil
+	}))
+	mux.HandleFunc("/api/mcp", api(token, func(r *http.Request) (any, error) {
+		if mcpLoad == nil {
+			return nil, fmt.Errorf("the MCP inventory is not available from this viewer")
+		}
+		v, err := mcpLoad()
+		if err != nil {
+			return nil, err
+		}
+		if v.Notes == nil {
+			v.Notes = []string{}
+		}
+		if v.Report.Results == nil {
+			v.Report.Results = []mcp.Result{}
+		}
+		return map[string]any{"schemaVersion": mcp.SchemaVersion, "mcp": v}, nil
 	}))
 	return guard(mux)
 }

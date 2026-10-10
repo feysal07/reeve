@@ -39,6 +39,11 @@ type Request struct {
 	ToolName    string `json:"tool_name"`
 	ToolNameAlt string `json:"toolName"`
 
+	// ToolUseID names one tool call, so a decision before it and an outcome after it
+	// can be joined. Claude Code sends it on both PreToolUse and PostToolUse.
+	ToolUseID    string `json:"tool_use_id"`
+	ToolUseIDAlt string `json:"toolUseId"`
+
 	// Raw, not a map, because Cursor sends beforeMCPExecution's parameters as a
 	// string containing JSON rather than as an object. Decoding straight into a map
 	// fails on that, and a failure here denies, so every MCP call through Cursor
@@ -74,6 +79,60 @@ var cursorEventKinds = map[string]policy.Kind{
 	"beforeSubmitPrompt":   policy.KindOther,
 }
 
+// Outcome is what a post-tool event says: this tool call ran.
+type Outcome struct {
+	Event     string
+	SessionID string
+	ToolUseID string
+	ToolName  string
+	// Failed is true for PostToolUseFailure: the tool ran and failed, which still
+	// means it was permitted.
+	Failed bool
+}
+
+// DecodeOutcome reports whether a payload is a post-tool event, and what it says.
+//
+// Checked before anything else the guard does. A post-tool event comes after the action,
+// so there is nothing to decide: evaluating the policy against it would at best repeat
+// the decision already logged, and at worst reply with a refusal the agent shows as an
+// error about an action that has already happened. Only the event name, session, tool
+// call and tool name are read - never the tool's input or its response, which can hold
+// anything the action touched.
+//
+// Decoded into its own small struct rather than Request. Found by review: Request types
+// fields a post-tool event never carries, so a stray "command": 5 failed the decode, fell
+// through to the full decoder, failed again, and was answered with a refusal and exit 2 -
+// shown to the agent as an error about work already done.
+func DecodeOutcome(raw []byte) (Outcome, bool) {
+	var r struct {
+		HookEventName string `json:"hook_event_name"`
+		HookEventAlt  string `json:"hookEventName"`
+		SessionID     string `json:"session_id"`
+		SessionIDAlt  string `json:"sessionId"`
+		ToolUseID     string `json:"tool_use_id"`
+		ToolUseIDAlt  string `json:"toolUseId"`
+		ToolName      string `json:"tool_name"`
+		ToolNameAlt   string `json:"toolName"`
+	}
+	if json.Unmarshal(raw, &r) != nil {
+		return Outcome{}, false
+	}
+	o := Outcome{
+		Event:     first(r.HookEventName, r.HookEventAlt),
+		SessionID: first(r.SessionID, r.SessionIDAlt),
+		ToolUseID: first(r.ToolUseID, r.ToolUseIDAlt),
+		ToolName:  first(r.ToolName, r.ToolNameAlt),
+	}
+	switch o.Event {
+	case "PostToolUse":
+		return o, true
+	case "PostToolUseFailure":
+		o.Failed = true
+		return o, true
+	}
+	return Outcome{}, false
+}
+
 // Decode reads a hook payload and converts it into an Action.
 //
 // agent must be supplied by the caller, because no agent reliably identifies itself
@@ -90,6 +149,7 @@ func Decode(raw []byte, agent model.AgentID) (policy.Action, error) {
 		SessionID: first(r.SessionID, r.SessionIDAlt),
 		CWD:       r.CWD,
 		ToolName:  first(r.ToolName, r.ToolNameAlt),
+		ToolUseID: first(r.ToolUseID, r.ToolUseIDAlt),
 		Prompt:    first(r.Prompt, r.PromptAlt),
 	}
 

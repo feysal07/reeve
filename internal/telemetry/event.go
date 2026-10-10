@@ -52,6 +52,10 @@ type Identity struct {
 	// Asserted records that the identity came from the client rather than from a
 	// verified token, so a consumer knows how much weight it carries.
 	Asserted bool `json:"asserted,omitempty"`
+	// Verified records that the collector checked a token signed by the operator's
+	// identity provider on the batch this event arrived in, and the subject, email
+	// and team are what that token proved rather than what the agent said.
+	Verified bool `json:"verified,omitempty"`
 
 	// Unattributed records that the operator's team map matched nothing about this
 	// identity, so its team is the map's default rather than a team anybody chose.
@@ -128,7 +132,10 @@ type Event struct {
 	// omitempty on a float cannot.
 	BillingKnown bool `json:"billingKnown,omitempty"`
 
-	ToolName   string `json:"toolName,omitempty"`
+	ToolName string `json:"toolName,omitempty"`
+	// ToolUseID names one tool call, on a guard decision, so the outcome that followed
+	// it can be found.
+	ToolUseID  string `json:"toolUseId,omitempty"`
 	Success    *bool  `json:"success,omitempty"`
 	DurationMS int64  `json:"durationMs,omitempty"`
 
@@ -137,6 +144,11 @@ type Event struct {
 	Decision string `json:"decision,omitempty"`
 	RuleID   string `json:"ruleId,omitempty"`
 	Blocked  bool   `json:"blocked,omitempty"`
+	// DryRun means Decision was recorded and not applied: the agent was answered
+	// allow. Observed is an observe rule's stricter verdict beside a Decision that was
+	// applied. Both are rulings that stopped and asked nobody.
+	DryRun   bool   `json:"dryRun,omitempty"`
+	Observed string `json:"observed,omitempty"`
 
 	// Source records which pipeline produced this event, so a discrepancy between
 	// them can be investigated rather than averaged away.

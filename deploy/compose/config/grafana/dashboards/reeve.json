@@ -24,7 +24,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "Usage and cost as the collector computed it from tokens and your price table. There is no identity here: no emails, no sessions, no repository names. Those live in the event store, which has different access control and different retention, and `reeve report` reads them.\n\n**Computed cost and vendor-reported cost are separate series on purpose. Do not add them together.** They are two measurements of the same thing, kept apart so that a discrepancy is visible rather than averaged away.\n\nRequests whose model was not in your price table are counted separately as unpriced. Treating them as costing nothing would understate the total while the dashboard looked complete.\n\n**The cost figures here are equivalent cost: what the usage would cost at your rates.** For an organisation paying for seats in advance that is not money leaving, which is why the allowance row below exists. `reeve_billing_undeclared_events_total` counts requests belonging to an agent whose billing arrangement you have not declared; no statement about money can be made about those at all.\n\n**A flat zero on \"Allowance used\" is not good news.** It means nothing is being measured against an allowance you declared \u2014 the agent exports no usage, or the export is not reaching the collector. On a graph that is indistinguishable from staying comfortably inside the limit. Alert on it."
+        "content": "Usage and cost as the collector computed it from tokens and your price table. There is no identity here: no emails, no sessions, no repository names. Those live in the event store, which has different access control and different retention, and `reeve report` reads them.\n\n**Computed cost and vendor-reported cost are separate series on purpose. Do not add them together.** They are two measurements of the same thing, kept apart so that a discrepancy is visible rather than averaged away.\n\nRequests whose model was not in your price table are counted separately as unpriced. Treating them as costing nothing would understate the total while the dashboard looked complete.\n\n**The cost figures here are equivalent cost: what the usage would cost at your rates.** For an organisation paying for seats in advance that is not money leaving, which is why the allowance row below exists. `reeve_billing_undeclared_events_total` counts requests belonging to an agent whose billing arrangement you have not declared; no statement about money can be made about those at all.\n\n**A flat zero on \"Allowance used\" is not good news.** It means nothing is being measured against an allowance you declared — the agent exports no usage, or the export is not reaching the collector. On a graph that is indistinguishable from staying comfortably inside the limit. Alert on it."
       }
     },
     {
@@ -267,7 +267,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "What your plan includes, and how much of it has gone. These are the figures a seat-based organisation acts on: the outlay was fixed when the seats were bought, and what varies is whether the included consumption lasts the period.\n\nAbsent rather than zero means the event store could not be read \u2014 see `reeve_allowance_read_errors_total`. Held-over figures would draw a healthy line through an outage, so they are dropped instead."
+        "content": "What your plan includes, and how much of it has gone. These are the figures a seat-based organisation acts on: the outlay was fixed when the seats were bought, and what varies is whether the included consumption lasts the period.\n\nAbsent rather than zero means the event store could not be read — see `reeve_allowance_read_errors_total`. Held-over figures would draw a healthy line through an outage, so they are dropped instead."
       }
     },
     {
@@ -374,6 +374,74 @@
         {
           "expr": "reeve_allowance_unattributed",
           "legendFormat": "{{agent}} {{limit}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Batches refused for want of a valid token",
+      "description": "Only when the collector verifies tokens (--auth oidc or mixed). A rising count is an agent whose login has lapsed, so its telemetry is missing from everything else on this page, or somebody sending without one.",
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason) (increase(reeve_batches_unauthenticated_total[7d]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Events whose identity was verified",
+      "description": "The share of events whose person was proven by a token from your identity provider rather than claimed by the agent. Zero unless the collector verifies tokens; per-person figures from the rest are the agent's own word.",
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(increase(reeve_events_identity_total{identity=\"verified\"}[7d])) / sum(increase(reeve_events_identity_total[7d]))",
+          "legendFormat": "verified",
           "refId": "A"
         }
       ]

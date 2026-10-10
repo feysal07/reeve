@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -571,6 +572,144 @@ func TestClaudeCodesOwnToolsAreNotFilesNetworkOrCommands(t *testing.T) {
 	} {
 		if k := Classify(tool); k != want {
 			t.Errorf("%s classified as %s, want %s", tool, k, want)
+		}
+	}
+}
+
+// TestAPostToolEventIsAnOutcomeAndNothingElseIs. A post-tool event comes after the
+// action, so the guard must record it rather than decide it; anything else decided as an
+// outcome would be an action allowed without a decision.
+func TestAPostToolEventIsAnOutcomeAndNothingElseIs(t *testing.T) {
+	o, ok := DecodeOutcome([]byte(`{"hook_event_name":"PostToolUse","session_id":"s","tool_use_id":"toolu_1","tool_name":"Bash","tool_response":{"stdout":"secret"}}`))
+	if !ok || o.SessionID != "s" || o.ToolUseID != "toolu_1" || o.ToolName != "Bash" || o.Failed {
+		t.Fatalf("PostToolUse = %+v, %v", o, ok)
+	}
+	// A field of the wrong type elsewhere in the payload must not turn an outcome into
+	// a request the guard then refuses.
+	if _, ok := DecodeOutcome([]byte(`{"hook_event_name":"PostToolUse","tool_use_id":"toolu_4","command":5,"workspace_roots":"x"}`)); !ok {
+		t.Error("a stray field of the wrong type stopped a post-tool event being an outcome")
+	}
+	if o, ok := DecodeOutcome([]byte(`{"hook_event_name":"PostToolUseFailure","session_id":"s","tool_use_id":"toolu_2"}`)); !ok || !o.Failed {
+		t.Errorf("PostToolUseFailure = %+v, %v", o, ok)
+	}
+	for _, raw := range []string{
+		`{"hook_event_name":"PreToolUse","tool_use_id":"toolu_3","tool_name":"Bash"}`,
+		`{"hookEventName":"preToolUse","toolName":"bash"}`,
+		`{"hook_event_name":"beforeShellExecution","command":"ls"}`,
+		`not json`,
+	} {
+		if _, ok := DecodeOutcome([]byte(raw)); ok {
+			t.Errorf("%s was taken for an outcome", raw)
+		}
+	}
+	a, err := Decode([]byte(`{"hook_event_name":"PreToolUse","tool_use_id":"toolu_3","tool_name":"Bash","tool_input":{"command":"ls"}}`), model.AgentClaudeCode)
+	if err != nil || a.ToolUseID != "toolu_3" {
+		t.Errorf("PreToolUse tool_use_id = %q, %v", a.ToolUseID, err)
+	}
+}
+
+// TestEveryAgentsRequestIsUnderstoodAndEveryReplyReadAsMeant is the conformance suite:
+// for each agent, a request in the shape it sends decodes to the action it describes,
+// and each decision, encoded for that agent, is read by that agent as that decision.
+// Reads is written from the agent's side rather than from Encode's, so this fails when
+// the spelling is wrong, which is the failure that turns a refusal into permission.
+func TestEveryAgentsRequestIsUnderstoodAndEveryReplyReadAsMeant(t *testing.T) {
+	for _, agent := range SupportedAgents() {
+		c, ok := ConformanceFor(model.AgentID(agent))
+		if !ok {
+			t.Errorf("%s has no conformance entry, so doctor cannot probe it", agent)
+			continue
+		}
+		t.Run(agent, func(t *testing.T) {
+			a, err := Decode([]byte(c.Payload("terraform destroy -auto-approve")), c.Agent)
+			if err != nil || a.Kind != policy.KindShell || a.Command != "terraform destroy -auto-approve" {
+				t.Fatalf("decoded %+v (%v): the request in this agent's shape is not understood", a, err)
+			}
+			for _, want := range []policy.Effect{policy.EffectAllow, policy.EffectAsk, policy.EffectDeny} {
+				r := Encode(c.Agent, a.Event, policy.Decision{Effect: want, RuleID: "r"})
+				got, err := c.Reads(r.Body, int(r.Exit))
+				expect := want
+				if c.Agent == model.AgentGeminiCLI && want == policy.EffectAsk {
+					expect = policy.EffectDeny // refused rather than asked; see encodeGemini
+				}
+				if err != nil || got != expect {
+					t.Errorf("%s encoded, read as %q (%v), want %s", want, got, err, expect)
+				}
+			}
+			if c.Source == "" {
+				t.Error("no source says where this shape came from")
+			}
+		})
+	}
+}
+
+// TestAReplyInAnotherAgentsSpellingIsNoDecision. If Reads accepted any shape, the suite
+// above would pass whatever Encode wrote.
+func TestAReplyInAnotherAgentsSpellingIsNoDecision(t *testing.T) {
+	gemini, _ := ConformanceFor(model.AgentGeminiCLI)
+	claudeAllow := Encode(model.AgentClaudeCode, "PreToolUse", policy.Decision{Effect: policy.EffectAllow})
+	if _, err := gemini.Reads(claudeAllow.Body, 0); err == nil {
+		t.Error("Gemini read a decision out of Claude Code's reply shape")
+	}
+	claude, _ := ConformanceFor(model.AgentClaudeCode)
+	flat := Encode(model.AgentCopilotCLI, "", policy.Decision{Effect: policy.EffectDeny})
+	if _, err := claude.Reads(flat.Body, 0); err == nil {
+		t.Error("Claude Code read a decision out of a flat reply")
+	}
+	cursor, _ := ConformanceFor(model.AgentCursor)
+	if _, err := cursor.Reads([]byte(`{"permission":"maybe"}`), 0); err == nil {
+		t.Error("Cursor read a decision it does not have")
+	}
+	if e, _ := gemini.Reads([]byte(`{"decision":"ask"}`), 0); e != "" {
+		t.Error("Gemini read an ask, which its hook protocol cannot carry")
+	}
+	if _, err := claude.Reads([]byte(`not json`), 0); err == nil {
+		t.Error("a reply that is not JSON was read as a decision")
+	}
+	if e, err := claude.Reads(nil, int(ExitBlock)); err != nil || e != policy.EffectDeny {
+		t.Error("exit 2 was not read as a refusal")
+	}
+}
+
+// TestTheReadmeSaysHowFarEachAgentIsProven. The status table is a public claim about
+// which agents have been seen working, and conformance.go is where that is recorded. A
+// table that said "yes" for an adapter written from documentation would be the project
+// overstating itself in the one place a stranger reads first; one that said "no" after an
+// agent was captured would bury progress. They are checked against each other.
+func TestTheReadmeSaysHowFarEachAgentIsProven(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[model.AgentID]string{
+		model.AgentClaudeCode: "Claude Code", model.AgentCopilotCLI: "GitHub Copilot CLI",
+		model.AgentCodexCLI: "Codex CLI", model.AgentGeminiCLI: "Gemini CLI", model.AgentCursor: "Cursor",
+	}
+	// Only the status table: the README has other tables with a row per agent.
+	rows := map[string]string{}
+	in := false
+	for _, line := range strings.Split(string(readme), "\n") {
+		if strings.HasPrefix(line, "| Agent | Discovery | Guard decides |") {
+			in = true
+			continue
+		}
+		if in && !strings.HasPrefix(line, "|") {
+			break
+		}
+		if cells := strings.Split(line, "|"); in && len(cells) >= 6 {
+			rows[strings.TrimSpace(cells[1])] = strings.TrimSpace(cells[5])
+		}
+	}
+	for _, agent := range SupportedAgents() {
+		c, _ := ConformanceFor(model.AgentID(agent))
+		name := names[model.AgentID(agent)]
+		seen, ok := rows[name]
+		if !ok {
+			t.Errorf("the README status table has no row for %s", name)
+			continue
+		}
+		if says := strings.HasPrefix(seen, "**Yes"); says != c.Observed {
+			t.Errorf("the README says %s has been seen on a real machine: %v; conformance.go says %v", name, says, c.Observed)
 		}
 	}
 }

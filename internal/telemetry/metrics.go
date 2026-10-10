@@ -40,6 +40,8 @@ type Metrics struct {
 	mu               sync.Mutex
 	batchesReceived  map[string]int64
 	batchesRejected  map[string]int64
+	unauthenticated  map[string]int64
+	identities       map[string]int64
 	events           map[agentKind]int64
 	unpriced         map[string]int64
 	tokens           map[agentKind]int64
@@ -68,6 +70,8 @@ func NewMetrics(version, storePath string) *Metrics {
 		startedAt:       time.Now(),
 		batchesReceived: map[string]int64{},
 		batchesRejected: map[string]int64{},
+		unauthenticated: map[string]int64{},
+		identities:      map[string]int64{},
 		events:          map[agentKind]int64{},
 		unpriced:        map[string]int64{},
 		tokens:          map[agentKind]int64{},
@@ -131,6 +135,17 @@ func (m *Metrics) BatchRejected(signal string) {
 	m.mu.Unlock()
 }
 
+// BatchUnauthenticated records a batch refused because its bearer token was missing or
+// did not verify. The reason is one of a fixed set, never anything from the request.
+func (m *Metrics) BatchUnauthenticated(reason string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.unauthenticated[reason]++
+	m.mu.Unlock()
+}
+
 // StoreWriteFailed records a failure appending to the store. The agent is told to
 // retry, so this counts gaps that were survivable; a sustained non-zero rate is not.
 func (m *Metrics) StoreWriteFailed() {
@@ -153,6 +168,11 @@ func (m *Metrics) RecordEvents(events []Event) {
 	for _, e := range events {
 		agent := agentLabel(e.Agent)
 		m.events[agentKind{agent, string(e.Kind)}]++
+		if e.Identity.Verified {
+			m.identities["verified"]++
+		} else {
+			m.identities["asserted"]++
+		}
 
 		// The agent's own cost claim is kept in its own series rather than added to
 		// the computed one. They are two different measurements of the same thing,
@@ -217,6 +237,18 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 			"count means an agent is exporting something this collector does not understand, "+
 			"and that agent's activity is missing from the record.",
 		"counter", countsByLabel(m.batchesRejected, "signal"))
+
+	family(&b, "reeve_batches_unauthenticated_total",
+		"OTLP batches refused because the collector requires a token and the batch had none "+
+			"(missing), or carried one that did not verify (invalid). A rising count is either "+
+			"an agent whose login has lapsed, whose telemetry is now missing, or somebody "+
+			"sending without one.",
+		"counter", countsByLabel(m.unauthenticated, "reason"))
+
+	family(&b, "reeve_events_identity_total",
+		"Events written, by whether their identity was verified from a token or asserted by "+
+			"the agent. Every event is asserted unless the collector verifies tokens.",
+		"counter", countsByLabel(m.identities, "identity"))
 
 	family(&b, "reeve_events_written_total",
 		"Normalised events appended to the store, by agent and kind.",

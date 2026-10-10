@@ -90,6 +90,82 @@ fire on ordinary work before anyone is actually stopped.
 reeve guard --agent claude-code --dry-run --log /var/log/reeve/decisions.jsonl
 ```
 
+### One rule at a time: observe mode
+
+Dry run is the whole policy at once, which is right for the first week and wrong for
+every week after it. Once the proven rules should stop people, a new rule still needs
+measuring before it does. Put that rule in observe mode and leave the guard enforcing:
+
+```yaml
+- id: dr-database
+  mode: observe          # enforce (the default) or observe
+  decision: ask
+  reason: The disaster-recovery database is a copy of production.
+  match: {kind: [shell, mcp], environment: [dr]}
+```
+
+An observe rule is evaluated on every action, and whatever it would have decided is
+recorded. It is never applied: the agent is answered as though the rule were not there,
+and an enforced rule beside it decides exactly as before. On the first real installation
+this was the difference between a guard left in dry run for weeks, enforcing nothing,
+and one enforcing eleven rules while the twelfth was measured.
+
+What it changes, and where:
+
+- **The decision log** keeps the shape it has always had. When the agent was answered
+  allow, `effect` and `ruleId` are what the rules would have decided, with
+  `"dryRun": true` saying it was not applied and `"observe": true` saying an observe rule
+  decided it rather than a dry run. When an enforced rule asked or denied, `effect` and
+  `ruleId` say so, and a stricter verdict from an observe rule goes beside them in
+  `observed`, so the rule that asked somebody is the one credited with it. A build that
+  predates observe mode reads either shape correctly.
+- **`reeve report`, `reeve sessions` and `reeve view`** count only what was applied as
+  blocked, denied or asked, and count the rest as *not applied*. The timeline prints a
+  ruling that was not applied as "would ask" or "would deny", never as the ruling.
+- **`reeve policy test`** prints the applied decision and, beneath it, what an observe
+  rule would have decided. A cases file and `reeve policy replay` test the verdict,
+  observe rules included, so a rule is tested while it is being measured rather than
+  from the day it is switched on.
+- **`reeve policy compile`** emits nothing for an observe rule and reports it as
+  `observe`. Managed configuration has no observe mode, so emitting it would start
+  refusing people on every machine the file reached, including ones with no guard to
+  record why.
+
+Two refusals at load: a mode that is neither `enforce` nor `observe` (a typo must not
+quietly mean either), and an observe rule that allows, which could never be stricter
+than what was applied and so could never appear in the log.
+
+Switching a rule on is deleting one line. Replay the log first if the rule has changed
+since it was observed.
+
+### Is it working: reeve doctor
+
+Registered is not working, and working is not refusing. `reeve doctor` checks each in
+turn, for every agent the guard is registered with:
+
+```
+  Claude Code          registered, dry run
+                       answers in 45ms
+                       refuses in the shape Claude Code reads, once enforcing
+                       330 decisions recorded
+```
+
+- **answers**: the registered command is run with a request in the shape that agent
+  sends, and the reply is read the way that agent reads it - not merely checked for
+  being JSON. A reply in another agent's spelling parses perfectly and carries no
+  decision the agent recognises, and an agent that finds none runs the tool.
+- **refuses**: run once more against a one-rule policy that refuses a harmless probe
+  command, with dry run removed, so it says what enforcing would do even on a machine in
+  dry run. Nothing runs the command; only the reply is examined. A hook that answers and
+  does not refuse in the agent's shape fails doctor: every deny would go ahead with the
+  log saying it was refused.
+- **decisions recorded**: whether the agent has ever actually called the hook. The two
+  probes prove Reeve's half; only this proves the agent's.
+
+Both probes write to a temporary log, never the real one. Where an agent's request shape
+was written from its documentation rather than captured from a real installation, doctor
+says so on that agent's line. Today only Claude Code's has been captured.
+
 Where the policy lives, strongest first:
 
 1. `REEVE_POLICY`
@@ -842,8 +918,30 @@ reeve audit verify /var/log/reeve/decisions.jsonl   # check it against every sea
 what they hashed to. Each seal names the one before it, so the sidecar is itself a
 chain. `verify` recomputes and exits 2 if anything differs, so it works as a gate.
 
-Run `seal` on a schedule — hourly from cron, at the end of a session, or in the job
-that ships the log somewhere else.
+Run `seal` on a schedule, or in the job that ships the log somewhere else. The gap
+between seals is the window an edit can hide in, so the interval is the control. A log
+sealed once reads exactly like one under tamper-evidence - the chain file is there,
+`verify` passes - while every line written since is covered by nothing. That is what the
+first real installation did: sealed by hand at line 7,622, then not again.
+
+```
+reeve audit schedule                  # this machine: hourly seal, daily rotation
+reeve audit schedule --keep 720h      # and remove segments older than thirty days
+reeve audit schedule --platform linux --binary /usr/local/bin/reeve --log /var/log/reeve/decisions.jsonl
+```
+
+It prints the timers for the platform - Task Scheduler commands on Windows, systemd user
+timers on Linux, launchd agents on macOS - and how to remove them again. It installs
+nothing: a timer outlives the command that made it, and whoever owns the machine should
+see what is being added and run it themselves. Paths are quoted for each scheduler, and
+a relative path, an interval that is not whole minutes, or a binary in the temporary
+directory (where `go run` builds) is refused.
+
+`reeve doctor` reports the seals beside the decision log: **never sealed**, sealed but
+**stale** (lines have waited more than a day, so whatever was sealing has stopped), or
+how many seals and how many lines since. A seal that no longer matches, or seals that
+cannot be checked, fail doctor; a log that is merely unsealed does not, because that is
+a gap in a control rather than the guard failing.
 
 **Why sealing and not a hash in every record.** The obvious design is each line linking
 to the one before it. Every guard invocation is a separate short-lived process

@@ -48,8 +48,23 @@ func runPolicyCheck(args []string) error {
 	fmt.Printf("  default  : %s\n", p.Default)
 	fmt.Printf("  rules    : %d\n\n", len(p.Rules))
 
+	observed := 0
 	for _, r := range p.Rules {
-		fmt.Printf("  %-28s %-5s %s\n", r.ID, r.Decision, r.Description)
+		decision := string(r.Decision)
+		if r.Observes() {
+			// Said on the rule's own line. A list of decisions with no mode reads as a
+			// list of what is enforced.
+			decision += " (observe)"
+			observed++
+		}
+		fmt.Printf("  %-28s %-15s %s\n", r.ID, decision, r.Description)
+	}
+	if observed > 0 {
+		fmt.Printf(`
+  %d rule(s) in observe mode: evaluated and recorded, never applied. What they would
+  have decided is written to the decision log, so the guard needs one: --log, or
+  REEVE_DECISION_LOG. Without a log an observe rule leaves no trace at all.
+`, observed)
 	}
 
 	if p.NeedsHistory() {
@@ -193,7 +208,9 @@ func reachesMCP(m policy.Match) bool {
 func mcpCovered(p *policy.Policy, env string, atLeast policy.Effect) bool {
 	rank := map[policy.Effect]int{policy.EffectAllow: 0, policy.EffectAsk: 1, policy.EffectDeny: 2}
 	for _, r := range p.Rules {
-		if !reachesMCP(r.Match) || rank[r.Decision] < rank[atLeast] {
+		// An observe rule covers nothing: counting it would silence the warning for a
+		// production rule that is still only being measured.
+		if r.Observes() || !reachesMCP(r.Match) || rank[r.Decision] < rank[atLeast] {
 			continue
 		}
 		if len(r.Match.Environment) == 0 {
@@ -308,6 +325,16 @@ func runPolicyTest(args []string) error {
 	}
 	if d.Reason != "" {
 		fmt.Printf("  reason : %s\n", d.Reason)
+	}
+	// Shown beside the applied decision rather than instead of it. The point of
+	// observing a rule is to see what it would do, and the point of this command is
+	// to say what happens; hiding either answers half the question.
+	if o := d.Observed; o != nil {
+		fmt.Printf("\nObserved: would %s (not applied)\n", o.Effect)
+		fmt.Printf("  rule   : %s, in observe mode\n", o.RuleID)
+		if o.Reason != "" {
+			fmt.Printf("  reason : %s\n", o.Reason)
+		}
 	}
 	fmt.Println()
 

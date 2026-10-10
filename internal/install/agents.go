@@ -38,12 +38,45 @@ func (claudeCode) path(opts Options) string {
 	return filepath.Join(dir, "settings.json")
 }
 
+// claudeOutcomeEvents are where the same guard command is registered a second time, to
+// record that an action ran. Without them the guard knows it asked and never learns
+// the answer, and an ask everyone approves looks exactly like a control.
+var claudeOutcomeEvents = []string{"PostToolUse", "PostToolUseFailure"}
+
 func (c claudeCode) install(path, command string) (Outcome, string, error) {
-	return installJSONNested(path, "PreToolUse", command)
+	outcome, detail, err := installJSONNested(path, "PreToolUse", command)
+	if err != nil {
+		return outcome, detail, err
+	}
+	added := false
+	for _, ev := range claudeOutcomeEvents {
+		o, _, err := installJSONNested(path, ev, command)
+		if err != nil {
+			return OutcomeFailed, "", err
+		}
+		added = added || o == OutcomeAdded
+	}
+	if outcome == OutcomeUpdated && added {
+		detail = "already registered; command refreshed, and now told when an action ran"
+	}
+	return outcome, detail, nil
 }
 
 func (c claudeCode) remove(path string) (Outcome, string, error) {
-	return removeJSON(path, "PreToolUse")
+	outcome, detail, err := removeJSON(path, "PreToolUse")
+	if err != nil {
+		return outcome, detail, err
+	}
+	for _, ev := range claudeOutcomeEvents {
+		o, _, err := removeJSON(path, ev)
+		if err != nil {
+			return OutcomeFailed, "", err
+		}
+		if o == OutcomeRemoved {
+			outcome = OutcomeRemoved
+		}
+	}
+	return outcome, detail, nil
 }
 
 // -------------------------------------------------------------- Gemini CLI ----

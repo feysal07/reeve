@@ -175,3 +175,22 @@ func b64(t *testing.T, s string) string {
 	t.Helper()
 	return base64.RawURLEncoding.EncodeToString([]byte(s))
 }
+
+// TestATrustConfigurationsAlgorithmsAreEnforced. Found by review: algorithms was parsed and
+// documented and nothing consulted it, so retiring RSA in the trust file retired nothing.
+func TestATrustConfigurationsAlgorithmsAreEnforced(t *testing.T) {
+	key, set := rsaKeyAndSet(t, "k1")
+	token := sign(t, jwt.SigningMethodRS256, key, "k1", jwt.MapClaims{"sub": "somebody"})
+	if _, err := VerifyFor(token, set, &Trust{Algorithms: []string{AlgES256}}); err == nil {
+		t.Error("an RS256 token was accepted by a trust configuration allowing only ES256")
+	}
+	if _, err := VerifyFor(token, set, &Trust{}); err != nil {
+		t.Errorf("an RS256 token was refused by the default algorithms: %v", err)
+	}
+	if _, err := VerifyFor(token, set, nil); err != nil {
+		t.Errorf("no trust configuration: %v", err)
+	}
+	if _, err := VerifyFor("not.a-token", set, &Trust{}); err == nil {
+		t.Error("a malformed token passed the algorithm check")
+	}
+}

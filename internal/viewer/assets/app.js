@@ -108,7 +108,8 @@ function renderSession() {
   const dl = $("detail-facts");
   dl.replaceChildren();
   [["Agent", (s.agents || []).join(", ")], ["Who", who(s)], ["From", when(s.start)], ["To", when(s.end)],
-   ["Decisions", s.decisions + " (" + s.denied + " denied, " + s.asked + " asked)"],
+   ["Decisions", s.decisions + " (" + s.denied + " denied, " + s.asked + " asked" +
+     (s.notApplied ? ", " + s.notApplied + " recorded and not applied" : "") + ")"],
    ["Requests", s.requests + ", " + count(s.tokens) + " tokens"]].forEach(([k, v]) => {
     dl.appendChild(el("dt", k));
     dl.appendChild(el("dd", v));
@@ -128,20 +129,75 @@ function renderSession() {
     const d = new Date(e.time);
     const dayText = d.toLocaleDateString();
     if (dayText !== day) { day = dayText; ol.appendChild(el("li", dayText, "day")); }
-    const li = el("li", null, "entry " + e.source + (isRuling ? " " + e.effect : ""));
+    const li = el("li", null, "entry " + e.source + (isRuling ? " " + e.effect : "") + (isRuling && e.dryRun ? " unapplied" : ""));
     li.appendChild(el("span", d.toLocaleTimeString(), "time"));
-    const mark = e.source === "guard" ? (e.dryRun && e.effect === "deny" ? "would deny" : e.effect) : e.kind;
+    // A ruling that was not applied reads "would", whatever it was: in dry run every
+    // ask used to read "ask", as though somebody had been interrupted.
+    const mark = e.source === "guard" ? (e.dryRun && e.effect !== "allow" ? "would " + e.effect : e.effect) : e.kind;
     li.appendChild(el("span", mark, "mark"));
     li.appendChild(el("span", e.kind, "kind"));
     const summary = (e.summary || "").split(/\s+/).join(" ");
     li.appendChild(el("code", e.tokens ? summary + "  ·  " + count(e.tokens) + " tokens" : summary, "summary"));
     if (e.ruleId) li.appendChild(el("span", "rule " + e.ruleId, "rule"));
+    if (e.observed) li.appendChild(el("span", "would " + e.observed + " by rule " + e.observedRuleId + ", in observe mode", "rule"));
     if (e.reason && isRuling) li.appendChild(el("span", e.reason, "reason"));
     ol.appendChild(li);
   });
   if (hidden) ol.appendChild(el("li", hidden + " allowed or telemetry entries hidden.", "day"));
 }
 
+// The MCP page: what this machine's agents are configured to reach, against the
+// approved list. Read-only; see the comment in index.html.
+async function showMCP() {
+  $("list-view").hidden = true;
+  $("detail-view").hidden = true;
+  $("mcp-view").hidden = false;
+  $("page-title").textContent = "MCP servers";
+  $("tab-mcp").className = "current";
+  $("tab-sessions").className = "";
+  $("notes").replaceChildren();
+  setStatus("Loading…");
+  try {
+    const v = (await api("/api/mcp")).mcp;
+    $("mcp-registry").textContent = v.registry
+      ? "Compared with the approved list in " + v.registry + "."
+      : "No approved list was found.";
+    const notes = $("mcp-notes");
+    notes.replaceChildren();
+    (v.notes || []).forEach((n) => notes.appendChild(el("li", n)));
+    const tbody = $("mcp-servers").querySelector("tbody");
+    tbody.replaceChildren();
+    (v.report.results || []).forEach((r) => {
+      const tr = document.createElement("tr");
+      tr.appendChild(el("td", r.name));
+      tr.appendChild(el("td", r.agent));
+      tr.appendChild(el("td", r.scope));
+      tr.appendChild(el("td", r.verdict, "verdict " + r.verdict));
+      tr.appendChild(el("td", r.identity));
+      tr.appendChild(el("td", r.detail, "detail"));
+      tbody.appendChild(tr);
+    });
+    const unused = v.report.unusedEntries || [];
+    $("mcp-unused-title").hidden = unused.length === 0;
+    const ul = $("mcp-unused");
+    ul.replaceChildren();
+    unused.forEach((u) => ul.appendChild(el("li", u)));
+    setStatus((v.report.results || []).length ? "" : "No agent on this machine is configured with an MCP server.");
+  } catch (e) {
+    setStatus(e.message);
+  }
+}
+
+function showSessions() {
+  $("mcp-view").hidden = true;
+  $("page-title").textContent = "Sessions";
+  $("tab-sessions").className = "current";
+  $("tab-mcp").className = "";
+  showList();
+}
+
+$("tab-mcp").addEventListener("click", (e) => { e.preventDefault(); showMCP(); });
+$("tab-sessions").addEventListener("click", (e) => { e.preventDefault(); showSessions(); });
 $("back").addEventListener("click", (e) => { e.preventDefault(); showList(); });
 $("stopped").addEventListener("change", () => current && renderSession());
 showList();

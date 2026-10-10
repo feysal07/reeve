@@ -18,6 +18,11 @@ type Totals struct {
 	Blocked   int     `json:"blocked"`
 	Asked     int     `json:"asked"`
 	Decisions int     `json:"decisions"`
+	// NotApplied counts rulings recorded and not applied, from a dry run or a rule in
+	// observe mode. Kept apart from Blocked and Asked: on the first real installation
+	// every one of its asks was a dry-run ask, counted as though somebody had been
+	// interrupted, and nobody ever had.
+	NotApplied int `json:"notApplied"`
 	// UnpricedRequests counts requests whose model was not in the price table, so
 	// a report can say how much of the total it could not account for rather than
 	// presenting an incomplete figure as a complete one.
@@ -65,13 +70,14 @@ func (t *Totals) add(e Event) {
 		t.Tools++
 	case KindDecision:
 		t.Decisions++
-		switch e.Decision {
-		case "deny":
-			if e.Blocked {
-				t.Blocked++
-			}
-		case "ask":
+		if e.Blocked {
+			t.Blocked++
+		}
+		if e.Decision == "ask" && !e.DryRun {
 			t.Asked++
+		}
+		if e.DryRun || e.Observed != "" {
+			t.NotApplied++
 		}
 	}
 }
@@ -119,6 +125,14 @@ type Report struct {
 	// Unmatched is what the team map never matched. Absent when everything matched,
 	// or when no map was in use.
 	Unmatched *Unmatched `json:"unmatchedIdentities,omitempty"`
+
+	// Asks says whether the actions the guard asked about went ahead. Nil when the
+	// report was not given a decision log to measure.
+	Asks *Asks `json:"asks,omitempty"`
+
+	// Quiet names sessions where tools ran that the guard did not decide. Nil unless
+	// the report was given both records, because it is the comparison of the two.
+	Quiet *QuietGuard `json:"quietGuard,omitempty"`
 
 	ByTeam  []Group `json:"byTeam"`
 	ByAgent []Group `json:"byAgent"`
