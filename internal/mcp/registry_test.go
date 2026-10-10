@@ -323,3 +323,102 @@ func TestAServerConfiguredNowhereIsLabelledByWhatItsNameCanShow(t *testing.T) {
 		}
 	}
 }
+
+const connectorRegistry = `
+version: 1
+servers:
+  - name: atlassian
+    status: approved
+    connector: 83261223-49e4-40a3-81e6-0f9387058f48
+  - name: sharepoint
+    status: denied
+    connector: 0c66cbd0-7f04-4609-a5ba-551391ddcc4f
+  - name: desktop browser
+    builtin: Claude_Browser
+`
+
+func seen(name, origin string) Observed {
+	return Observed{Agent: "claude-code", Machine: "m",
+		Server: model.MCPServer{Name: name, Transport: origin, Scope: model.ScopeObserved}}
+}
+
+// TestAConnectorOrBuiltinIsApprovedByWhatTheServiceOrTheAppNamesIt.
+func TestAConnectorOrBuiltinIsApprovedByWhatTheServiceOrTheAppNamesIt(t *testing.T) {
+	reg := load(t, connectorRegistry)
+	rep := Reconcile(reg, []Observed{
+		seen("83261223-49E4-40A3-81E6-0F9387058F48", OriginConnector),
+		seen("0c66cbd0-7f04-4609-a5ba-551391ddcc4f", OriginConnector),
+		seen("Claude_Browser", OriginBuiltin),
+		seen("ccd_pr", OriginBuiltin),
+	})
+	want := map[string]Verdict{
+		"83261223-49E4-40A3-81E6-0F9387058F48": VerdictApproved,
+		"0c66cbd0-7f04-4609-a5ba-551391ddcc4f": VerdictDenied,
+		"Claude_Browser":                       VerdictApproved,
+		"ccd_pr":                               VerdictUnregistered,
+	}
+	for _, r := range rep.Results {
+		if r.Verdict != want[r.Name] {
+			t.Errorf("%s: %s, want %s (%s)", r.Name, r.Verdict, want[r.Name], r.Detail)
+		}
+		if r.Verdict == VerdictApproved && r.Identity != "connector" && r.Identity != "builtin" {
+			t.Errorf("%s matched on %s", r.Name, r.Identity)
+		}
+	}
+}
+
+// TestAConfiguredServerNeverPassesAsAConnectorOrABuiltin. A developer can call a server
+// in their own file anything, a UUID or the desktop app's names included; it is
+// identified by its command, and an approval by connector id or built-in name must not
+// reach it.
+func TestAConfiguredServerNeverPassesAsAConnectorOrABuiltin(t *testing.T) {
+	reg := load(t, connectorRegistry)
+	impostors := []Observed{
+		{Agent: "claude-code", Server: model.MCPServer{Name: "83261223-49e4-40a3-81e6-0f9387058f48",
+			Command: "node", Args: []string{"exfil.js"}, Scope: model.ScopeUser}},
+		{Agent: "claude-code", Server: model.MCPServer{Name: "Claude_Browser", Transport: OriginBuiltin,
+			Command: "node", Args: []string{"evil.js"}, Scope: model.ScopeProject}},
+		// Observed, but its name is not what its claimed origin's names look like.
+		seen("not-a-uuid", OriginConnector),
+		seen("Claude_Browserx", OriginBuiltin),
+	}
+	for _, r := range Reconcile(reg, impostors).Results {
+		if r.Verdict == VerdictApproved {
+			t.Errorf("%s (%s) was approved: %s", r.Name, r.Scope, r.Detail)
+		}
+	}
+}
+
+// TestARegistryEntryThatCouldApproveTooMuchIsRefused.
+func TestARegistryEntryThatCouldApproveTooMuchIsRefused(t *testing.T) {
+	for name, entry := range map[string]string{
+		"not a uuid":            "connector: atlassian",
+		"not a built-in":        "builtin: my-server",
+		"two identities":        "connector: 83261223-49e4-40a3-81e6-0f9387058f48\n    command: [node, x.js]",
+		"builtin and url":       "builtin: terminal\n    url: https://x.test",
+		"connector and builtin": "connector: 83261223-49e4-40a3-81e6-0f9387058f48\n    builtin: terminal",
+	} {
+		path := filepath.Join(t.TempDir(), "r.yaml")
+		os.WriteFile(path, []byte("version: 1\nservers:\n  - name: x\n    "+entry+"\n"), 0o644)
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// TestTheShippedExampleRegistryLoads. Every shipped example is loaded by a test: each of
+// them broke silently at least once before that rule existed.
+func TestTheShippedExampleRegistryLoads(t *testing.T) {
+	r, err := Load(filepath.Join("..", "..", "examples", "mcp", "registry.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var connector, builtin bool
+	for _, e := range r.Servers {
+		connector = connector || e.Connector != ""
+		builtin = builtin || e.Builtin != ""
+	}
+	if !connector || !builtin {
+		t.Error("the example no longer shows a connector or a built-in entry")
+	}
+}

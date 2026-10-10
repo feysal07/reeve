@@ -57,3 +57,23 @@ servers:
       an agent direct query access to the payments database. Kept here rather than
       deleted. An entry that is simply absent looks like one nobody has looked at,
       and the next person re-runs a review that already happened.
+
+  # Servers no configuration file lists, which only the guard's log shows: reeve scan
+  # names them under "MCP servers in use that no configuration file lists". A claude.ai
+  # connector is identified by its id, the UUID its tools are named by; a desktop
+  # built-in by the app's own name for it. Neither can match a configured server,
+  # whatever that server is called.
+  - name: atlassian
+    owner: platform
+    status: trial
+    reviewed: 2026-10-10
+    connector: 83261223-49e4-40a3-81e6-0f9387058f48
+    notes: >-
+      Creates and edits tracker issues. Under trial while the write tools are measured
+      with an observe rule; see the policy.
+
+  - name: desktop-browser
+    owner: platform
+    status: approved
+    reviewed: 2026-10-10
+    builtin: Claude_Browser
