@@ -190,6 +190,23 @@ serviceMonitor:
   relabelings: []
   metricRelabelings: []
 
+# The Grafana dashboard, as a ConfigMap for Grafana's dashboard sidecar (the
+# kube-prometheus-stack and grafana charts both run one). Off by default, because
+# without a sidecar watching for it nothing loads it.
+#
+# It is the same dashboard the compose quickstart provisions. Its datasource is a
+# variable, so it works against whichever Prometheus your Grafana already has.
+grafanaDashboard:
+  enabled: false
+  # The label your sidecar watches for. grafana_dashboard: "1" is the default in
+  # both charts named above; change it if yours is configured differently.
+  labels:
+    grafana_dashboard: "1"
+  # Some sidecars put the dashboard in a folder named by an annotation.
+  annotations: {}
+  # The namespace the sidecar watches, when it is not this release's.
+  namespace: ""
+
 # Alerts, as a PrometheusRule. Also off by default, and for the same reason.
 #
 # Metrics without alerts are a dashboard nobody opens. The two that matter are

@@ -25,8 +25,8 @@ list. **Planned** means it has not been written yet; it does not soften the prom
   policy bundle format.
 - **The telemetry pipeline.** Collector, normalisation to a common event model, cost
   computation at your own rates, team attribution, and the Prometheus metrics the
-  collector reports about itself. Dashboards and alert rules: alert rules ship with the
-  Helm chart, dashboards are *planned*.
+  collector reports about itself. Dashboards and alert rules: both ship with the Helm
+  chart, and the dashboard with the compose quickstart as well.
 - **The audit store.** The event and decision record, retained for as long as you
   configure and no less. Reeve will never shorten what the free edition keeps, or gate
   reading back what it has already written, including rotation with tamper-evident
