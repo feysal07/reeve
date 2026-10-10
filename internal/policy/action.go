@@ -50,7 +50,10 @@ type Action struct {
 	// ToolName is the agent's own name for the tool, preserved so that a rule can
 	// target something Reeve has not classified.
 	ToolName string `json:"toolName,omitempty"`
-	Kind     Kind   `json:"kind"`
+	// ToolUseID names this tool call, when the agent supplies one, so what happened
+	// after it can be joined to the decision made before it.
+	ToolUseID string `json:"toolUseId,omitempty"`
+	Kind      Kind   `json:"kind"`
 
 	// Command is the full command line, for shell actions.
 	Command string `json:"command,omitempty"`

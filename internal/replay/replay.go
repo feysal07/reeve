@@ -52,6 +52,7 @@ type Record struct {
 	SessionID   string        `json:"sessionId,omitempty"`
 	Kind        policy.Kind   `json:"kind"`
 	Tool        string        `json:"tool,omitempty"`
+	ToolUseID   string        `json:"toolUseId,omitempty"`
 	Command     string        `json:"command,omitempty"`
 	Paths       []string      `json:"paths,omitempty"`
 	URLs        []string      `json:"urls,omitempty"`

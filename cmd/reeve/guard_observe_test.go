@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
 	"github.com/feysal07/reeve/internal/replay"
@@ -156,5 +158,44 @@ rules:
 	}
 	if mcpCovered(p, "production", policy.EffectAsk) {
 		t.Error("an observe rule counted as covering production MCP calls")
+	}
+}
+
+// TestAnOutcomeIsRecordedBesideTheDecisionLogAndNotInIt. In the decision log it would be
+// read as a decision by every counting rule, replay and older build, so a repetition rule
+// would count each action twice.
+func TestAnOutcomeIsRecordedBesideTheDecisionLogAndNotInIt(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "decisions.jsonl")
+	o := hook.Outcome{Event: "PostToolUse", SessionID: "s", ToolUseID: "toolu_1", ToolName: "Bash"}
+	recordOutcome("", log, model.AgentClaudeCode, o, time.Now())
+	out, exists, err := telemetry.ReadOutcomes(filepath.Join(dir, telemetry.OutcomesFile))
+	if err != nil || !exists || len(out) != 1 || out[0].ToolUseID != "toolu_1" || out[0].Result != telemetry.OutcomeRan {
+		t.Fatalf("outcomes = %+v (exists %v, err %v)", out, exists, err)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Error("recording an outcome wrote to the decision log")
+	}
+
+	o.Failed, o.ToolUseID = true, "toolu_2"
+	explicit := filepath.Join(dir, "elsewhere.jsonl")
+	recordOutcome(explicit, log, model.AgentClaudeCode, o, time.Now())
+	if out, _, _ := telemetry.ReadOutcomes(explicit); len(out) != 1 || out[0].Result != telemetry.OutcomeFailed {
+		t.Errorf("--outcomes was not honoured, or a failure was not recorded as failed: %+v", out)
+	}
+
+	// Nothing to join on, so nothing worth writing.
+	o.ToolUseID = ""
+	recordOutcome(explicit, log, model.AgentClaudeCode, o, time.Now())
+	if got := strings.Count(readFile(t, explicit), "\n"); got != 1 {
+		t.Errorf("an outcome with no tool-use id was written: %d lines", got)
+	}
+}
+
+// TestTheDecisionLineCarriesTheToolUseID, so the outcome can be joined to it.
+func TestTheDecisionLineCarriesTheToolUseID(t *testing.T) {
+	act := policy.Action{Agent: model.AgentClaudeCode, Kind: policy.KindShell, ToolUseID: "toolu_9"}
+	if r := newDecisionRecord(act, policy.Decision{Effect: policy.EffectAsk}, "", 0, false); r.ToolUseID != "toolu_9" {
+		t.Errorf("toolUseId = %q", r.ToolUseID)
 	}
 }
