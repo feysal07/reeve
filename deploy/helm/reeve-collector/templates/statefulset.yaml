@@ -75,6 +75,11 @@ spec:
             {{- if include "reeve-collector.pricesConfigMap" . }}
             - --prices=/etc/reeve/prices/prices.yaml
             {{- end }}
+            {{- if ne .Values.collector.auth.mode "none" }}
+            - --auth={{ .Values.collector.auth.mode }}
+            - --trust=/etc/reeve/auth/trust/trust.yaml
+            - --keys=/etc/reeve/auth/keys/jwks.json
+            {{- end }}
             {{- if .Values.collector.verbose }}
             - --verbose
             {{- end }}
@@ -119,7 +124,15 @@ spec:
               mountPath: /etc/reeve/prices
               readOnly: true
             {{- end }}
-      {{- if or (not .Values.persistence.enabled) .Values.persistence.existingClaim (include "reeve-collector.teamsConfigMap" .) (include "reeve-collector.pricesConfigMap" .) }}
+            {{- if ne .Values.collector.auth.mode "none" }}
+            - name: auth-trust
+              mountPath: /etc/reeve/auth/trust
+              readOnly: true
+            - name: auth-keys
+              mountPath: /etc/reeve/auth/keys
+              readOnly: true
+            {{- end }}
+      {{- if or (not .Values.persistence.enabled) .Values.persistence.existingClaim (include "reeve-collector.teamsConfigMap" .) (include "reeve-collector.pricesConfigMap" .) (ne .Values.collector.auth.mode "none") }}
       volumes:
         {{- if not .Values.persistence.enabled }}
         - name: store
@@ -138,6 +151,14 @@ spec:
         - name: prices
           configMap:
             name: {{ include "reeve-collector.pricesConfigMap" . }}
+        {{- end }}
+        {{- if ne .Values.collector.auth.mode "none" }}
+        - name: auth-trust
+          configMap:
+            name: {{ .Values.collector.auth.trustConfigMap }}
+        - name: auth-keys
+          configMap:
+            name: {{ .Values.collector.auth.keysConfigMap }}
         {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}

@@ -623,9 +623,79 @@ client-supplied attribute. Identities are marked `asserted` in the stored event,
 consumer knows how much weight to give them. Spend that matches nothing lands in an
 `unattributed` bucket rather than disappearing.
 
-For attribution that is proven rather than asserted, put an authenticating proxy in
-front of the collector and derive identity from the token. That is the right answer and
-is not built yet.
+### Proven rather than asserted: authenticating the collector
+
+The collector can verify who sent a batch, with the same offline verifier the guard
+uses for `reeve login`:
+
+```
+reeve collect --store events.jsonl --auth oidc  --trust trust.yaml --keys jwks.json
+reeve collect --store events.jsonl --auth mixed --trust trust.yaml --keys jwks.json
+```
+
+- `--trust` is the trust configuration `reeve login` uses: issuer, audience, and
+  optionally `teamFromClaim` and `teamPriority`.
+- `--keys` is the provider's published key set (its JWKS document) as a file. The
+  collector fetches nothing - an identity provider outage changes nothing until a token
+  expires - and re-reads the file whenever it changes, so a rotation reaches a running
+  collector without a restart. A file that stops parsing fails verification rather than
+  falling back to the keys read before.
+
+With `oidc` every batch needs `Authorization: Bearer <ID token>`; one without is refused
+with 401. With `mixed` a batch without a token is accepted and its events stay asserted,
+for agents that can only send fixed headers. In both, **a token that is sent and does not
+verify is refused** - expired, another issuer or audience, a login older than
+`maxSessionAge`, a bad signature - rather than downgraded to asserted, which would let a
+forged token through with nothing recording that anybody tried.
+
+A verified token replaces whatever identity the agent claimed, on every event in the
+batch: the subject from the token, the email only when the provider says it verified it
+(`email_verified`), and the team from the provider's groups when `teamFromClaim` is set,
+otherwise from the team map exactly as before. The email is dropped without
+`email_verified` because the team map's aliases and domains match on it, and an address
+somebody typed into their own profile - a colleague's - would otherwise be recorded as
+that colleague, verified. `algorithms` in the trust configuration is enforced here, as it
+now is for `reeve login` and the guard; before this release nothing consulted it. Those events are
+stored with `"verified": true`. Two collector metrics say how it is going:
+`reeve_batches_unauthenticated_total{reason}` (missing or invalid) and
+`reeve_events_identity_total{identity}` (verified or asserted).
+
+On the agent's side, `reeve otel-headers` prints the login token as headers, for Claude
+Code's `otelHeadersHelper` setting, which runs it at start-up and every 29 minutes:
+
+```json
+{ "otelHeadersHelper": "reeve otel-headers" }
+```
+
+It checks the token locally first. One that would not verify is not sent, the reason goes
+to stderr, and it prints `{}` and exits 0 regardless - a helper that fails is an export
+that stops, and an agent that cannot export carries on working, so the gap would show up
+as silence. Dynamic headers apply to the HTTP protocols only.
+
+Every route that accepts data is authenticated, traces and `/stats` included; `/healthz`
+is not. A collector that cannot read its key set answers 503 rather than 401, because
+OTLP exporters treat 401 as final and drop the batch, and logs the reason once per change
+to the file. `--trust` is read at start-up only: restart the collector to change it.
+
+What it does not do, stated so nobody infers it:
+
+- **It does not terminate TLS.** A bearer token can be replayed by anybody who sees it
+  until it expires, and the collector speaks plain HTTP, so on any address but loopback
+  it needs TLS in front; it warns at start-up when it is not on loopback. `maxSessionAge`
+  bounds how old a login may be, not how long a captured token stays usable.
+- **It does not bind a session to a person.** A verified token proves who sent a batch,
+  not that the session ids in it are theirs. Anybody who can send to the collector - with
+  any valid token, or with none in mixed mode - can post tool events under another
+  session's id, which `guard.quiet` would then report. Those events are recorded under
+  the sender's verified identity, so the report can be traced back; it cannot be
+  prevented here.
+- **Budgets still count every event.** A per-person budget totals verified and asserted
+  events alike. Verified tells you which figures are evidence; it does not yet change
+  what a rule counts.
+
+In the Helm chart, set `collector.auth.mode` with `trustConfigMap` and `keysConfigMap`.
+`oidc` counts as authentication for the Ingress, so `ingress.authenticatedByProxy` is
+not needed with it; `mixed` still accepts a batch with no token, so it does not count.
 
 ## Pricing
 

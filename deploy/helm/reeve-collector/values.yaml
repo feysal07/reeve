@@ -60,6 +60,23 @@ collector:
     content: ""
     existingConfigMap: ""
 
+  # Who sent a batch. none records whatever identity each agent claims, marked
+  # asserted. oidc requires a bearer token from your identity provider on every
+  # batch and records the identity it proves, verified; mixed verifies a token when
+  # one is sent and records a batch without one as asserted. A token that is sent
+  # and fails is refused in both. See docs/TELEMETRY.md.
+  #
+  # The collector fetches nothing from the provider. Give it the trust configuration
+  # and the provider's published key set as ConfigMaps you keep current - the key set
+  # is re-read whenever the mounted file changes, so a rotation needs no restart.
+  auth:
+    mode: none
+    # A ConfigMap holding a `trust.yaml` key: issuer, audience, and optionally
+    # teamFromClaim and teamPriority, as for reeve login.
+    trustConfigMap: ""
+    # A ConfigMap holding a `jwks.json` key: the provider's JWKS document.
+    keysConfigMap: ""
+
   # Prometheus metrics about the collector itself: what it received, what it wrote,
   # what it could not price, and how big the store has grown.
   #
@@ -112,12 +129,13 @@ service:
   nodePort: ""
 
 # Agents run on developer machines, outside the cluster, so something has to let
-# them in. An Ingress is the usual answer and it is off by default, because the
-# collector has no authentication of its own: anything that can POST to it can
-# write events, and a forged event is indistinguishable from a real one.
+# them in. An Ingress is the usual answer and it is off by default, because unless
+# collector.auth.mode is oidc anything that can POST to it can write events, and a
+# forged event is indistinguishable from a real one.
 #
-# To enable it you must supply TLS and confirm that authentication is enforced in
-# front of the collector. The template refuses to render otherwise.
+# To enable it you must supply TLS, and either set collector.auth.mode to oidc or
+# confirm that authentication is enforced in front of the collector. The template
+# refuses to render otherwise.
 ingress:
   enabled: false
   className: ""
@@ -136,7 +154,8 @@ ingress:
 
   # Set to true to confirm that requests are authenticated before they reach the
   # collector, by mutual TLS, an OAuth2 proxy, an ingress auth annotation or a
-  # service mesh. This is an assertion you are making, not something the chart
+  # service mesh. Not needed when collector.auth.mode is oidc; still needed for
+  # mixed, which accepts a batch with no token. This is an assertion you are making, not something the chart
   # can check. It exists so that exposing an unauthenticated write endpoint has
   # to be a decision someone took, rather than a default they inherited.
   authenticatedByProxy: false

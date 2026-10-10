@@ -916,6 +916,27 @@ esac
 
 step 6 "Telemetry: receive what agents report, normalise it, price it"
 
+# A collector told to verify tokens and given nothing to verify them with must not
+# start: it would refuse every batch, or accept every one.
+AUTH_OUT=$("$REEVE" collect --addr 127.0.0.1:0 --store "$SANDBOX/auth-events.jsonl" --auth oidc 2>&1)
+AUTH_CODE=$?
+case "$AUTH_OUT" in
+    *"needs --trust"*"--keys"*)
+        [ "$AUTH_CODE" != "0" ] &&
+            check "a collector asked to verify tokens with nothing to verify them against does not start" 1 ||
+            check "a collector asked to verify tokens with nothing to verify them against does not start" 0 "it started" ;;
+    *) check "a collector asked to verify tokens with nothing to verify them against does not start" 0 "$AUTH_OUT" ;;
+esac
+# With no login, the headers helper sends no token and still answers, so the agent's
+# export carries on and a mixed-mode collector records the batch as asserted.
+NOLOGIN="$SANDBOX/no-login"
+mkdir -p "$NOLOGIN"
+HEADERS_OUT=$(env HOME="$NOLOGIN" USERPROFILE="$NOLOGIN" "$REEVE" otel-headers 2>/dev/null)
+HEADERS_CODE=$?
+[ "$HEADERS_CODE" = "0" ] && [ "$HEADERS_OUT" = "{}" ] &&
+    check "with no login the telemetry headers helper sends no token and still answers" 1 ||
+    check "with no login the telemetry headers helper sends no token and still answers" 0 "exit $HEADERS_CODE, printed '$HEADERS_OUT'"
+
 [ "$PORT" = "0" ] && PORT=$(free_port)
 note "using port $PORT (chosen by the OS, so an existing collector on 4317 or 4318 does not clash)"
 

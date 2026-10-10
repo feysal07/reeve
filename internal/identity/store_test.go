@@ -285,3 +285,15 @@ func TestAnUnusableKeySetIsRefusedBeforeItIsCached(t *testing.T) {
 		t.Error("the unusable key set was written anyway")
 	}
 }
+
+// TestAMachineHonoursTheTrustConfigurationsAlgorithms. The guard's own path, not only the
+// verifier's: retiring RSA in the trust file must retire it for resolution too.
+func TestAMachineHonoursTheTrustConfigurationsAlgorithms(t *testing.T) {
+	now := time.Now()
+	dir, trust, mint := idpFixture(t)
+	SaveEnvelope(dir, &Envelope{Issuer: trust.Issuer, Audience: trust.Audience, IDToken: mint(goodClaims(now))})
+	trust.Algorithms = []string{AlgES256}
+	if _, err := Resolve(dir, trust, now); err == nil {
+		t.Error("an RS256 login resolved under a trust configuration allowing only ES256")
+	}
+}

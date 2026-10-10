@@ -52,6 +52,10 @@ type Identity struct {
 	// Asserted records that the identity came from the client rather than from a
 	// verified token, so a consumer knows how much weight it carries.
 	Asserted bool `json:"asserted,omitempty"`
+	// Verified records that the collector checked a token signed by the operator's
+	// identity provider on the batch this event arrived in, and the subject, email
+	// and team are what that token proved rather than what the agent said.
+	Verified bool `json:"verified,omitempty"`
 
 	// Unattributed records that the operator's team map matched nothing about this
 	// identity, so its team is the map's default rather than a team anybody chose.

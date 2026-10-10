@@ -814,6 +814,30 @@ Check "the same budget is guard-enforced where cost does reach the store" `
 
 Step 6 "Telemetry: receive what agents report, normalise it, price it"
 
+# A collector told to verify tokens and given nothing to verify them with must not
+# start: it would refuse every batch, or accept every one.
+$authOut = (& $reeve collect --addr 127.0.0.1:0 --store (Join-Path $Sandbox "auth-events.jsonl") --auth oidc 2>&1 | Out-String)
+$authCode = $LASTEXITCODE
+Check "a collector asked to verify tokens with nothing to verify them against does not start" `
+    ($authCode -ne 0 -and $authOut -match "needs --trust" -and $authOut -match "--keys") $authOut
+# With no login, the headers helper sends no token and still answers, so the agent's
+# export carries on and a mixed-mode collector records the batch as asserted.
+$noLogin = Join-Path $Sandbox "no-login"
+New-Item -ItemType Directory -Force -Path $noLogin | Out-Null
+$savedProfile4 = $env:USERPROFILE
+$savedHome4 = $env:HOME
+$env:USERPROFILE = $noLogin
+$env:HOME = $noLogin
+try {
+    $headersOut = (& $reeve otel-headers 2>$null | Out-String).Trim()
+    $headersCode = $LASTEXITCODE
+} finally {
+    $env:USERPROFILE = $savedProfile4
+    if ($savedHome4) { $env:HOME = $savedHome4 } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }
+}
+Check "with no login the telemetry headers helper sends no token and still answers" `
+    ($headersCode -eq 0 -and $headersOut -eq "{}") "exit $headersCode, printed '$headersOut'"
+
 if ($Port -eq 0) { $Port = Find-FreePort }
 Note "using port $Port (chosen by the OS, so an existing collector on 4317 or 4318 does not clash)"
 
