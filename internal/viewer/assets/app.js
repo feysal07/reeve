@@ -146,6 +146,58 @@ function renderSession() {
   if (hidden) ol.appendChild(el("li", hidden + " allowed or telemetry entries hidden.", "day"));
 }
 
+// The MCP page: what this machine's agents are configured to reach, against the
+// approved list. Read-only; see the comment in index.html.
+async function showMCP() {
+  $("list-view").hidden = true;
+  $("detail-view").hidden = true;
+  $("mcp-view").hidden = false;
+  $("page-title").textContent = "MCP servers";
+  $("tab-mcp").className = "current";
+  $("tab-sessions").className = "";
+  $("notes").replaceChildren();
+  setStatus("Loading…");
+  try {
+    const v = (await api("/api/mcp")).mcp;
+    $("mcp-registry").textContent = v.registry
+      ? "Compared with the approved list in " + v.registry + "."
+      : "No approved list was found.";
+    const notes = $("mcp-notes");
+    notes.replaceChildren();
+    (v.notes || []).forEach((n) => notes.appendChild(el("li", n)));
+    const tbody = $("mcp-servers").querySelector("tbody");
+    tbody.replaceChildren();
+    (v.report.results || []).forEach((r) => {
+      const tr = document.createElement("tr");
+      tr.appendChild(el("td", r.name));
+      tr.appendChild(el("td", r.agent));
+      tr.appendChild(el("td", r.scope));
+      tr.appendChild(el("td", r.verdict, "verdict " + r.verdict));
+      tr.appendChild(el("td", r.identity));
+      tr.appendChild(el("td", r.detail, "detail"));
+      tbody.appendChild(tr);
+    });
+    const unused = v.report.unusedEntries || [];
+    $("mcp-unused-title").hidden = unused.length === 0;
+    const ul = $("mcp-unused");
+    ul.replaceChildren();
+    unused.forEach((u) => ul.appendChild(el("li", u)));
+    setStatus((v.report.results || []).length ? "" : "No agent on this machine is configured with an MCP server.");
+  } catch (e) {
+    setStatus(e.message);
+  }
+}
+
+function showSessions() {
+  $("mcp-view").hidden = true;
+  $("page-title").textContent = "Sessions";
+  $("tab-sessions").className = "current";
+  $("tab-mcp").className = "";
+  showList();
+}
+
+$("tab-mcp").addEventListener("click", (e) => { e.preventDefault(); showMCP(); });
+$("tab-sessions").addEventListener("click", (e) => { e.preventDefault(); showSessions(); });
 $("back").addEventListener("click", (e) => { e.preventDefault(); showList(); });
 $("stopped").addEventListener("change", () => current && renderSession());
 showList();

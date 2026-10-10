@@ -32,8 +32,8 @@ list. **Planned** means it has not been written yet; it does not soften the prom
   reading back what it has already written, including rotation with tamper-evident
   retention. It is read back with `reeve sessions`, `reeve session` and `reeve view`.
 - **The MCP inventory and allow-lists.** What each agent is connected to, and the
-  administrator-owned lists that restrict it. A registry with its own interface is
-  *planned*.
+  administrator-owned lists that restrict it, with a read-only page in `reeve view`
+  showing each server against the approved list.
 - **Single sign-on.** OIDC login and group-based policy, against any compliant identity
   provider. Authentication is not a premium feature. It was the most expensive promise
   on this page, and the reason for making it in writing rather than deciding later under
