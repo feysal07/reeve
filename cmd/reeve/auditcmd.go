@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/feysal07/reeve/internal/audit"
@@ -24,9 +27,10 @@ func runAudit(args []string) error {
   reeve audit verify <log>   Check the log against everything sealed before
   reeve audit rotate <log>   Seal it, move it aside, and start the next one linked to it
                              (--keep 720h also removes segments older than that)
+  reeve audit schedule       Print how to seal hourly and rotate daily on this machine
 
-Seal on a schedule: hourly from cron, at the end of a session, or in the job that
-ships the log somewhere else. Nothing written since the last seal is covered by
+Seal on a schedule - reeve audit schedule prints the timers for this platform -
+or in the job that ships the log somewhere else. Nothing written since the last seal is covered by
 anything, so the gap between seals is the window an edit could hide in.
 
 Keep the .chain file somewhere the machine writing the log cannot reach. A seal
@@ -41,9 +45,112 @@ change both`)
 		return runAuditVerify(args[1:])
 	case "rotate":
 		return runAuditRotate(args[1:])
+	case "schedule":
+		return runAuditSchedule(args[1:])
 	default:
-		return fmt.Errorf("unknown audit command %q: expected seal, verify or rotate", args[0])
+		return fmt.Errorf("unknown audit command %q: expected seal, verify, rotate or schedule", args[0])
 	}
+}
+
+// runAuditSchedule prints the timers that seal and rotate the decision log.
+//
+// Printed, never installed. A scheduler entry outlives the command that made it, and
+// whoever owns the machine should see what is being added and run it themselves.
+func runAuditSchedule(args []string) error {
+	fs := flag.NewFlagSet("audit schedule", flag.ContinueOnError)
+	platform := fs.String("platform", runtime.GOOS, "windows, linux or darwin")
+	binary := fs.String("binary", "", "the reeve binary the timers run (default: this one)")
+	logFlag := fs.String("log", "", "the decision log (default: the one the installed guard writes)")
+	every := fs.Duration("every", time.Hour, "how often to seal")
+	keep := fs.Duration("keep", 0, "passed to rotate: remove segments older than this (default: keep everything)")
+	homeFlag := fs.String("home", "", "home directory of the account the timers run as (default: this one)")
+	asJSON := fs.Bool("json", false, "emit the plan as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	bin := *binary
+	if bin == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("could not tell where this binary is; give it with --binary: %w", err)
+		}
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		// go run builds into a temporary directory and removes it on exit, so a
+		// timer pointing there would fail every hour from the first one.
+		if tmp, err := filepath.EvalSymlinks(os.TempDir()); err == nil && within(exe, tmp) {
+			return fmt.Errorf("this binary is in the temporary directory (%s), which is deleted; "+
+				"give the installed one with --binary", exe)
+		}
+		bin = exe
+	}
+	logPath := *logFlag
+	if logPath == "" {
+		opts, err := installOptions("", "", "", false, false)
+		if err != nil {
+			return err
+		}
+		logPath = installedLogPath(opts)
+	}
+	if logPath == "" {
+		return fmt.Errorf("no decision log to seal: give one with --log")
+	}
+	home := *homeFlag
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if *platform != "windows" {
+		home = filepath.ToSlash(home)
+	}
+
+	plan, err := audit.PlanSchedule(audit.ScheduleOptions{
+		Platform: *platform, Home: home, Binary: bin, Log: logPath, Every: *every, Keep: *keep,
+	})
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(struct {
+			SchemaVersion string `json:"schemaVersion"`
+			audit.Schedule
+		}{audit.SchemaVersion, plan})
+	}
+
+	fmt.Printf("\nSeal %s every %s and rotate it daily at 03:10, on %s.\n", logPath, audit.ShortDuration(*every), plan.Platform)
+	fmt.Println("Nothing has been installed. Review, then run what follows yourself.")
+	for _, f := range plan.Files {
+		fmt.Printf("\n-- write %s\n\n%s", f.Path, f.Content)
+	}
+	fmt.Printf("\n-- then run\n\n")
+	for _, c := range plan.Install {
+		fmt.Printf("%s\n", c)
+	}
+	fmt.Printf("\n-- to remove it again\n\n")
+	for _, c := range plan.Remove {
+		fmt.Printf("%s\n", c)
+	}
+	if len(plan.Notes) > 0 {
+		fmt.Println()
+		for _, n := range plan.Notes {
+			fmt.Printf("  %s\n", wrap(n, 76, "  "))
+		}
+	}
+	if *keep == 0 {
+		fmt.Printf("\n  %s\n", wrap("Rotation keeps every segment. Pass --keep (for example 720h) to remove "+
+			"older ones; their chains are kept, so retention still verifies.", 76, "  "))
+	}
+	fmt.Println()
+	return nil
+}
+
+// within reports whether path is inside dir.
+func within(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func runAuditSeal(args []string) error {

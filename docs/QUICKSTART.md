@@ -44,7 +44,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 129 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 132 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -281,7 +281,7 @@ happened.
 ### 8. Prove the decision log has not been edited
 
 ```
-reeve audit seal   /var/log/reeve/decisions.jsonl   # from cron, hourly
+reeve audit seal   /var/log/reeve/decisions.jsonl   # hourly: reeve audit schedule prints the timer
 reeve audit verify /var/log/reeve/decisions.jsonl   # exits 2 if anything changed
 ```
 

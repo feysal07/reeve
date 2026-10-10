@@ -1458,6 +1458,23 @@ rules:
     Check "doctor does not write its own probe into the audit trail" `
         ($docBefore -eq $docAfter) "the log went from $docBefore to $docAfter lines"
 
+    # A log sealed once, or never, reads exactly like one under tamper-evidence: the
+    # guard answers, the log grows, and every line is covered by nothing.
+    $sealDoctor = (& $reeve doctor 2>&1 | Out-String)
+    Check "doctor says a decision log nobody has sealed is covered by nothing" `
+        ($sealDoctor -match "NEVER SEALED" -and $sealDoctor -match "reeve audit schedule") $sealDoctor
+    $null = (& $reeve audit seal $docLog 2>&1)
+    $sealDoctor = (& $reeve doctor 2>&1 | Out-String)
+    Check "once sealed, doctor reports the seal instead" `
+        ($sealDoctor -notmatch "NEVER SEALED" -and $sealDoctor -match "seals        : 1,") $sealDoctor
+    # Printed, never installed: a timer outlives the command that made it.
+    $scheduleOut = (& $reeve audit schedule --platform linux --binary /opt/reeve/reeve `
+        --log /var/log/reeve/decisions.jsonl --home /home/dev 2>&1 | Out-String)
+    Check "audit schedule prints the timers and installs nothing" `
+        ($scheduleOut -match "reeve-seal\.timer" -and $scheduleOut -match "OnUnitActiveSec=60min" -and
+         $scheduleOut -match "systemctl --user enable --now" -and
+         -not (Test-Path (Join-Path $instHome ".config\systemd"))) $scheduleOut
+
     # A hook pointing at a binary that is gone is the commonest way this breaks, and
     # the one that looks like nothing at all. Installed from a copy which is then
     # deleted, so this tests what actually happens rather than what a text
