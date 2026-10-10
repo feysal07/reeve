@@ -109,16 +109,21 @@ type Installation struct {
 	// quietly starts reporting less than is there. This is what lets a report say
 	// how old its own knowledge is, rather than giving every answer the same
 	// confidence.
-	VerifiedAgainst string            `json:"verifiedAgainst,omitempty"`
-	BinaryPath      string            `json:"binaryPath,omitempty"`
-	ConfigFiles     []ConfigFile      `json:"configFiles,omitempty"`
-	Permissions     Permissions       `json:"permissions"`
-	MCPServers      []MCPServer       `json:"mcpServers,omitempty"`
-	Hooks           []Hook            `json:"hooks,omitempty"`
-	Telemetry       TelemetryConfig   `json:"telemetry"`
-	Auth            AuthConfig        `json:"auth"`
-	Capabilities    Capabilities      `json:"capabilities"`
-	Extra           map[string]string `json:"extra,omitempty"`
+	VerifiedAgainst string       `json:"verifiedAgainst,omitempty"`
+	BinaryPath      string       `json:"binaryPath,omitempty"`
+	ConfigFiles     []ConfigFile `json:"configFiles,omitempty"`
+	Permissions     Permissions  `json:"permissions"`
+	MCPServers      []MCPServer  `json:"mcpServers,omitempty"`
+	// MCPServersSeen are servers the guard's log shows this agent calling that no
+	// configuration file lists: claude.ai connectors attached to the account, servers
+	// built into the desktop app, or ones whose origin nothing here can see. Empty when
+	// the scan had no decision log to read, which is not the same as there being none.
+	MCPServersSeen []MCPSeen         `json:"mcpServersSeen,omitempty"`
+	Hooks          []Hook            `json:"hooks,omitempty"`
+	Telemetry      TelemetryConfig   `json:"telemetry"`
+	Auth           AuthConfig        `json:"auth"`
+	Capabilities   Capabilities      `json:"capabilities"`
+	Extra          map[string]string `json:"extra,omitempty"`
 }
 
 // Capabilities describes what a vendor's configuration system can express at all, as
@@ -153,6 +158,9 @@ const (
 	ScopeProject Scope = "project" // checked into the repository
 	ScopePlugin  Scope = "plugin"  // supplied by an installed plugin
 	ScopeUnknown Scope = "unknown"
+	// ScopeObserved is a server known only from the guard's log, configured nowhere
+	// this build can read.
+	ScopeObserved Scope = "observed"
 )
 
 // ConfigFile is a configuration source the adapter read.
@@ -241,6 +249,17 @@ type MCPServer struct {
 	// EnvKeys lists environment variable names passed to the server. Values are
 	// never read or stored: the names alone are enough to spot credential handoff.
 	EnvKeys []string `json:"envKeys,omitempty"`
+}
+
+// MCPSeen is an MCP server known only from being called.
+type MCPSeen struct {
+	Name string `json:"name"`
+	// Origin is connector, builtin or unknown: see internal/mcp.OriginOf.
+	Origin     string    `json:"origin"`
+	Calls      int       `json:"calls"`
+	LastCalled time.Time `json:"lastCalled"`
+	// Tools are the tool names called, at most ten, never their arguments.
+	Tools []string `json:"tools,omitempty"`
 }
 
 // Hook is one configured lifecycle hook.

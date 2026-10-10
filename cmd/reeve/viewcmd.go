@@ -93,16 +93,17 @@ func mcpInventory(explicit string) (viewer.MCPView, error) {
 			"nobody has approved or refused any of them. Write one with reeve mcp list, then pass "+
 			"--registry or save it as mcp-registry.yaml in Reeve's state directory.")
 	}
-	report, err := scan.Run(context.Background(), adapter.NewRegistry(supportedAdapters()...), scan.Options{Version: version})
+	// With the decision log, so servers known only from being called are on the page
+	// too: on the first real installation they were most of the traffic.
+	log := ""
+	if opts, err := installOptions("", "", "", false, false); err == nil {
+		log = installedLogPath(opts)
+	}
+	report, err := scan.Run(context.Background(), adapter.NewRegistry(supportedAdapters()...),
+		scan.Options{Version: version, DecisionLog: log})
 	if err != nil {
 		return v, err
 	}
-	var observed []mcp.Observed
-	for _, inst := range report.Installations {
-		for _, s := range inst.MCPServers {
-			observed = append(observed, mcp.Observed{Server: s, Agent: inst.Agent, Machine: "this machine"})
-		}
-	}
-	v.Report = mcp.Reconcile(reg, observed)
+	v.Report = mcp.Reconcile(reg, observedIn(report, "this machine"))
 	return v, nil
 }

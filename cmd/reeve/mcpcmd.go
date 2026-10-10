@@ -84,13 +84,26 @@ func observe(target string) ([]mcp.Observed, error) {
 		if machine == "" {
 			machine = l.Path
 		}
-		for _, inst := range l.Report.Installations {
-			for _, s := range inst.MCPServers {
-				out = append(out, mcp.Observed{Server: s, Agent: inst.Agent, Machine: machine})
-			}
-		}
+		out = append(out, observedIn(l.Report, machine)...)
 	}
 	return out, nil
+}
+
+// observedIn flattens one scan report's MCP servers: the configured ones, and the ones
+// known only from the guard's log, which carry their origin in Transport and are scoped
+// as observed so nothing mistakes them for a configuration file's.
+func observedIn(r model.Report, machine string) []mcp.Observed {
+	var out []mcp.Observed
+	for _, inst := range r.Installations {
+		for _, s := range inst.MCPServers {
+			out = append(out, mcp.Observed{Server: s, Agent: inst.Agent, Machine: machine})
+		}
+		for _, s := range inst.MCPServersSeen {
+			out = append(out, mcp.Observed{Agent: inst.Agent, Machine: machine,
+				Server: model.MCPServer{Name: s.Name, Transport: s.Origin, Scope: model.ScopeObserved}})
+		}
+	}
+	return out
 }
 
 func runMCPCheck(args []string) error {

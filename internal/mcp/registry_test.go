@@ -304,3 +304,22 @@ func TestFindingsAreOrderedWorstFirst(t *testing.T) {
 		t.Errorf("last result is %q, want the approved one", rep.Results[len(rep.Results)-1].Verdict)
 	}
 }
+
+// TestAServerConfiguredNowhereIsLabelledByWhatItsNameCanShow.
+func TestAServerConfiguredNowhereIsLabelledByWhatItsNameCanShow(t *testing.T) {
+	for name, want := range map[string]string{
+		"83261223-49e4-40a3-81e6-0f9387058f48": OriginConnector,
+		"83261223-49E4-40A3-81E6-0F9387058F48": OriginConnector,
+		"Claude_Browser":                       OriginBuiltin,
+		"ccd_session":                          OriginBuiltin,
+		"terminal":                             OriginBuiltin,
+		"cnp-oracle":                           OriginUnknown,
+		"83261223-49e4-40a3-81e6":              OriginUnknown,
+		"xccd_session":                         OriginUnknown,
+		"Claude_Browser_2":                     OriginUnknown,
+	} {
+		if got := OriginOf(name); got != want {
+			t.Errorf("OriginOf(%q) = %s, want %s", name, got, want)
+		}
+	}
+}

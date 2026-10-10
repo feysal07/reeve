@@ -86,7 +86,7 @@ who built it, since anybody who could replace the archive could replace the chec
 beside it.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 140 checks against it. The
+sandbox of four badly configured agents and asserts 141 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 
@@ -198,6 +198,12 @@ vulnerability, from a dated table of advisories shipped in the binary - each ent
 the advisory database page it was read from - and says when that table is more than
 ninety days old, or when an agent's version could not be read, rather than calling it
 clean.
+
+And it names the MCP servers an agent calls that no configuration file lists, read from
+the guard's own decision log: claude.ai connectors attached to the account, servers built
+into the desktop app, and ones configured somewhere the scan did not read. On the first
+real installation they were 78% of nine days' MCP calls, invisible to every check that
+reads configuration.
 
 Enforcement works for all five. `reeve guard` is the hook handler an agent runs
 before a tool call; it normalises the pending action, evaluates one policy that applies
