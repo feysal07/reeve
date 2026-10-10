@@ -108,7 +108,8 @@ function renderSession() {
   const dl = $("detail-facts");
   dl.replaceChildren();
   [["Agent", (s.agents || []).join(", ")], ["Who", who(s)], ["From", when(s.start)], ["To", when(s.end)],
-   ["Decisions", s.decisions + " (" + s.denied + " denied, " + s.asked + " asked)"],
+   ["Decisions", s.decisions + " (" + s.denied + " denied, " + s.asked + " asked" +
+     (s.notApplied ? ", " + s.notApplied + " recorded and not applied" : "") + ")"],
    ["Requests", s.requests + ", " + count(s.tokens) + " tokens"]].forEach(([k, v]) => {
     dl.appendChild(el("dt", k));
     dl.appendChild(el("dd", v));
@@ -128,14 +129,17 @@ function renderSession() {
     const d = new Date(e.time);
     const dayText = d.toLocaleDateString();
     if (dayText !== day) { day = dayText; ol.appendChild(el("li", dayText, "day")); }
-    const li = el("li", null, "entry " + e.source + (isRuling ? " " + e.effect : ""));
+    const li = el("li", null, "entry " + e.source + (isRuling ? " " + e.effect : "") + (isRuling && e.dryRun ? " unapplied" : ""));
     li.appendChild(el("span", d.toLocaleTimeString(), "time"));
-    const mark = e.source === "guard" ? (e.dryRun && e.effect === "deny" ? "would deny" : e.effect) : e.kind;
+    // A ruling that was not applied reads "would", whatever it was: in dry run every
+    // ask used to read "ask", as though somebody had been interrupted.
+    const mark = e.source === "guard" ? (e.dryRun && e.effect !== "allow" ? "would " + e.effect : e.effect) : e.kind;
     li.appendChild(el("span", mark, "mark"));
     li.appendChild(el("span", e.kind, "kind"));
     const summary = (e.summary || "").split(/\s+/).join(" ");
     li.appendChild(el("code", e.tokens ? summary + "  ·  " + count(e.tokens) + " tokens" : summary, "summary"));
     if (e.ruleId) li.appendChild(el("span", "rule " + e.ruleId, "rule"));
+    if (e.observed) li.appendChild(el("span", "would " + e.observed + " by rule " + e.observedRuleId + ", in observe mode", "rule"));
     if (e.reason && isRuling) li.appendChild(el("span", e.reason, "reason"));
     ol.appendChild(li);
   });

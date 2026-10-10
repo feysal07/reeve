@@ -90,6 +90,54 @@ fire on ordinary work before anyone is actually stopped.
 reeve guard --agent claude-code --dry-run --log /var/log/reeve/decisions.jsonl
 ```
 
+### One rule at a time: observe mode
+
+Dry run is the whole policy at once, which is right for the first week and wrong for
+every week after it. Once the proven rules should stop people, a new rule still needs
+measuring before it does. Put that rule in observe mode and leave the guard enforcing:
+
+```yaml
+- id: dr-database
+  mode: observe          # enforce (the default) or observe
+  decision: ask
+  reason: The disaster-recovery database is a copy of production.
+  match: {kind: [shell, mcp], environment: [dr]}
+```
+
+An observe rule is evaluated on every action, and whatever it would have decided is
+recorded. It is never applied: the agent is answered as though the rule were not there,
+and an enforced rule beside it decides exactly as before. On the first real installation
+this was the difference between a guard left in dry run for weeks, enforcing nothing,
+and one enforcing eleven rules while the twelfth was measured.
+
+What it changes, and where:
+
+- **The decision log** keeps the shape it has always had. When the agent was answered
+  allow, `effect` and `ruleId` are what the rules would have decided, with
+  `"dryRun": true` saying it was not applied and `"observe": true` saying an observe rule
+  decided it rather than a dry run. When an enforced rule asked or denied, `effect` and
+  `ruleId` say so, and a stricter verdict from an observe rule goes beside them in
+  `observed`, so the rule that asked somebody is the one credited with it. A build that
+  predates observe mode reads either shape correctly.
+- **`reeve report`, `reeve sessions` and `reeve view`** count only what was applied as
+  blocked, denied or asked, and count the rest as *not applied*. The timeline prints a
+  ruling that was not applied as "would ask" or "would deny", never as the ruling.
+- **`reeve policy test`** prints the applied decision and, beneath it, what an observe
+  rule would have decided. A cases file and `reeve policy replay` test the verdict,
+  observe rules included, so a rule is tested while it is being measured rather than
+  from the day it is switched on.
+- **`reeve policy compile`** emits nothing for an observe rule and reports it as
+  `observe`. Managed configuration has no observe mode, so emitting it would start
+  refusing people on every machine the file reached, including ones with no guard to
+  record why.
+
+Two refusals at load: a mode that is neither `enforce` nor `observe` (a typo must not
+quietly mean either), and an observe rule that allows, which could never be stricter
+than what was applied and so could never appear in the log.
+
+Switching a rule on is deleting one line. Replay the log first if the rule has changed
+since it was observed.
+
 Where the policy lives, strongest first:
 
 1. `REEVE_POLICY`

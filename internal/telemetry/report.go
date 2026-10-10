@@ -18,6 +18,11 @@ type Totals struct {
 	Blocked   int     `json:"blocked"`
 	Asked     int     `json:"asked"`
 	Decisions int     `json:"decisions"`
+	// NotApplied counts rulings recorded and not applied, from a dry run or a rule in
+	// observe mode. Kept apart from Blocked and Asked: on the first real installation
+	// every one of its asks was a dry-run ask, counted as though somebody had been
+	// interrupted, and nobody ever had.
+	NotApplied int `json:"notApplied"`
 	// UnpricedRequests counts requests whose model was not in the price table, so
 	// a report can say how much of the total it could not account for rather than
 	// presenting an incomplete figure as a complete one.
@@ -65,13 +70,14 @@ func (t *Totals) add(e Event) {
 		t.Tools++
 	case KindDecision:
 		t.Decisions++
-		switch e.Decision {
-		case "deny":
-			if e.Blocked {
-				t.Blocked++
-			}
-		case "ask":
+		if e.Blocked {
+			t.Blocked++
+		}
+		if e.Decision == "ask" && !e.DryRun {
 			t.Asked++
+		}
+		if e.DryRun || e.Observed != "" {
+			t.NotApplied++
 		}
 	}
 }

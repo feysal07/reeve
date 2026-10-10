@@ -63,7 +63,13 @@ type Record struct {
 	// Reason is what the developer was shown. Replay does not use it; a timeline
 	// of the session does.
 	Reason string `json:"reason,omitempty"`
-	DryRun bool   `json:"dryRun,omitempty"`
+	// DryRun means the agent was answered allow and Effect is what the rules would
+	// have decided; Observe that it came from a rule in observe mode rather than a dry
+	// run. Observed is an observe rule's stricter verdict on a line where an enforced
+	// rule applied something else.
+	DryRun   bool            `json:"dryRun,omitempty"`
+	Observe  bool            `json:"observe,omitempty"`
+	Observed *policy.Verdict `json:"observed,omitempty"`
 	// Who, Team and Identity are who the guard decided the action was taken by, and
 	// whether that identity was "verified" or "asserted". Empty when the guard
 	// resolved none, which it does whenever the policy in force had no rule that
@@ -71,6 +77,23 @@ type Record struct {
 	Who      string `json:"who,omitempty"`
 	Team     string `json:"team,omitempty"`
 	Identity string `json:"identity,omitempty"`
+}
+
+// AppliedEffect is what the agent was told, as opposed to what the rules decided.
+func (r Record) AppliedEffect() policy.Effect {
+	if r.DryRun {
+		return policy.EffectAllow
+	}
+	return r.Effect
+}
+
+// Verdict is what the rules decided, observe rules included: the stricter of what was
+// applied and what an observe rule would have done.
+func (r Record) Verdict() policy.Verdict {
+	if r.Observed != nil {
+		return *r.Observed
+	}
+	return policy.Verdict{Effect: r.Effect, RuleID: r.RuleID, Reason: r.Reason}
 }
 
 // verified reports a record whose identity a rule may rely on.
@@ -177,6 +200,12 @@ type Report struct {
 	EffectsNow    map[policy.Effect]int `json:"effectsNow"`
 	EffectsBefore map[policy.Effect]int `json:"effectsBefore"`
 
+	// ObservedNow counts the verdicts in EffectsNow that came from rules in observe
+	// mode. They are counted there because replay is for seeing what rules decide;
+	// they are counted here because none of them would stop or ask anybody, and a
+	// candidate that observes its new rule must not read as one that interrupts.
+	ObservedNow int `json:"observedNow"`
+
 	From, To time.Time `json:"-"`
 }
 
@@ -250,8 +279,17 @@ func Run(p *policy.Policy, records []Record, opts Options) Report {
 			act.History = historyBefore(records, i)
 		}
 
+		// Verdict against verdict. A log line records what the rules decided, with
+		// dryRun saying it was not applied, so the candidate is read the same way:
+		// observe rules included, or a policy observing a new rule would replay as
+		// though the rule were absent.
 		d := p.Evaluate(act)
-		o := Outcome{Record: r, Was: r.Effect, WasRule: r.RuleID, Now: d.Effect, NowRule: d.RuleID}
+		v := d.Strictest()
+		was := r.Verdict()
+		o := Outcome{Record: r, Was: was.Effect, WasRule: was.RuleID, Now: v.Effect, NowRule: v.RuleID}
+		if d.Observed != nil {
+			rep.ObservedNow++
+		}
 
 		rep.EffectsBefore[o.Was]++
 		rep.EffectsNow[o.Now]++

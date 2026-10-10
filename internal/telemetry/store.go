@@ -235,18 +235,21 @@ func ReadEvents(path string) ([]Event, error) {
 // shared so that the guard's log format can be read by an older or newer collector
 // without the two having to be deployed together.
 type decisionRecord struct {
-	Time       time.Time     `json:"time"`
-	Agent      model.AgentID `json:"agent"`
-	SessionID  string        `json:"sessionId"`
-	Kind       string        `json:"kind"`
-	Tool       string        `json:"tool"`
-	Command    string        `json:"command"`
-	Effect     string        `json:"effect"`
-	RuleID     string        `json:"ruleId"`
-	Reason     string        `json:"reason"`
-	ElapsedUS  int64         `json:"elapsedMicros"`
-	DryRun     bool          `json:"dryRun"`
-	PolicyFile string        `json:"policyFile"`
+	Time      time.Time     `json:"time"`
+	Agent     model.AgentID `json:"agent"`
+	SessionID string        `json:"sessionId"`
+	Kind      string        `json:"kind"`
+	Tool      string        `json:"tool"`
+	Command   string        `json:"command"`
+	Effect    string        `json:"effect"`
+	RuleID    string        `json:"ruleId"`
+	Reason    string        `json:"reason"`
+	ElapsedUS int64         `json:"elapsedMicros"`
+	DryRun    bool          `json:"dryRun"`
+	Observed  *struct {
+		Effect string `json:"effect"`
+	} `json:"observed"`
+	PolicyFile string `json:"policyFile"`
 }
 
 // ReadDecisions reads the guard's decision log and converts it into events.
@@ -273,7 +276,7 @@ func ReadDecisions(path string) ([]Event, error) {
 		if json.Unmarshal([]byte(line), &r) != nil {
 			continue
 		}
-		out = append(out, Event{
+		ev := Event{
 			Time:      r.Time,
 			Kind:      KindDecision,
 			Agent:     r.Agent,
@@ -285,8 +288,13 @@ func ReadDecisions(path string) ([]Event, error) {
 			// the action went ahead. Counting it as blocked would overstate what
 			// the deployment actually prevented.
 			Blocked: r.Effect == "deny" && !r.DryRun,
+			DryRun:  r.DryRun,
 			Source:  "guard",
-		})
+		}
+		if r.Observed != nil {
+			ev.Observed = r.Observed.Effect
+		}
+		out = append(out, ev)
 	}
 	return out, sc.Err()
 }

@@ -137,6 +137,11 @@ type Event struct {
 	Decision string `json:"decision,omitempty"`
 	RuleID   string `json:"ruleId,omitempty"`
 	Blocked  bool   `json:"blocked,omitempty"`
+	// DryRun means Decision was recorded and not applied: the agent was answered
+	// allow. Observed is an observe rule's stricter verdict beside a Decision that was
+	// applied. Both are rulings that stopped and asked nobody.
+	DryRun   bool   `json:"dryRun,omitempty"`
+	Observed string `json:"observed,omitempty"`
 
 	// Source records which pipeline produced this event, so a discrepancy between
 	// them can be investigated rather than averaged away.

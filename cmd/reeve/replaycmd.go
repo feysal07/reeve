@@ -84,7 +84,11 @@ func renderReplay(r replay.Report, show int, changedOnly bool) {
 	denied, asked := r.Interruptions()
 	wasDenied, wasAsked := r.EffectsBefore["deny"], r.EffectsBefore["ask"]
 	fmt.Printf("  stopped    : %d  (was %d)\n", denied, wasDenied)
-	fmt.Printf("  questioned : %d  (was %d)\n\n", asked, wasAsked)
+	fmt.Printf("  questioned : %d  (was %d)\n", asked, wasAsked)
+	if r.ObservedNow > 0 {
+		fmt.Printf("  observed   : %d of these from rules in observe mode, recorded and not applied\n", r.ObservedNow)
+	}
+	fmt.Println()
 
 	changes := r.ByRule()
 	if len(changes) == 0 {

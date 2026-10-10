@@ -25,7 +25,10 @@ import (
 )
 
 // SchemaVersion is the shape of the JSON the session commands emit.
-const SchemaVersion = "1.0"
+//
+// 1.1: denied and asked count what was applied; notApplied counts the rest. In 1.0 a
+// dry-run ask was counted as asked.
+const SchemaVersion = "1.1"
 
 // The two places an entry can come from.
 const (
@@ -48,7 +51,13 @@ type Entry struct {
 	Effect string `json:"effect,omitempty"`
 	RuleID string `json:"ruleId,omitempty"`
 	Reason string `json:"reason,omitempty"`
-	DryRun bool   `json:"dryRun,omitempty"`
+	// DryRun means Effect was recorded and not applied; Observe that it came from a
+	// rule in observe mode rather than a dry run. Observed and ObservedRule are an
+	// observe rule's stricter verdict beside an Effect that was applied.
+	DryRun       bool   `json:"dryRun,omitempty"`
+	Observe      bool   `json:"observe,omitempty"`
+	Observed     string `json:"observed,omitempty"`
+	ObservedRule string `json:"observedRuleId,omitempty"`
 
 	// Tokens and CostUSD are what a telemetry event recorded.
 	Tokens  int64   `json:"tokens,omitempty"`
@@ -70,13 +79,16 @@ type Session struct {
 	// partial picture, and says which half is missing.
 	Sources []string `json:"sources"`
 
-	Decisions int     `json:"decisions"`
-	Denied    int     `json:"denied"`
-	Asked     int     `json:"asked"`
-	Requests  int     `json:"requests"`
-	Tools     int     `json:"tools"`
-	Tokens    int64   `json:"tokens"`
-	CostUSD   float64 `json:"equivalentCostUSD"`
+	Decisions int `json:"decisions"`
+	// Denied and Asked count what the agent was told. NotApplied counts rulings that
+	// were recorded and not applied, which a dry run produces for every one of them.
+	Denied     int     `json:"denied"`
+	Asked      int     `json:"asked"`
+	NotApplied int     `json:"notApplied"`
+	Requests   int     `json:"requests"`
+	Tools      int     `json:"tools"`
+	Tokens     int64   `json:"tokens"`
+	CostUSD    float64 `json:"equivalentCostUSD"`
 
 	Entries []Entry `json:"entries,omitempty"`
 }
@@ -117,14 +129,20 @@ func Build(decisions []replay.Record, events []telemetry.Event) (sessions []Sess
 		s := get(d.SessionID)
 		e := Entry{Time: d.Time, Source: SourceGuard, Agent: d.Agent, Kind: string(d.Kind),
 			Summary: decisionSummary(d), Effect: string(d.Effect), RuleID: d.RuleID,
-			Reason: d.Reason, DryRun: d.DryRun}
+			Reason: d.Reason, DryRun: d.DryRun, Observe: d.Observe}
+		if d.Observed != nil {
+			e.Observed, e.ObservedRule = string(d.Observed.Effect), d.Observed.RuleID
+		}
 		s.Entries = append(s.Entries, e)
 		s.Decisions++
-		switch d.Effect {
+		switch d.AppliedEffect() {
 		case "deny":
 			s.Denied++
 		case "ask":
 			s.Asked++
+		}
+		if d.DryRun || d.Observed != nil {
+			s.NotApplied++
 		}
 		switch {
 		case d.Identity == "verified" && d.Who != "":

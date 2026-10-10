@@ -553,6 +553,38 @@ Check "an ask Gemini cannot ask is refused rather than allowed" `
     ($geminiAskCode -eq 2 -and $geminiAsk -match "policy engine") `
     "exit was $geminiAskCode"
 
+# Observe mode: one rule measured while the rest are enforced. Dry run is the whole
+# policy at once, and on the first real installation that kept a guard enforcing
+# nothing for weeks because one new rule was too noisy to switch on.
+$observePolicy = Join-Path $Sandbox "observe.yaml"
+$observeLog = Join-Path $Sandbox "observe.jsonl"
+Write-Text $observePolicy @'
+version: 1
+rules:
+  - id: proven
+    decision: deny
+    match: {kind: [shell], commandRuns: ["curl"]}
+  - id: measured
+    mode: observe
+    decision: deny
+    match: {kind: [shell], commandRuns: ["terraform destroy"]}
+'@
+'{"session_id":"o1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"terraform destroy -auto-approve"}}' |
+    & $reeve guard --agent claude-code --policy $observePolicy --log $observeLog 2>&1 | Out-Null
+$observeCode = $LASTEXITCODE
+$observeLines = Get-Content $observeLog -Raw
+Check "a rule in observe mode records what it would decide and stops nobody" `
+    ($observeCode -eq 0 -and $observeLines -match '"observe":true' -and $observeLines -match '"ruleId":"measured"') `
+    "exit was $observeCode"
+'{"session_id":"o1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://example.com"}}' |
+    & $reeve guard --agent claude-code --policy $observePolicy --log $observeLog 2>&1 | Out-Null
+$observeCode = $LASTEXITCODE
+Check "an enforced rule beside it still stops the action" ($observeCode -eq 2) "exit was $observeCode"
+$observeCompile = (& $reeve policy compile $observePolicy --agent claude-code 2>&1 | Out-String)
+Check "native configuration carries nothing from a rule in observe mode" `
+    ($observeCompile -notmatch "terraform destroy" -and $observeCompile -match "observed only") `
+    "the compiled file names the observed command, or the coverage has no observed rule"
+
 Step 5 "Enforcement: what happens when Reeve itself is broken"
 Note "This is what separates real enforcement from theatre."
 Write-Host ""
