@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -667,5 +668,48 @@ func TestAReplyInAnotherAgentsSpellingIsNoDecision(t *testing.T) {
 	}
 	if e, err := claude.Reads(nil, int(ExitBlock)); err != nil || e != policy.EffectDeny {
 		t.Error("exit 2 was not read as a refusal")
+	}
+}
+
+// TestTheReadmeSaysHowFarEachAgentIsProven. The status table is a public claim about
+// which agents have been seen working, and conformance.go is where that is recorded. A
+// table that said "yes" for an adapter written from documentation would be the project
+// overstating itself in the one place a stranger reads first; one that said "no" after an
+// agent was captured would bury progress. They are checked against each other.
+func TestTheReadmeSaysHowFarEachAgentIsProven(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[model.AgentID]string{
+		model.AgentClaudeCode: "Claude Code", model.AgentCopilotCLI: "GitHub Copilot CLI",
+		model.AgentCodexCLI: "Codex CLI", model.AgentGeminiCLI: "Gemini CLI", model.AgentCursor: "Cursor",
+	}
+	// Only the status table: the README has other tables with a row per agent.
+	rows := map[string]string{}
+	in := false
+	for _, line := range strings.Split(string(readme), "\n") {
+		if strings.HasPrefix(line, "| Agent | Discovery | Guard decides |") {
+			in = true
+			continue
+		}
+		if in && !strings.HasPrefix(line, "|") {
+			break
+		}
+		if cells := strings.Split(line, "|"); in && len(cells) >= 6 {
+			rows[strings.TrimSpace(cells[1])] = strings.TrimSpace(cells[5])
+		}
+	}
+	for _, agent := range SupportedAgents() {
+		c, _ := ConformanceFor(model.AgentID(agent))
+		name := names[model.AgentID(agent)]
+		seen, ok := rows[name]
+		if !ok {
+			t.Errorf("the README status table has no row for %s", name)
+			continue
+		}
+		if says := strings.HasPrefix(seen, "**Yes"); says != c.Observed {
+			t.Errorf("the README says %s has been seen on a real machine: %v; conformance.go says %v", name, says, c.Observed)
+		}
 	}
 }
