@@ -138,6 +138,34 @@ than what was applied and so could never appear in the log.
 Switching a rule on is deleting one line. Replay the log first if the rule has changed
 since it was observed.
 
+### Is it working: reeve doctor
+
+Registered is not working, and working is not refusing. `reeve doctor` checks each in
+turn, for every agent the guard is registered with:
+
+```
+  Claude Code          registered, dry run
+                       answers in 45ms
+                       refuses in the shape Claude Code reads, once enforcing
+                       330 decisions recorded
+```
+
+- **answers**: the registered command is run with a request in the shape that agent
+  sends, and the reply is read the way that agent reads it - not merely checked for
+  being JSON. A reply in another agent's spelling parses perfectly and carries no
+  decision the agent recognises, and an agent that finds none runs the tool.
+- **refuses**: run once more against a one-rule policy that refuses a harmless probe
+  command, with dry run removed, so it says what enforcing would do even on a machine in
+  dry run. Nothing runs the command; only the reply is examined. A hook that answers and
+  does not refuse in the agent's shape fails doctor: every deny would go ahead with the
+  log saying it was refused.
+- **decisions recorded**: whether the agent has ever actually called the hook. The two
+  probes prove Reeve's half; only this proves the agent's.
+
+Both probes write to a temporary log, never the real one. Where an agent's request shape
+was written from its documentation rather than captured from a real installation, doctor
+says so on that agent's line. Today only Claude Code's has been captured.
+
 Where the policy lives, strongest first:
 
 1. `REEVE_POLICY`

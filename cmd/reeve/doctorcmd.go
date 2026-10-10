@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/feysal07/reeve/internal/audit"
+	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/install"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/policy"
@@ -81,6 +83,12 @@ func runDoctor(args []string) error {
 		h.StorePath = flagValue(r.Command, "--store")
 		h.LogPath = flagValue(r.Command, "--log")
 		h.Answered, h.AnswerMS, h.AnswerDetail = probeGuard(r)
+		if h.Answered {
+			h.Refuses, h.RefuseDetail = probeRefusal(r)
+		}
+		if c, ok := hook.ConformanceFor(agent); ok {
+			h.ShapeObserved = c.Observed
+		}
 		h.SeenInLog = rep.Decisions.byAgent[agent]
 		rep.Agents = append(rep.Agents, h)
 	}
@@ -129,6 +137,13 @@ type agentHealth struct {
 	Answered     bool   `json:"answered"`
 	AnswerMS     int64  `json:"answerMs,omitempty"`
 	AnswerDetail string `json:"answerDetail,omitempty"`
+	// Refuses says a refusal reached the agent in a shape it reads as one. Probed with
+	// dry run removed, so it says what enforcing would do even on a dry-run machine.
+	Refuses      bool   `json:"refuses"`
+	RefuseDetail string `json:"refuseDetail,omitempty"`
+	// ShapeObserved says the request shape the probes use was captured from this
+	// agent on a real machine, rather than written from its documentation.
+	ShapeObserved bool `json:"requestShapeObserved"`
 	// SeenInLog is how many decisions this agent has ever recorded. Zero on a
 	// registered agent is the finding this command exists for.
 	SeenInLog int `json:"decisionsRecorded"`
@@ -208,7 +223,7 @@ func (r doctorReport) healthy() bool {
 			continue
 		}
 		any = true
-		if !a.Answered {
+		if !a.Answered || !a.Refuses {
 			return false
 		}
 	}
@@ -218,36 +233,110 @@ func (r doctorReport) healthy() bool {
 // probeGuard runs the exact command the agent would run and checks the answer.
 //
 // Only a command this tool recognises as its own is executed. Running whatever else
-// happens to be registered as a hook would be both dangerous — it is an arbitrary
-// command out of a file — and pointless, since nothing here could interpret the reply.
+// happens to be registered as a hook would be both dangerous - it is an arbitrary
+// command out of a file - and pointless, since nothing here could interpret the reply.
+//
+// The request is in the shape that agent sends, and the reply is read the way that
+// agent reads it. Found when this was rewritten: the old probe sent Gemini and Copilot
+// requests under field names the decoder never reads, and Cursor's in Claude Code's
+// shape, then passed any reply that was JSON. It answered "yes" for every agent while
+// proving nothing about any of them.
 func probeGuard(r install.Registration) (ok bool, ms int64, detail string) {
+	prog, argv, c, err := probeTarget(r)
+	if err != nil {
+		return false, 0, err.Error()
+	}
+	body, exit, elapsed, err := runProbe(prog, argv, c.Payload("true"))
+	if err != nil {
+		return false, elapsed, err.Error()
+	}
+	if _, err := c.Reads(body, exit); err != nil {
+		return false, elapsed, err.Error()
+	}
+	return true, elapsed, ""
+}
+
+// probeRefusal checks that a refusal reaches the agent in a shape it reads as one.
+//
+// Answering is not refusing. A guard can reply in a shape the agent parses and still
+// spell the decision so the agent finds none, and an agent that finds no decision runs
+// the tool: every deny the policy makes would go ahead, with the decision log saying
+// it was refused. So the registered command is run once more, against a policy that
+// refuses one harmless probe command, with dry run removed so the refusal is applied.
+// Nothing runs the command; only the reply is examined. This proves Reeve's half - that
+// the agent's request is understood and the refusal is in its shape - and not that the
+// agent calls the hook, which is what the decisions-recorded line is for.
+func probeRefusal(r install.Registration) (ok bool, detail string) {
+	prog, argv, c, err := probeTarget(r)
+	if err != nil {
+		return false, err.Error()
+	}
+	pol, err := os.CreateTemp("", "reeve-doctor-policy-*.yaml")
+	if err != nil {
+		return false, err.Error()
+	}
+	pol.WriteString(probePolicy)
+	pol.Close()
+	defer os.Remove(pol.Name())
+
+	argv = replaceFlag(argv, "--policy", pol.Name())
+	argv = withoutFlag(argv, "--dry-run")
+	body, exit, _, err := runProbe(prog, argv, c.Payload(hook.ProbeCommand))
+	if err != nil {
+		return false, err.Error()
+	}
+	got, err := c.Reads(body, exit)
+	switch {
+	case err != nil:
+		return false, err.Error()
+	case got != policy.EffectDeny:
+		return false, fmt.Sprintf("the agent would read the refusal as %s", got)
+	}
+	return true, ""
+}
+
+// probePolicy refuses the probe command and nothing else.
+const probePolicy = `version: 1
+name: reeve-doctor-probe
+rules:
+  - id: reeve-doctor-probe
+    decision: deny
+    reason: reeve doctor checking that a refusal reaches the agent in a shape it reads.
+    match: {kind: [shell], commandRuns: ["reeve-doctor-probe"]}
+`
+
+// probeTarget is the registered command, checked to be runnable, with what is known
+// about the agent's protocol.
+func probeTarget(r install.Registration) (string, []string, hook.Conformance, error) {
 	prog, argv := install.SplitCommand(r.Command)
 	if prog == "" {
-		return false, 0, "the registered command is empty"
+		return "", nil, hook.Conformance{}, fmt.Errorf("the registered command is empty")
 	}
 	if _, err := os.Stat(prog); err != nil {
 		// By far the most common way a hook stops working: the binary it names
 		// has moved or been deleted, and the agent gets an error it may well
 		// treat as permission to continue.
-		return false, 0, fmt.Sprintf("%s is not there any more", prog)
+		return "", nil, hook.Conformance{}, fmt.Errorf("%s is not there any more", prog)
 	}
-
-	payload, err := probePayload(r.Agent)
-	if err != nil {
-		return false, 0, err.Error()
+	c, ok := hook.ConformanceFor(r.Agent)
+	if !ok {
+		return "", nil, hook.Conformance{}, fmt.Errorf("no probe request is defined for %s", r.Agent)
 	}
+	return prog, argv, c, nil
+}
 
-	// The probe's decisions go to a throwaway log, never the real one.
-	//
-	// The decision log is the record of what an agent actually attempted, and it is
-	// the only record of what was refused. Writing a synthetic action into it would
-	// put something in the audit trail that never happened, and it would show up in
-	// reeve report as though it had. Redirected rather than removed, because a
-	// counting rule with no log to count from refuses, and the probe would then be
-	// measuring the absence of a log rather than the health of the hook.
+// runProbe runs the registered command once with a request on stdin.
+//
+// The probe's decisions go to a throwaway log, never the real one. The decision log is
+// the record of what an agent actually attempted, and it is the only record of what was
+// refused; a synthetic action written into it would show up in reeve report as though
+// it had happened. Redirected rather than removed, because a counting rule with no log
+// to count from refuses, and the probe would then be measuring the absence of a log
+// rather than the health of the hook.
+func runProbe(prog string, argv []string, payload string) (body []byte, exit int, ms int64, err error) {
 	tmp, err := os.CreateTemp("", "reeve-doctor-*.jsonl")
 	if err != nil {
-		return false, 0, err.Error()
+		return nil, 0, 0, err
 	}
 	tmpPath := tmp.Name()
 	tmp.Close()
@@ -256,49 +345,39 @@ func probeGuard(r install.Registration) (ok bool, ms int64, detail string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
 	cmd := exec.CommandContext(ctx, prog, argv...)
 	cmd.Stdin = strings.NewReader(payload)
 	start := time.Now()
-	out, err := cmd.Output()
-	elapsed := time.Since(start).Milliseconds()
+	out, runErr := cmd.Output()
+	ms = time.Since(start).Milliseconds()
 
 	// A non-zero exit is how several agents are told to refuse, so it is not a
 	// failure here. What matters is whether the reply is intelligible.
-	if err != nil && len(out) == 0 {
+	var ee *exec.ExitError
+	switch {
+	case errors.As(runErr, &ee):
+		exit = ee.ExitCode()
+	case runErr != nil:
 		if ctx.Err() != nil {
-			return false, elapsed, "the guard did not answer within ten seconds"
+			return nil, 0, ms, fmt.Errorf("the guard did not answer within ten seconds")
 		}
-		return false, elapsed, fmt.Sprintf("the guard produced no reply: %v", err)
+		return nil, 0, ms, fmt.Errorf("the guard could not be run: %v", runErr)
 	}
-	if len(strings.TrimSpace(string(out))) == 0 {
-		return false, elapsed, "the guard replied with nothing, which an agent reads as no opinion"
+	if len(strings.TrimSpace(string(out))) == 0 && exit != int(hook.ExitBlock) {
+		return nil, exit, ms, fmt.Errorf("the guard replied with nothing, which an agent reads as no opinion")
 	}
-	var reply map[string]any
-	if json.Unmarshal(out, &reply) != nil {
-		return false, elapsed, "the guard's reply is not JSON, so the agent cannot read it"
-	}
-	return true, elapsed, ""
+	return out, exit, ms, nil
 }
 
-// probePayload builds a request in the shape the named agent sends.
-//
-// Deliberately an innocuous action. This runs the real policy, and a probe that
-// pretended to delete something would be written into the decision log as though it
-// had been attempted.
-func probePayload(agent model.AgentID) (string, error) {
-	switch agent {
-	case model.AgentClaudeCode, model.AgentCursor:
-		return `{"hook_event_name":"PreToolUse","session_id":"reeve-doctor","tool_name":"Bash","tool_input":{"command":"true"}}`, nil
-	case model.AgentGeminiCLI:
-		return `{"event":"BeforeTool","session_id":"reeve-doctor","tool":{"name":"run_shell_command","args":{"command":"true"}}}`, nil
-	case model.AgentCopilotCLI:
-		return `{"event":"preToolUse","session_id":"reeve-doctor","tool":{"name":"shell","arguments":{"command":"true"}}}`, nil
-	case model.AgentCodexCLI:
-		return `{"hook_event_name":"PreToolUse","session_id":"reeve-doctor","tool_name":"shell","tool_input":{"command":"true"}}`, nil
-	default:
-		return "", fmt.Errorf("no probe request is defined for %s", agent)
+// withoutFlag removes a boolean flag.
+func withoutFlag(argv []string, flag string) []string {
+	out := make([]string, 0, len(argv))
+	for _, a := range argv {
+		if a != flag && a != flag+"=true" {
+			out = append(out, a)
+		}
 	}
+	return out
 }
 
 // replaceFlag sets a flag's value, adding the flag when it is not already there.
@@ -462,6 +541,22 @@ func renderDoctor(r doctorReport) {
 
 		if a.Answered {
 			fmt.Printf("  %-20s answers in %dms\n", "", a.AnswerMS)
+			if a.Refuses {
+				when := ""
+				if a.DryRun {
+					when = ", once enforcing"
+				}
+				fmt.Printf("  %-20s refuses in the shape %s reads%s\n", "", a.Name, when)
+			} else {
+				fmt.Printf("  %-20s DOES NOT REFUSE IN A SHAPE IT READS: %s\n", "", a.RefuseDetail)
+				problems = append(problems, fmt.Sprintf(
+					"%s's hook answers, but a refusal does not reach it as one: %s. Every action "+
+						"the policy means to stop would go ahead, with the log saying it was refused.",
+					a.Name, a.RefuseDetail))
+			}
+			if !a.ShapeObserved {
+				fmt.Printf("  %-20s (request shape from documentation; not yet seen from a real installation)\n", "")
+			}
 		} else {
 			fmt.Printf("  %-20s DOES NOT ANSWER: %s\n", "", a.AnswerDetail)
 			problems = append(problems, fmt.Sprintf(

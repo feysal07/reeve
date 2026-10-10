@@ -1512,6 +1512,10 @@ rules:
     $doctorOut = (& $reeve doctor 2>&1 | Out-String)
     Check "doctor proves the registered hook actually answers" `
         ($doctorOut -match "answers in") $doctorOut
+    # Answering is not refusing: a reply the agent parses and finds no decision in lets
+    # the tool run. The probe removes dry run and reads the reply as the agent would.
+    Check "doctor proves a refusal reaches the agent as one" `
+        ($doctorOut -match "refuses in the shape Claude Code reads") $doctorOut
 
     # The probe runs the real guard, so it must not write a synthetic action into
     # the record of what an agent actually attempted.

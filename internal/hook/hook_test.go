@@ -606,3 +606,66 @@ func TestAPostToolEventIsAnOutcomeAndNothingElseIs(t *testing.T) {
 		t.Errorf("PreToolUse tool_use_id = %q, %v", a.ToolUseID, err)
 	}
 }
+
+// TestEveryAgentsRequestIsUnderstoodAndEveryReplyReadAsMeant is the conformance suite:
+// for each agent, a request in the shape it sends decodes to the action it describes,
+// and each decision, encoded for that agent, is read by that agent as that decision.
+// Reads is written from the agent's side rather than from Encode's, so this fails when
+// the spelling is wrong, which is the failure that turns a refusal into permission.
+func TestEveryAgentsRequestIsUnderstoodAndEveryReplyReadAsMeant(t *testing.T) {
+	for _, agent := range SupportedAgents() {
+		c, ok := ConformanceFor(model.AgentID(agent))
+		if !ok {
+			t.Errorf("%s has no conformance entry, so doctor cannot probe it", agent)
+			continue
+		}
+		t.Run(agent, func(t *testing.T) {
+			a, err := Decode([]byte(c.Payload("terraform destroy -auto-approve")), c.Agent)
+			if err != nil || a.Kind != policy.KindShell || a.Command != "terraform destroy -auto-approve" {
+				t.Fatalf("decoded %+v (%v): the request in this agent's shape is not understood", a, err)
+			}
+			for _, want := range []policy.Effect{policy.EffectAllow, policy.EffectAsk, policy.EffectDeny} {
+				r := Encode(c.Agent, a.Event, policy.Decision{Effect: want, RuleID: "r"})
+				got, err := c.Reads(r.Body, int(r.Exit))
+				expect := want
+				if c.Agent == model.AgentGeminiCLI && want == policy.EffectAsk {
+					expect = policy.EffectDeny // refused rather than asked; see encodeGemini
+				}
+				if err != nil || got != expect {
+					t.Errorf("%s encoded, read as %q (%v), want %s", want, got, err, expect)
+				}
+			}
+			if c.Source == "" {
+				t.Error("no source says where this shape came from")
+			}
+		})
+	}
+}
+
+// TestAReplyInAnotherAgentsSpellingIsNoDecision. If Reads accepted any shape, the suite
+// above would pass whatever Encode wrote.
+func TestAReplyInAnotherAgentsSpellingIsNoDecision(t *testing.T) {
+	gemini, _ := ConformanceFor(model.AgentGeminiCLI)
+	claudeAllow := Encode(model.AgentClaudeCode, "PreToolUse", policy.Decision{Effect: policy.EffectAllow})
+	if _, err := gemini.Reads(claudeAllow.Body, 0); err == nil {
+		t.Error("Gemini read a decision out of Claude Code's reply shape")
+	}
+	claude, _ := ConformanceFor(model.AgentClaudeCode)
+	flat := Encode(model.AgentCopilotCLI, "", policy.Decision{Effect: policy.EffectDeny})
+	if _, err := claude.Reads(flat.Body, 0); err == nil {
+		t.Error("Claude Code read a decision out of a flat reply")
+	}
+	cursor, _ := ConformanceFor(model.AgentCursor)
+	if _, err := cursor.Reads([]byte(`{"permission":"maybe"}`), 0); err == nil {
+		t.Error("Cursor read a decision it does not have")
+	}
+	if e, _ := gemini.Reads([]byte(`{"decision":"ask"}`), 0); e != "" {
+		t.Error("Gemini read an ask, which its hook protocol cannot carry")
+	}
+	if _, err := claude.Reads([]byte(`not json`), 0); err == nil {
+		t.Error("a reply that is not JSON was read as a decision")
+	}
+	if e, err := claude.Reads(nil, int(ExitBlock)); err != nil || e != policy.EffectDeny {
+		t.Error("exit 2 was not read as a refusal")
+	}
+}
