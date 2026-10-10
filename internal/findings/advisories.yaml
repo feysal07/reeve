@@ -1,0 +1,45 @@
+# Published vulnerabilities in the agents Reeve scans, by the version that fixed them.
+#
+# Every entry has a source that was read, not remembered: the advisory database page
+# that states the affected range. An entry written from a summary is how the planning
+# notes for this project came to describe CVE-2026-54316 as a command-validator bypass,
+# when the advisory says it is a WebFetch pre-approval of huggingface.co.
+#
+# reviewed is the date somebody last checked these sources for new advisories. scan says
+# when it is old, because a table nobody has updated reads exactly like an agent with no
+# known vulnerabilities.
+#
+# An advisory with no fixed version is left out: a minimum version cannot be checked
+# against nothing, and flagging every installation would be a finding people learn to
+# scroll past.
+reviewed: 2026-10-01
+
+advisories:
+  - id: CVE-2026-54316
+    ghsa: GHSA-fg94-h982-f3mm
+    agent: claude-code
+    title: Out-of-band data exfiltration via the pre-approved huggingface.co domain in WebFetch
+    severity: critical
+    published: 2026-06-17
+    introduced: 0.2.54
+    fixed: 2.1.163
+    source: https://advisories.gitlab.com/npm/@anthropic-ai/claude-code/CVE-2026-54316/
+
+  - id: CVE-2026-21852
+    ghsa: GHSA-jh7p-qr78-84p7
+    agent: claude-code
+    title: API requests sent to a project's ANTHROPIC_BASE_URL before the trust prompt, leaking the key
+    severity: medium
+    published: 2026-01-21
+    fixed: 2.0.65
+    source: https://advisories.gitlab.com/npm/@anthropic-ai/claude-code/CVE-2026-21852/
+
+  - id: CVE-2026-12537
+    ghsa: GHSA-wpqr-6v78-jr5g
+    agent: gemini-cli
+    title: Remote code execution via workspace trust and tool allowlisting bypasses in headless mode
+    severity: critical
+    published: 2026-04-24
+    fixed: 0.39.1
+    alsoAffected: [0.40.0-preview.2]
+    source: https://github.com/advisories/GHSA-wpqr-6v78-jr5g

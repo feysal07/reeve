@@ -73,7 +73,7 @@ Builds for Linux, macOS and Windows on the
 build provenance. One static binary, no runtime, no dependencies.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 136 checks against it. The
+sandbox of four badly configured agents and asserts 137 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 
@@ -153,6 +153,12 @@ administrator-owned file or one the developer can edit, and reports findings tha
 what was observed, why it matters and how to fix it. It is read-only and makes no
 network calls. `--json` emits the full report; `--fail-on high` makes it usable as a
 CI gate.
+
+It also flags an agent installed below the version that fixed a published
+vulnerability, from a dated table of advisories shipped in the binary - each entry with
+the advisory database page it was read from - and says when that table is more than
+ninety days old, or when an agent's version could not be read, rather than calling it
+clean.
 
 Enforcement works for all five. `reeve guard` is the hook handler an agent runs
 before a tool call; it normalises the pending action, evaluates one policy that applies
