@@ -77,6 +77,14 @@ on the agent's own tool name, on the command line, on file paths, on a fetch URL
 on an MCP server and tool. Every field that is set must match, and a field with several
 values matches if any one of them does.
 
+`fetch` is anything that reaches the network, not only a web fetch. Claude Code's
+`Artifact`, `ArtifactData` and `ArtifactComments` (which publish a page or write to a
+database hosted on claude.ai), `PushNotification` and `RemoteTrigger` are classified as
+`fetch`; on the first real installation they were recorded as `other`, which no rule
+written against a kind reaches. They carry no URL, so a rule that means "this domain"
+should keep its `url` condition, and one that means "anything leaving the machine" can
+match the kind alone.
+
 Write a `reason` on every rule. A developer blocked without an explanation will find a
 way around the hook, and will be right to.
 
