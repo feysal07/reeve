@@ -19,6 +19,6 @@ require (
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/prometheus/common v0.72.0
-	go.opentelemetry.io/proto/otlp v1.11.0
+	go.opentelemetry.io/proto/otlp v1.11.1
 	google.golang.org/protobuf v1.36.12
 )
