@@ -39,6 +39,7 @@ var rules = []Rule{
 	agentNewerThanVerified,
 	telemetryCannotArrive,
 	knownVulnerabilities,
+	mcpCalledNotConfigured,
 }
 
 // Evaluate runs every rule against every installation.
@@ -671,5 +672,56 @@ func telemetryCannotArrive(inst model.Installation) []model.Finding {
 			"collector's HTTP port, normally 4318. If that endpoint is somebody else's " +
 			"collector rather than Reeve, this finding does not apply and is worth " +
 			"silencing deliberately.",
+	}}
+}
+
+// mcpCalledNotConfigured fires when the guard's log shows an agent calling MCP servers
+// that no configuration file lists.
+//
+// Found on the first real installation: 78% of nine days' MCP calls went to servers the
+// inventory never showed - claude.ai connectors writing to an issue tracker, and the
+// desktop app's own servers - so the approved list and `reeve mcp check` governed a
+// fifth of what the agent reached while reporting a clean, complete inventory. Only the
+// guard sees these, because they are attached to the account or built into the app.
+func mcpCalledNotConfigured(inst model.Installation) []model.Finding {
+	if len(inst.MCPServersSeen) == 0 {
+		return nil
+	}
+	label := map[string]string{
+		"connector": "claude.ai connector",
+		"builtin":   "built into the desktop app",
+		// Most often a project's own .mcp.json, which a scan run from another
+		// directory does not read: the first real installation's database servers were
+		// configured that way and showed here until scanned from their project.
+		"unknown": "in no configuration this scan read, perhaps a project's own",
+	}
+	var parts []string
+	calls := 0
+	for _, s := range inst.MCPServersSeen {
+		calls += s.Calls
+		noun := "calls"
+		if s.Calls == 1 {
+			noun = "call"
+		}
+		desc := fmt.Sprintf("%s (%s, %d %s", s.Name, label[s.Origin], s.Calls, noun)
+		if len(s.Tools) > 0 {
+			desc += ": " + strings.Join(s.Tools, ", ")
+		}
+		parts = append(parts, desc+")")
+	}
+	return []model.Finding{{
+		ID:       "mcp.called-not-configured",
+		Severity: model.SeverityMedium,
+		Agent:    inst.Agent,
+		Title:    "MCP servers in use that no configuration file lists",
+		Detail: fmt.Sprintf("The guard's log shows this agent making %d calls to %d MCP server(s) "+
+			"that appear in none of its configuration files. claude.ai connectors are attached "+
+			"to the account and arrive in every session; the desktop app brings servers of its "+
+			"own. An approved list checked against configuration files cannot see either, so "+
+			"it reports a complete inventory with these missing from it.", calls, len(inst.MCPServersSeen)),
+		Evidence: strings.Join(parts, "; "),
+		Remedy: "Decide on each: add it to the approved list by connector id or built-in name, " +
+			"or remove the connector from the account. `reeve mcp check` and the MCP page in " +
+			"`reeve view` report them as unregistered until you do.",
 	}}
 }

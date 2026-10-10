@@ -202,3 +202,26 @@ func TestScanRunsTheAdvisoryCheck(t *testing.T) {
 		t.Errorf("Evaluate did not run the advisory check: %s", got)
 	}
 }
+
+// TestServersInUseThatNoConfigurationListsAreAFinding.
+func TestServersInUseThatNoConfigurationListsAreAFinding(t *testing.T) {
+	inst := model.Installation{Agent: model.AgentClaudeCode, MCPServersSeen: []model.MCPSeen{
+		{Name: "83261223-49e4-40a3-81e6-0f9387058f48", Origin: "connector", Calls: 236, Tools: []string{"createJiraIssue"}},
+		{Name: "cnp-oracle", Origin: "unknown", Calls: 1},
+	}}
+	got := mcpCalledNotConfigured(inst)
+	if len(got) != 1 || got[0].ID != "mcp.called-not-configured" || got[0].Severity != model.SeverityMedium {
+		t.Fatalf("findings = %+v", got)
+	}
+	for _, want := range []string{"claude.ai connector, 236 calls: createJiraIssue", "perhaps a project's own, 1 call)", "237 calls to 2"} {
+		if !strings.Contains(got[0].Evidence+got[0].Detail, want) {
+			t.Errorf("finding lacks %q:\n%s\n%s", want, got[0].Detail, got[0].Evidence)
+		}
+	}
+	if mcpCalledNotConfigured(model.Installation{Agent: model.AgentClaudeCode}) != nil {
+		t.Error("a finding with nothing seen")
+	}
+	if !strings.Contains(ids(Evaluate([]model.Installation{inst})), "mcp.called-not-configured") {
+		t.Error("scan does not run the rule")
+	}
+}
