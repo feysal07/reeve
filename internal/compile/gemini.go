@@ -133,6 +133,10 @@ func (g *geminiCLI) Compile(p *policy.Policy, platform string) (Result, error) {
 	var doc geminiPolicyFile
 
 	for _, r := range p.Rules {
+		if r.Observes() {
+			res.Coverage = append(res.Coverage, observeCoverage(r))
+			continue
+		}
 		cov, rules, warnings := g.compileRule(r)
 		doc.Rules = append(doc.Rules, rules...)
 		res.Coverage = append(res.Coverage, cov)
@@ -474,7 +478,7 @@ func (g *geminiCLI) compileSettings(p *policy.Policy, platform string) (geminiSe
 // hasAsk reports whether any rule wants a human decision.
 func hasAsk(p *policy.Policy) bool {
 	for _, r := range p.Rules {
-		if r.Decision == policy.EffectAsk {
+		if r.Decision == policy.EffectAsk && !r.Observes() {
 			return true
 		}
 	}

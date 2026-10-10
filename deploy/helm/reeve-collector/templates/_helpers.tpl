@@ -89,6 +89,23 @@ failure costs nothing.
 Called once from the StatefulSet, which every install renders.
 */}}
 {{- define "reeve-collector.validate" -}}
+{{- $auth := .Values.collector.auth }}
+{{- if not (has $auth.mode (list "none" "oidc" "mixed")) }}
+{{- fail (printf "reeve-collector: collector.auth.mode %q is not none, oidc or mixed." $auth.mode) }}
+{{- end }}
+{{- if and (ne $auth.mode "none") (or (not $auth.trustConfigMap) (not $auth.keysConfigMap)) }}
+{{- fail (printf `reeve-collector: collector.auth.mode is %s but trustConfigMap or keysConfigMap is empty.
+
+A collector that verifies tokens needs the provider's issuer and audience
+(trust.yaml) and its published key set (jwks.json). Without them it would refuse
+every batch, or accept every one, and neither is what %s means.` $auth.mode $auth.mode) }}
+{{- end }}
+{{- if and (eq $auth.mode "none") (or $auth.trustConfigMap $auth.keysConfigMap) }}
+{{- fail `reeve-collector: collector.auth.trustConfigMap or keysConfigMap is set but collector.auth.mode is none.
+
+They would be mounted and never read, and the deployment would look as though it
+verified tokens. Set collector.auth.mode to oidc or mixed, or remove them.` }}
+{{- end }}
 {{- if gt (int .Values.replicaCount) 1 }}
 {{- fail (printf `reeve-collector: replicaCount is %d.
 
@@ -158,16 +175,16 @@ events that are indistinguishable from real ones.
 Set ingress.tls, or terminate TLS in front of the cluster and reach the collector
 by some other route.` }}
 {{- end }}
-{{- if not .Values.ingress.authenticatedByProxy }}
-{{- fail `reeve-collector: ingress.enabled is true but ingress.authenticatedByProxy is false.
+{{- if not (or .Values.ingress.authenticatedByProxy (eq .Values.collector.auth.mode "oidc")) }}
+{{- fail `reeve-collector: ingress.enabled is true, collector.auth.mode is not oidc, and ingress.authenticatedByProxy is false.
 
-The collector has no authentication of its own. Anything that can POST to it can
-write events under any identity and any team, and a forged event looks exactly
-like a real one in the audit trail and in the cost report.
+Without oidc the collector accepts a batch with no token. Anything that can POST
+to it can write events under any identity and any team, and a forged event looks
+exactly like a real one in the audit trail and in the cost report.
 
-Put authentication in front of it: mutual TLS, an OAuth2 proxy, an ingress auth
-annotation, or a service mesh. Then set ingress.authenticatedByProxy=true to
-record that you did.
+Set collector.auth.mode=oidc, or put authentication in front of it - mutual TLS,
+an OAuth2 proxy, an ingress auth annotation, or a service mesh - and set
+ingress.authenticatedByProxy=true to record that you did.
 
 The chart cannot verify this. The flag exists so that exposing an unauthenticated
 write endpoint is a decision someone took, rather than a default they inherited.` }}

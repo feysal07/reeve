@@ -256,7 +256,7 @@ func Resolve(dir string, t *Trust, now time.Time) (*Claims, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload, err := Verify(env.IDToken, keys)
+	payload, err := VerifyFor(env.IDToken, keys, t)
 	if err != nil {
 		return nil, err
 	}

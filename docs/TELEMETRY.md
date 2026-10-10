@@ -184,6 +184,8 @@ rather than different severities:
 | `prices.unpriced` | requests on a model with no entry in the price table |
 | `identity.unmatched` | consumption recorded under subjects your team map does not name, even after aliases, which a per-person budget counts none of |
 | `identity.unattributed` | consumption from identities your team map matched nothing about, counted under its default team, which a team budget counts none of |
+| `guard.quiet` | the agent's own telemetry says tools ran in a session the guard decided nothing in, or after it stopped deciding |
+| `ask.rubber-stamp` | an ask rule that asked at least twenty times and was let through at least ninety-five per cent of them |
 
 `--fail-on any` selects all of them. An unrecognised name is an error rather than a
 no-op: a gate configured with a typo that silently passes everything is worse than no
@@ -221,6 +223,79 @@ id on the event.
 With no team map nothing is flagged: there was nothing to have matched. **Events
 collected before this release carry neither flag** and count as matched, so a window that
 spans the upgrade undercounts until those events age out of it.
+
+### When the guard went quiet
+
+A decision log that stops reads, on its own, exactly like a developer who went home.
+`reeve doctor` catches a hook that has never fired; it cannot catch one that fired for a
+week and then stopped - an agent that rewrote its own settings, a second installation
+that shadowed the first, an agent started with hooks disabled. The event store is the
+other witness, so when a report is given both records it compares them:
+
+```
+The guard was not deciding
+  3f2a91c0-7d1e  claude-code   41 tool events, no decision at all, last 2026-10-03 16:12
+  8b04e2aa-11c9  claude-code   last decision 2026-10-04 09:40, then 17 tool events until 11:05
+```
+
+A session is named when the agent reported at least three tool events with no decision
+to account for them - none at all, or none in the ten minutes before them, which allows
+for a long command's result arriving late. `--fail-on guard.quiet` turns it into a gate.
+Sessions that began before the agent's first recorded decision are skipped, because they
+predate the guard rather than escaping it, and so is an agent the guard never decided for
+at all, which the report already marks on the agent's row as measured but not governed.
+
+Only Claude Code, the one agent whose telemetry session id has been seen to be the hook's
+session id - checked on a real machine, where an export's `session.id` was the name of the
+session's transcript and the hook's `session_id` the same. The finding rests entirely on
+that join, and for an agent where it does not hold it would name every session.
+
+### Whether an ask was answered yes
+
+The guard decides before an action and never learns what happened next. For an ask that
+is the whole question: it put the action in front of a person, and only the agent knows
+whether they said yes. An ask rule that fires two hundred times a week and is approved two
+hundred times looks, in the decision log, exactly like a control doing its job. It is a
+delay with a confirmation dialog, and the habit it teaches - approve without reading - is
+the one that lets through the time it mattered.
+
+`reeve install` therefore registers the same guard command on Claude Code's `PostToolUse`
+and `PostToolUseFailure` events. On those the guard decides nothing: it appends the
+session, the tool-use id and whether the tool ran or failed to `outcomes.jsonl` beside
+the decision log, prints nothing and exits 0. It never reads the tool's input or response.
+A separate file, because everything that reads the decision log reads each line as a
+decision, and a repetition rule would count each action twice.
+
+`reeve report --decisions` reads the outcome log beside each decision log and joins on
+session and tool-use id:
+
+```
+Policy
+  decisions    : 1204
+  blocked      : 3
+  sent to ask  : 291
+    dr-database                asked  288, went ahead  288, not seen to run    0  <- never refused
+    destructive-delete         asked    3, went ahead    1, not seen to run    2
+```
+
+The honest states are *went ahead* and *not seen to run*. A declined ask fires no event at
+all, so not seen to run is declined, interrupted, or never reached - never "declined".
+Only asks somebody was shown are measured: a dry-run or observed ask asked nobody. An ask
+in a session with no outcome at all is counted as unmeasured rather than as not seen to
+run, because that session is one where the post-tool hook was not running, and counting
+it would report every ask there as refused. With no outcome log the report says whether
+asks went ahead is not recorded, rather than printing an empty table.
+
+The outcome log is asserted, like the event store: it is written on the machine whose
+asks it measures, by a process the agent's own shell can reach. It measures how a rule is
+working in good faith, and is not evidence against somebody acting in bad faith -
+deleting the file reads as an outcome hook that was never installed, which the report
+cannot tell apart. A gate on `ask.rubber-stamp` is a prompt to fix a noisy rule, not a
+control on the person.
+
+Outcomes are recorded for Claude Code only, the one agent whose post-tool events have been
+seen on a real machine; `reeve trial` registers no outcome hook, since in dry run nobody
+is asked.
 
 ## A session, from both records
 
@@ -278,6 +353,16 @@ closed separately:
   from the address bar as soon as it has read it.
 - **Text, never markup.** Every value is inserted as text, the page has no inline script,
   and its content security policy forbids any.
+
+It has a second page, **MCP servers**: every server this machine's agents are configured
+with, scanned afresh on each visit and reconciled against the approved list - `--registry`,
+or `mcp-registry.yaml` in Reeve's state directory when there is one - with the same
+verdicts as `reeve mcp check`. With no list it says so, and every server reads as
+unregistered rather than looking reviewed. It is read-only: approving or refusing a server
+is a change to the registry file, reviewed where that file is reviewed, and an approval
+workflow belongs to the paid tier. The page holds no form or button, and a test keeps it
+that way. Run on the first real installation, it found eight servers that arrived with
+Claude Code plugins and were on nobody's approved list.
 
 This is the free tier's session viewer, built into the binary rather than as the separate
 web application the roadmap first described: one fewer thing to deploy, patch and secure,
@@ -548,9 +633,79 @@ client-supplied attribute. Identities are marked `asserted` in the stored event,
 consumer knows how much weight to give them. Spend that matches nothing lands in an
 `unattributed` bucket rather than disappearing.
 
-For attribution that is proven rather than asserted, put an authenticating proxy in
-front of the collector and derive identity from the token. That is the right answer and
-is not built yet.
+### Proven rather than asserted: authenticating the collector
+
+The collector can verify who sent a batch, with the same offline verifier the guard
+uses for `reeve login`:
+
+```
+reeve collect --store events.jsonl --auth oidc  --trust trust.yaml --keys jwks.json
+reeve collect --store events.jsonl --auth mixed --trust trust.yaml --keys jwks.json
+```
+
+- `--trust` is the trust configuration `reeve login` uses: issuer, audience, and
+  optionally `teamFromClaim` and `teamPriority`.
+- `--keys` is the provider's published key set (its JWKS document) as a file. The
+  collector fetches nothing - an identity provider outage changes nothing until a token
+  expires - and re-reads the file whenever it changes, so a rotation reaches a running
+  collector without a restart. A file that stops parsing fails verification rather than
+  falling back to the keys read before.
+
+With `oidc` every batch needs `Authorization: Bearer <ID token>`; one without is refused
+with 401. With `mixed` a batch without a token is accepted and its events stay asserted,
+for agents that can only send fixed headers. In both, **a token that is sent and does not
+verify is refused** - expired, another issuer or audience, a login older than
+`maxSessionAge`, a bad signature - rather than downgraded to asserted, which would let a
+forged token through with nothing recording that anybody tried.
+
+A verified token replaces whatever identity the agent claimed, on every event in the
+batch: the subject from the token, the email only when the provider says it verified it
+(`email_verified`), and the team from the provider's groups when `teamFromClaim` is set,
+otherwise from the team map exactly as before. The email is dropped without
+`email_verified` because the team map's aliases and domains match on it, and an address
+somebody typed into their own profile - a colleague's - would otherwise be recorded as
+that colleague, verified. `algorithms` in the trust configuration is enforced here, as it
+now is for `reeve login` and the guard; before this release nothing consulted it. Those events are
+stored with `"verified": true`. Two collector metrics say how it is going:
+`reeve_batches_unauthenticated_total{reason}` (missing or invalid) and
+`reeve_events_identity_total{identity}` (verified or asserted).
+
+On the agent's side, `reeve otel-headers` prints the login token as headers, for Claude
+Code's `otelHeadersHelper` setting, which runs it at start-up and every 29 minutes:
+
+```json
+{ "otelHeadersHelper": "reeve otel-headers" }
+```
+
+It checks the token locally first. One that would not verify is not sent, the reason goes
+to stderr, and it prints `{}` and exits 0 regardless - a helper that fails is an export
+that stops, and an agent that cannot export carries on working, so the gap would show up
+as silence. Dynamic headers apply to the HTTP protocols only.
+
+Every route that accepts data is authenticated, traces and `/stats` included; `/healthz`
+is not. A collector that cannot read its key set answers 503 rather than 401, because
+OTLP exporters treat 401 as final and drop the batch, and logs the reason once per change
+to the file. `--trust` is read at start-up only: restart the collector to change it.
+
+What it does not do, stated so nobody infers it:
+
+- **It does not terminate TLS.** A bearer token can be replayed by anybody who sees it
+  until it expires, and the collector speaks plain HTTP, so on any address but loopback
+  it needs TLS in front; it warns at start-up when it is not on loopback. `maxSessionAge`
+  bounds how old a login may be, not how long a captured token stays usable.
+- **It does not bind a session to a person.** A verified token proves who sent a batch,
+  not that the session ids in it are theirs. Anybody who can send to the collector - with
+  any valid token, or with none in mixed mode - can post tool events under another
+  session's id, which `guard.quiet` would then report. Those events are recorded under
+  the sender's verified identity, so the report can be traced back; it cannot be
+  prevented here.
+- **Budgets still count every event.** A per-person budget totals verified and asserted
+  events alike. Verified tells you which figures are evidence; it does not yet change
+  what a rule counts.
+
+In the Helm chart, set `collector.auth.mode` with `trustConfigMap` and `keysConfigMap`.
+`oidc` counts as authentication for the Ingress, so `ingress.authenticatedByProxy` is
+not needed with it; `mixed` still accepts a batch with no token, so it does not count.
 
 ## Pricing
 

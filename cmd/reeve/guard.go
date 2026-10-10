@@ -47,6 +47,7 @@ func runGuard(args []string) error {
 	identityFlag := fs.String("identity", "", "who this machine belongs to, for rules totalled per person")
 	teamsPath := fs.String("teams", "", "team mapping, for rules totalled per team")
 	dryRun := fs.Bool("dry-run", false, "evaluate and log, but always allow")
+	outcomesPath := fs.String("outcomes", "", "where post-tool events are recorded (default: outcomes.jsonl beside the decision log)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -74,6 +75,14 @@ func runGuard(args []string) error {
 	// A shell on Windows can prepend a byte order mark when piping, which would
 	// make a perfectly good request unparseable and turn every action into a denial.
 	raw = config.StripBOM(raw)
+
+	// After the action, not before it: record that it ran and say nothing. Exit 0 with
+	// no output, whatever happens, because nothing can be refused after the fact and a
+	// non-zero exit here is shown to the agent as an error about work already done.
+	if o, ok := hook.DecodeOutcome(raw); ok {
+		recordOutcome(*outcomesPath, *logPath, agent, o, time.Now())
+		return nil
+	}
 
 	act, err := hook.Decode(raw, agent)
 	if err != nil {
@@ -139,13 +148,11 @@ func runGuard(args []string) error {
 	decision := pol.Evaluate(act)
 	elapsed := time.Since(start)
 
+	logDecision(*logPath, act, decision, source, elapsed, *dryRun)
 	if *dryRun && decision.Effect != policy.EffectAllow {
-		logDecision(*logPath, act, decision, source, elapsed, true)
 		writeResponse(hook.Encode(agent, act.Event, policy.Decision{Effect: policy.EffectAllow}))
 		return nil
 	}
-
-	logDecision(*logPath, act, decision, source, elapsed, false)
 	writeResponse(hook.Encode(agent, act.Event, decision))
 	return nil
 }
@@ -377,6 +384,7 @@ type decisionRecord struct {
 	SessionID   string        `json:"sessionId,omitempty"`
 	Kind        policy.Kind   `json:"kind"`
 	Tool        string        `json:"tool,omitempty"`
+	ToolUseID   string        `json:"toolUseId,omitempty"`
 	Command     string        `json:"command,omitempty"`
 	Paths       []string      `json:"paths,omitempty"`
 	URLs        []string      `json:"urls,omitempty"`
@@ -393,7 +401,18 @@ type decisionRecord struct {
 	// its gaps were read as defects in the current one.
 	ReeveVersion string `json:"reeveVersion,omitempty"`
 	ElapsedUS    int64  `json:"elapsedMicros"`
-	DryRun       bool   `json:"dryRun,omitempty"`
+	// DryRun means the agent was answered allow and Effect is what the rules would
+	// have decided instead. It is what the field has always meant, and observe mode
+	// keeps it that way: an older build reading a newer log counts it correctly.
+	DryRun bool `json:"dryRun,omitempty"`
+	// Observe says the unapplied verdict on a DryRun line came from a rule in observe
+	// mode, rather than from the whole guard running in dry run.
+	Observe bool `json:"observe,omitempty"`
+	// Observed is what a rule in observe mode would have decided, on a line where an
+	// enforced rule applied something stricter than allow. Effect and RuleID then say
+	// what was applied and by which rule, so the rule that asked somebody is the one
+	// credited with it.
+	Observed *policy.Verdict `json:"observed,omitempty"`
 
 	// Who, Team and Identity record who the guard decided this action was taken by,
 	// and how much that is worth: "verified" for an identity a rule may rely on,
@@ -425,35 +444,7 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 	if path == "" {
 		return
 	}
-	rec := decisionRecord{
-		Time:         time.Now().UTC(),
-		Agent:        a.Agent,
-		Event:        a.Event,
-		SessionID:    a.SessionID,
-		Kind:         a.Kind,
-		Tool:         a.ToolName,
-		Command:      a.Command,
-		Paths:        a.Paths,
-		URLs:         a.URLs,
-		MCPServer:    a.MCPServer,
-		MCPTool:      a.MCPTool,
-		Environment:  a.Environment,
-		EnvDetail:    a.EnvironmentDetail,
-		Effect:       d.Effect,
-		RuleID:       d.RuleID,
-		Reason:       d.Reason,
-		PolicyFile:   source,
-		ReeveVersion: version,
-		ElapsedUS:    elapsed.Microseconds(),
-		DryRun:       dryRun,
-	}
-	if id := a.Identity; id != nil && id.Key() != "" {
-		rec.Who, rec.Team = id.Key(), id.Team
-		rec.Identity = identityAsserted
-		if id.Verified() {
-			rec.Identity = identityVerified
-		}
-	}
+	rec := newDecisionRecord(a, d, source, elapsed, dryRun)
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return
@@ -467,6 +458,61 @@ func logDecision(path string, a policy.Action, d policy.Decision, source string,
 	}
 	defer f.Close()
 	f.Write(append(b, '\n'))
+}
+
+// newDecisionRecord builds the line for one decision.
+//
+// Two shapes. When the agent was answered allow, the line carries what the rules would
+// have decided, with dryRun saying it was not applied - the shape every dry-run line has
+// always had. When an enforced rule applied an ask or a deny, the line carries that, and
+// a stricter verdict from an observe rule goes beside it in Observed. Recording only the
+// verdict would credit an ask to a rule that asked nobody; recording only what was
+// applied would make an observe rule invisible, which is the opposite of its purpose.
+func newDecisionRecord(a policy.Action, d policy.Decision, source string, elapsed time.Duration, dryRun bool) decisionRecord {
+	shown := policy.Verdict{Effect: d.Effect, RuleID: d.RuleID, Reason: d.Reason}
+	notApplied := dryRun && d.Effect != policy.EffectAllow
+	var observed *policy.Verdict
+	switch {
+	case dryRun || d.Effect == policy.EffectAllow:
+		// Answered allow, so the line is the verdict, observe rules included.
+		shown = d.Strictest()
+		notApplied = shown.Effect != policy.EffectAllow
+	default:
+		observed = d.Observed
+	}
+	rec := decisionRecord{
+		Time:         time.Now().UTC(),
+		Agent:        a.Agent,
+		Event:        a.Event,
+		SessionID:    a.SessionID,
+		Kind:         a.Kind,
+		Tool:         a.ToolName,
+		ToolUseID:    a.ToolUseID,
+		Command:      a.Command,
+		Paths:        a.Paths,
+		URLs:         a.URLs,
+		MCPServer:    a.MCPServer,
+		MCPTool:      a.MCPTool,
+		Environment:  a.Environment,
+		EnvDetail:    a.EnvironmentDetail,
+		Effect:       shown.Effect,
+		RuleID:       shown.RuleID,
+		Reason:       shown.Reason,
+		PolicyFile:   source,
+		ReeveVersion: version,
+		ElapsedUS:    elapsed.Microseconds(),
+		DryRun:       notApplied,
+		Observe:      notApplied && d.Observed != nil,
+		Observed:     observed,
+	}
+	if id := a.Identity; id != nil && id.Key() != "" {
+		rec.Who, rec.Team = id.Key(), id.Team
+		rec.Identity = identityAsserted
+		if id.Verified() {
+			rec.Identity = identityVerified
+		}
+	}
+	return rec
 }
 
 // historyLines bounds how much of the decision log is read.
@@ -546,6 +592,37 @@ func readHistory(path string, window time.Duration) *policy.History {
 		h.Records = append(h.Records, ra)
 	}
 	return h
+}
+
+// recordOutcome appends that a tool call ran, to the outcome log beside the decision
+// log unless one is named. Every failure is silent: this runs after the action, and
+// nothing about recording it may reach the agent.
+func recordOutcome(explicit, logFlag string, agent model.AgentID, o hook.Outcome, now time.Time) {
+	path := explicit
+	if path == "" {
+		path = telemetry.OutcomesPathFor(decisionLogPath(logFlag))
+	}
+	if path == "" || o.ToolUseID == "" {
+		return
+	}
+	result := telemetry.OutcomeRan
+	if o.Failed {
+		result = telemetry.OutcomeFailed
+	}
+	b, err := json.Marshal(telemetry.Outcome{Time: now.UTC(), Agent: agent, SessionID: o.SessionID,
+		ToolUseID: o.ToolUseID, Tool: o.ToolName, Result: result})
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(append(b, '\n'))
 }
 
 // eventStorePath resolves the store a budget totals from.

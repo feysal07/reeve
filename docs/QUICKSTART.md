@@ -1,8 +1,14 @@
 # Quickstart
 
-Two ways to see Reeve work. The scripted walkthrough takes a minute and exercises
+Two ways to see Reeve work. The scripted walkthrough takes under a minute and exercises
 everything. The manual steps below take longer and show you what each command does on
 its own.
+
+Measured on a Windows 11 laptop, from a built binary: `reeve scan` of a real machine with
+two agents and ten MCP servers, 0.08 to 0.14 seconds; the bash walkthrough, 38 seconds;
+the PowerShell one, 13. Downloading the release is not included and depends on your
+connection. The roadmap's promise is a first look in under ten minutes with no server;
+that leaves most of the ten for reading what it found.
 
 Neither touches your real agent configuration. Fake Copilot and Codex installations are
 created in a sandbox and pointed at with `COPILOT_HOME` and `CODEX_HOME`, which both
@@ -44,7 +50,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 126 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 140 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -281,7 +287,7 @@ happened.
 ### 8. Prove the decision log has not been edited
 
 ```
-reeve audit seal   /var/log/reeve/decisions.jsonl   # from cron, hourly
+reeve audit seal   /var/log/reeve/decisions.jsonl   # hourly: reeve audit schedule prints the timer
 reeve audit verify /var/log/reeve/decisions.jsonl   # exits 2 if anything changed
 ```
 

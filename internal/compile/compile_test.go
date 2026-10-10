@@ -577,3 +577,55 @@ func TestSummariseCountsUnenforceableSeparately(t *testing.T) {
 			s.GuardOnly)
 	}
 }
+
+// TestNoCompilerEmitsARuleInObserveMode. Managed configuration has no observe mode, so a
+// rule emitted natively would start refusing people on every machine the file reached,
+// including those where no guard runs to record why. Every compiler must account for it
+// and emit nothing.
+func TestNoCompilerEmitsARuleInObserveMode(t *testing.T) {
+	// The guard is registered, because that is when Gemini warns about ask rules.
+	p := mustParse(t, `
+version: 1
+settings:
+  guard: {enabled: true}
+rules:
+  - id: measured-deny
+    mode: observe
+    decision: deny
+    match: {kind: [shell], command: ["terraform destroy*"]}
+  - id: measured-read
+    mode: observe
+    decision: deny
+    match: {kind: [read], path: ["**/observed-secret.pem"]}
+  - id: measured-ask
+    mode: observe
+    decision: ask
+    match: {kind: [shell], command: ["helm uninstall*"]}
+`)
+	for _, c := range All() {
+		t.Run(string(c.Agent()), func(t *testing.T) {
+			res, err := c.Compile(p, "linux")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, a := range res.Artifacts {
+				for _, leak := range []string{"terraform destroy", "observed-secret", "helm uninstall"} {
+					if strings.Contains(string(a.Content), leak) {
+						t.Errorf("%s carries %q from a rule in observe mode:\n%s", a.Filename, leak, a.Content)
+					}
+				}
+			}
+			s := Summarise(res.Coverage)
+			if s.Observe != 3 || s.Native+s.Partial+s.GuardOnly+s.Unenforceable != 0 {
+				t.Errorf("summary %+v, want three observed rules and nothing else", s)
+			}
+			for _, w := range res.Warnings {
+				// Gemini warns that its hook cannot ask; an observed ask is never
+				// asked at all, so the warning would describe a rule that does not act.
+				if strings.Contains(w, "ask rules above") {
+					t.Errorf("warned about an ask that is only observed: %s", w)
+				}
+			}
+		})
+	}
+}
