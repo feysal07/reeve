@@ -130,6 +130,10 @@ type Report struct {
 	// report was not given a decision log to measure.
 	Asks *Asks `json:"asks,omitempty"`
 
+	// Quiet names sessions where tools ran that the guard did not decide. Nil unless
+	// the report was given both records, because it is the comparison of the two.
+	Quiet *QuietGuard `json:"quietGuard,omitempty"`
+
 	ByTeam  []Group `json:"byTeam"`
 	ByAgent []Group `json:"byAgent"`
 	ByUser  []Group `json:"byUser"`

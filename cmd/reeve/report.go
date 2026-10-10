@@ -138,6 +138,11 @@ See docs/TELEMETRY.md`)
 	if len(logs) > 0 {
 		rep.Asks = telemetry.MeasureAsks(events, outcomes, outcomesRecorded)
 	}
+	// Only with both records: it is the agent's account of what ran compared with the
+	// guard's account of what it decided, and either alone has nothing to compare.
+	if len(logs) > 0 && len(stores) > 0 {
+		rep.Quiet = telemetry.FindQuietGuard(events)
+	}
 
 	// Parsed before anything is printed, so a typo in a gate is an error about the
 	// gate rather than a clean report followed by an exit code nobody expected.
@@ -311,6 +316,8 @@ func renderReport(r telemetry.Report, top int) {
 		}
 	}
 
+	printQuiet(r.Quiet)
+
 	section("By team", r.ByTeam, top, costRow)
 	section("By agent", r.ByAgent, top, agentRow)
 	section("By user", r.ByUser, top, costRow)
@@ -345,6 +352,26 @@ func agentRow(g telemetry.Group) string {
 
 func ruleRow(g telemetry.Group) string {
 	return fmt.Sprintf("%-28s %8d fired %8d blocked", trim(g.Key, 28), g.Decisions, g.Blocked)
+}
+
+// printQuiet names the sessions the guard was not deciding in. Printed whenever there
+// are any, not only behind a gate: it is the finding a report exists to make visible.
+func printQuiet(q *telemetry.QuietGuard) {
+	if q == nil || len(q.Unguarded)+len(q.Stopped) == 0 {
+		return
+	}
+	fmt.Printf("\nThe guard was not deciding\n")
+	for _, s := range q.Unguarded {
+		fmt.Printf("  %-14s %-12s %3d tool events, no decision at all, last %s\n",
+			short(s.SessionID, 14), s.Agent, s.Tools, s.LastTool.Local().Format("2006-01-02 15:04"))
+	}
+	for _, s := range q.Stopped {
+		fmt.Printf("  %-14s %-12s last decision %s, then %d tool events until %s\n",
+			short(s.SessionID, 14), s.Agent, s.LastDecision.Local().Format("2006-01-02 15:04"), s.Tools,
+			s.LastTool.Local().Format("15:04"))
+	}
+	fmt.Printf("  %s\n", wrap("The agent's own telemetry says these tools ran. Check that its settings "+
+		"still register the hook, and run reeve doctor.", 74, "  "))
 }
 
 // printAsks says whether the actions the guard asked about went ahead.

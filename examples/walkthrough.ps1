@@ -615,6 +615,22 @@ $stampCode = $LASTEXITCODE
 Check "an ask rule nobody ever refuses is named, and can fail a build" `
     ($stampCode -ne 0 -and $stampOut -match "never refused" -and $stampOut -match "ask\.rubber-stamp") $stampOut
 
+# The guard went quiet. The agent's own telemetry says tools ran in a session the guard
+# has no record of deciding anything in - a log that stops reads like a developer who
+# went home, and only the other record can tell them apart.
+$quietDir = Join-Path $Sandbox "quiet"
+New-Item -ItemType Directory -Force -Path $quietDir | Out-Null
+Write-Text (Join-Path $quietDir "decisions.jsonl") ('{"time":"2026-09-30T09:00:00Z","agent":"claude-code","sessionId":"q-guarded","kind":"shell","effect":"allow"}' + "`n")
+$quietEvents = New-Object System.Text.StringBuilder
+foreach ($m in 10, 11, 12, 13) {
+    [void]$quietEvents.Append("{`"time`":`"2026-09-30T10:${m}:00Z`",`"kind`":`"tool_result`",`"agent`":`"claude-code`",`"sessionId`":`"q-unguarded`",`"identity`":{},`"source`":`"otlp`"}`n")
+}
+Write-Text (Join-Path $quietDir "events.jsonl") $quietEvents.ToString()
+$quietOut = (& $reeve report --store (Join-Path $quietDir "events.jsonl") --decisions (Join-Path $quietDir "decisions.jsonl") --fail-on guard.quiet 2>&1 | Out-String)
+$quietCode = $LASTEXITCODE
+Check "a session where tools ran and the guard decided nothing is named" `
+    ($quietCode -ne 0 -and $quietOut -match "The guard was not deciding" -and $quietOut -match "q-unguarded" -and $quietOut -match "guard\.quiet") $quietOut
+
 Step 5 "Enforcement: what happens when Reeve itself is broken"
 Note "This is what separates real enforcement from theatre."
 Write-Host ""
