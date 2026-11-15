@@ -713,3 +713,20 @@ func TestTheReadmeSaysHowFarEachAgentIsProven(t *testing.T) {
 		}
 	}
 }
+
+// TestAToolThatSendsSomethingOffTheMachineIsAFetch. Found in the first real
+// installation's log: publishing a page and writing to a hosted database were recorded
+// as "other", which no kind-based rule reaches.
+func TestAToolThatSendsSomethingOffTheMachineIsAFetch(t *testing.T) {
+	for _, tool := range []string{"Artifact", "ArtifactData", "ArtifactComments", "PushNotification", "RemoteTrigger"} {
+		if k := Classify(tool); k != policy.KindFetch {
+			t.Errorf("%s classified as %s, want fetch", tool, k)
+		}
+	}
+	// Tools that stay on the machine stay other, so a fetch rule does not fire on them.
+	for _, tool := range []string{"ToolSearch", "SendUserFile", "Skill"} {
+		if k := Classify(tool); k == policy.KindFetch {
+			t.Errorf("%s classified as a fetch", tool)
+		}
+	}
+}

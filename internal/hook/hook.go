@@ -249,6 +249,17 @@ var toolKinds = map[string]policy.Kind{
 	"glob":         policy.KindRead,
 	"grep":         policy.KindRead,
 
+	// Claude Code tools that send something off the machine, with no URL a rule could
+	// match on. Found in the first real installation's log: Artifact and ArtifactData,
+	// which publish a page or write to a database hosted on claude.ai, were recorded as
+	// "other" ninety-seven times in nine days, and no rule written against a kind
+	// reaches "other". They are network actions, so they are classified as one.
+	"artifact":         policy.KindFetch,
+	"artifactdata":     policy.KindFetch,
+	"artifactcomments": policy.KindFetch,
+	"pushnotification": policy.KindFetch,
+	"remotetrigger":    policy.KindFetch,
+
 	// Claude Code's own tools that touch no file, network or command, but whose
 	// names trip a heuristic below. Found in a tester's log: ToolSearch, which looks
 	// up the agent's own tool definitions, was recorded as a network fetch because
