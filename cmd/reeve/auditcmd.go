@@ -164,9 +164,18 @@ func runAuditSeal(args []string) error {
 		return fmt.Errorf("give the decision log to seal, or set REEVE_DECISION_LOG")
 	}
 
-	s, err := audit.Add(path, time.Now(), version)
+	s, sealed, err := audit.AddIfChanged(path, time.Now(), version)
 	if err != nil {
 		return err
+	}
+
+	// Nothing written since the last seal: say so, and write nothing. The JSON is the
+	// seal that covers the log, which is the last one.
+	if !sealed && !*asJSON {
+		fmt.Printf("\nNothing has been written to %s since the seal at %s (%d lines).\n",
+			path, s.SealedAt.Local().Format(time.RFC3339), s.Lines)
+		fmt.Println("No new seal is needed; the last one covers every line.")
+		return nil
 	}
 
 	if *asJSON {

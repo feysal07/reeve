@@ -207,6 +207,34 @@ func sealLineHash(b []byte) string {
 // Appending rather than replacing. The history of seals is what allows a break to be
 // localised to an interval, and it is also what makes removing a seal visible, since
 // the next one names it.
+// AddIfChanged seals the log only when it holds something the last seal does not cover.
+// It reports whether it wrote a seal; when it did not, the seal returned is the last one,
+// which already covers every line.
+//
+// Found on the first real installation: of 128 seals in nine days, 68 repeated the line
+// count before them - an hourly task sealing a log nobody had written to, overnight and
+// after every rotation. Each one is harmless and none is evidence of anything, and a
+// chain that grows by a line an hour whether or not anything happened is a chain whose
+// growth means nothing. A log that is unchanged in length but not in content is not
+// skipped: Add refuses it, as it always has.
+func AddIfChanged(logPath string, now time.Time, version string) (Seal, bool, error) {
+	seals, err := ReadSeals(ChainPath(logPath))
+	if err != nil {
+		return Seal{}, false, err
+	}
+	if n := len(seals); n > 0 {
+		digest, lines, err := hashOrEmpty(logPath, true)
+		if err != nil {
+			return Seal{}, false, err
+		}
+		if last := seals[n-1]; lines == last.Lines && digest == last.Hash {
+			return last, false, nil
+		}
+	}
+	s, err := Add(logPath, now, version)
+	return s, err == nil, err
+}
+
 func Add(logPath string, now time.Time, version string) (Seal, error) {
 	chainPath := ChainPath(logPath)
 	seals, err := ReadSeals(chainPath)

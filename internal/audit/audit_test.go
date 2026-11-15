@@ -332,3 +332,34 @@ func appendLines(t *testing.T, path string, n int) {
 		}
 	}
 }
+
+// TestASealIsOnlyWrittenWhenThereIsSomethingNewToCover. Found on the first real
+// installation: 68 of 128 seals repeated the line count before them. A log changed in
+// content but not in length is still refused, never skipped.
+func TestASealIsOnlyWrittenWhenThereIsSomethingNewToCover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "decisions.jsonl")
+	os.WriteFile(path, []byte(`{"a":1}`+"\n"), 0o600)
+	now := time.Now()
+	if _, wrote, err := AddIfChanged(path, now, "test"); err != nil || !wrote {
+		t.Fatalf("first seal: wrote %v, %v", wrote, err)
+	}
+	s, wrote, err := AddIfChanged(path, now.Add(time.Hour), "test")
+	if err != nil || wrote || s.Lines != 1 {
+		t.Fatalf("nothing new: wrote %v, lines %d, %v", wrote, s.Lines, err)
+	}
+	seals, _ := ReadSeals(ChainPath(path))
+	if len(seals) != 1 {
+		t.Errorf("%d seals after sealing an unchanged log, want 1", len(seals))
+	}
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	f.WriteString(`{"a":2}` + "\n")
+	f.Close()
+	if _, wrote, err := AddIfChanged(path, now.Add(2*time.Hour), "test"); err != nil || !wrote {
+		t.Errorf("a new line was not sealed: %v %v", wrote, err)
+	}
+	// Same length, different content: Add's refusal, not a skip.
+	os.WriteFile(path, []byte(`{"a":9}`+"\n"+`{"a":2}`+"\n"), 0o600)
+	if _, wrote, err := AddIfChanged(path, now.Add(3*time.Hour), "test"); err == nil || wrote {
+		t.Errorf("an edited log of the same length was not refused: %v %v", wrote, err)
+	}
+}
