@@ -86,7 +86,7 @@ who built it, since anybody who could replace the archive could replace the chec
 beside it.
 
 To see all four planes end to end, run the walkthrough. It builds a throwaway
-sandbox of four badly configured agents and asserts 141 checks against it. The
+sandbox of four badly configured agents and asserts 142 checks against it. The
 sandbox has a home directory of its own, so it reads nothing you have installed and
 gives the same answer on every machine:
 

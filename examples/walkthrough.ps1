@@ -417,6 +417,12 @@ try {
     Check "an MCP server the agent calls and no file configures is named" `
         ($vulnOut -match '"mcp\.called-not-configured"' -and $vulnOut -match 'claude\.ai connector' -and $vulnOut -match 'createJiraIssue') `
         "no finding for the connector in the decision log"
+    # And it is approved by the id the service gave it, not by a name anybody chose.
+    $vulnScan = Join-Path $Sandbox "vulnerable-scan.json"
+    Write-Text $vulnScan $vulnOut
+    $connectorCheck = (& $reeve mcp check $vulnScan --registry examples/mcp/registry.yaml 2>&1 | Out-String)
+    Check "a claude.ai connector is matched by its id in the approved list" `
+        ($connectorCheck -match "83261223-49e4-40a3-81e6-0f9387058f48" -and $connectorCheck -match "trial") $connectorCheck
 } finally {
     $env:USERPROFILE = $savedProfile3
     if ($savedHome3) { $env:HOME = $savedHome3 } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }

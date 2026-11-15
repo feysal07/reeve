@@ -468,6 +468,13 @@ case "$VULN_OUT" in
         check "an MCP server the agent calls and no file configures is named" 1 ;;
     *) check "an MCP server the agent calls and no file configures is named" 0 "no finding for the connector in the decision log" ;;
 esac
+# And it is approved by the id the service gave it, not by a name anybody chose.
+printf '%s' "$VULN_OUT" > "$SANDBOX/vulnerable-scan.json"
+CONNECTOR_CHECK=$("$REEVE" mcp check "$SANDBOX/vulnerable-scan.json" --registry examples/mcp/registry.yaml 2>&1)
+case "$CONNECTOR_CHECK" in
+    *"83261223-49e4-40a3-81e6-0f9387058f48"*"trial"*) check "a claude.ai connector is matched by its id in the approved list" 1 ;;
+    *) check "a claude.ai connector is matched by its id in the approved list" 0 "$CONNECTOR_CHECK" ;;
+esac
 
 # The capture is meant to be sent to a stranger, so the one property that
 # matters is that no value from the file survives into it.

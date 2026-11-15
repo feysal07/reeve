@@ -50,7 +50,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 141 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 142 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -279,6 +279,13 @@ governed party to assert its own compliance. `reeve mcp check` matches on comman
 URL first, reports a name-only match as exactly that rather than as approval, and
 reserves its loudest verdict — `mismatch` — for a server using the name of an approved
 entry while running something else.
+
+**Servers no configuration file lists** - claude.ai connectors attached to the account,
+servers built into the desktop app - appear in the scan only from the guard's log, and
+reach `mcp check` scoped as `observed`. Give them `connector:` (the UUID their tools are
+named by) or `builtin:` (the app's name for it) instead of a command. Neither can match a
+configured server, whatever that server is called, and `builtin` accepts only the app's
+own names, so neither is a way back to matching on a name the developer chose.
 
 `denied` entries are kept rather than deleted. An entry that is simply absent looks
 like one nobody has looked at, and the next person re-runs a review that already

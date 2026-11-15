@@ -85,12 +85,24 @@ type Entry struct {
 	Command []string `yaml:"command,omitempty"`
 	URL     string   `yaml:"url,omitempty"`
 
+	// Connector is a claude.ai connector's id: the UUID Claude Code names the
+	// connector's tools by. It identifies the server because the service assigns it -
+	// nothing on the developer's machine chooses it - which is the property a name
+	// lacks. Only a server seen being called, and configured nowhere, can match it.
+	Connector string `yaml:"connector,omitempty"`
+	// Builtin is a server built into the Claude desktop app, by the app's own name for
+	// it. Only the app's names are accepted, so this cannot approve an arbitrary label,
+	// and only a server configured nowhere can match it.
+	Builtin string `yaml:"builtin,omitempty"`
+
 	Notes string `yaml:"notes,omitempty"`
 }
 
 // Identified reports whether this entry can recognise a server by something the
 // developer did not choose.
-func (e Entry) Identified() bool { return len(e.Command) > 0 || e.URL != "" }
+func (e Entry) Identified() bool {
+	return len(e.Command) > 0 || e.URL != "" || e.Connector != "" || e.Builtin != ""
+}
 
 // Load reads a registry file.
 func Load(path string) (*Registry, error) {
@@ -114,6 +126,28 @@ func Load(path string) (*Registry, error) {
 		default:
 			return nil, fmt.Errorf("%s: server %q has status %q, expected approved, trial or denied",
 				path, e.Name, e.Status)
+		}
+		// One kind of identity per entry. An entry that named both a command and a
+		// connector would approve whichever matched, and say it had checked both.
+		kinds := 0
+		for _, set := range []bool{len(e.Command) > 0 || e.URL != "", e.Connector != "", e.Builtin != ""} {
+			if set {
+				kinds++
+			}
+		}
+		if kinds > 1 {
+			return nil, fmt.Errorf("%s: server %q has more than one kind of identity; use command or url, connector, or builtin",
+				path, e.Name)
+		}
+		if e.Connector != "" && !IsConnectorID(e.Connector) {
+			return nil, fmt.Errorf("%s: server %q has connector %q, which is not a connector id (a UUID, as it appears in the guard's log)",
+				path, e.Name, e.Connector)
+		}
+		// Refused rather than accepted as written: a builtin entry naming anything at
+		// all would be name-matching under another name.
+		if e.Builtin != "" && !IsBuiltin(e.Builtin) {
+			return nil, fmt.Errorf("%s: server %q has builtin %q, which is not a server the desktop app provides",
+				path, e.Name, e.Builtin)
 		}
 	}
 	return &r, nil
@@ -364,7 +398,26 @@ func Reconcile(reg *Registry, observed []Observed) Report {
 }
 
 func hasIdentity(o Observed) bool {
-	return o.Server.Command != "" || len(o.Server.Args) > 0 || o.Server.URL != ""
+	return o.Server.Command != "" || len(o.Server.Args) > 0 || o.Server.URL != "" || observedAs(o) != ""
+}
+
+// observedAs is how a server known only from the guard's log can be identified:
+// connector or builtin, or nothing. A configured server never is, whatever its name
+// looks like - it is identified by its command or URL, and a developer can call a
+// server in their own file anything, including a UUID or the desktop app's names.
+func observedAs(o Observed) string {
+	if o.Server.Scope != model.ScopeObserved {
+		return ""
+	}
+	// The name is not re-checked against the origin's shape here. Load refuses any
+	// entry whose connector is not a UUID or whose builtin is not one of the app's
+	// names, so a malformed observed name can match nothing; mutation testing found
+	// the re-check could never change a verdict.
+	switch o.Server.Transport {
+	case OriginConnector, OriginBuiltin:
+		return o.Server.Transport
+	}
+	return ""
 }
 
 func identityKind(o Observed) string {
@@ -373,6 +426,8 @@ func identityKind(o Observed) string {
 		return "command"
 	case o.Server.URL != "":
 		return "url"
+	case observedAs(o) != "":
+		return observedAs(o)
 	default:
 		return "name"
 	}
@@ -389,6 +444,16 @@ func matchByIdentity(reg *Registry, o Observed, obsCmd []string) *Entry {
 		}
 		if e.URL != "" && o.Server.URL != "" && strings.EqualFold(e.URL, o.Server.URL) {
 			return e
+		}
+		switch observedAs(o) {
+		case OriginConnector:
+			if e.Connector != "" && strings.EqualFold(e.Connector, o.Server.Name) {
+				return e
+			}
+		case OriginBuiltin:
+			if e.Builtin != "" && e.Builtin == o.Server.Name {
+				return e
+			}
 		}
 	}
 	return nil
