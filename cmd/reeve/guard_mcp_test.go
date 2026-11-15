@@ -103,3 +103,17 @@ func TestAnMCPCallNamingNoServerIsUnknown(t *testing.T) {
 		t.Fatalf("environment = %q, want unknown", act.Environment)
 	}
 }
+
+// TestAServerKnownOnlyFromTheLogIsCheckedAsObserved. reeve mcp check and the MCP page
+// see it, scoped as observed and carrying its origin, so it can never be mistaken for a
+// configured server identified by its command.
+func TestAServerKnownOnlyFromTheLogIsCheckedAsObserved(t *testing.T) {
+	r := model.Report{Installations: []model.Installation{{Agent: model.AgentClaudeCode,
+		MCPServers:     []model.MCPServer{{Name: "kubernetes", Command: "npx"}},
+		MCPServersSeen: []model.MCPSeen{{Name: "Claude_Browser", Origin: "builtin", Calls: 3}}}}}
+	obs := observedIn(r, "m")
+	if len(obs) != 2 || obs[1].Server.Name != "Claude_Browser" || obs[1].Server.Scope != model.ScopeObserved ||
+		obs[1].Server.Transport != "builtin" || obs[1].Server.Command != "" {
+		t.Errorf("observed = %+v", obs)
+	}
+}

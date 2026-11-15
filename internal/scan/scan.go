@@ -12,10 +12,13 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"time"
 
 	"github.com/feysal07/reeve/internal/adapter"
+	"github.com/feysal07/reeve/internal/audit"
 	"github.com/feysal07/reeve/internal/findings"
+	"github.com/feysal07/reeve/internal/mcp"
 	"github.com/feysal07/reeve/internal/model"
 )
 
@@ -104,8 +107,9 @@ func Run(ctx context.Context, reg *adapter.Registry, opts Options) (model.Report
 		report.Installations = append(report.Installations, inst)
 	}
 
-	report.Findings = append(report.Findings,
-		findings.EvaluateWith(report.Installations, readGuardHistory(opts.DecisionLog))...)
+	history := readGuardHistory(opts.DecisionLog, time.Now())
+	attachSeenServers(report.Installations, history)
+	report.Findings = append(report.Findings, findings.EvaluateWith(report.Installations, history)...)
 	return report, nil
 }
 
@@ -140,35 +144,115 @@ func buildEnv(opts Options) (adapter.Env, error) {
 // line that does not parse, yields less evidence rather than an error. The scan's job
 // is to describe a machine, and failing it over a malformed line in an optional input
 // would be a worse answer than a partial one.
-func readGuardHistory(path string) *findings.GuardHistory {
+//
+// The rotated segments are read as well as the live log. Found with the MCP inventory:
+// the log rotates daily, so the live file alone holds a day at most, and a server
+// called yesterday - or a guard that stopped yesterday - was missing from the evidence
+// by breakfast. Records older than historyWindow are passed over.
+func readGuardHistory(path string, now time.Time) *findings.GuardHistory {
 	if path == "" {
 		return nil
 	}
-	f, err := os.Open(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
-	defer f.Close()
-
 	h := &findings.GuardHistory{
 		Path:     path,
 		LastSeen: map[model.AgentID]time.Time{},
 		Total:    map[model.AgentID]int{},
+		MCP:      map[model.AgentID]map[string]*findings.MCPUse{},
 	}
+	segments, _ := audit.Segments(path)
+	cutoff := now.Add(-historyWindow)
+	for _, p := range append(segments, path) {
+		readHistoryFile(p, cutoff, h)
+	}
+	return h
+}
+
+// historyWindow is how far back the scan looks for what the guard has seen.
+const historyWindow = 30 * 24 * time.Hour
+
+func readHistoryFile(path string, cutoff time.Time, h *findings.GuardHistory) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		var rec struct {
-			Time  time.Time     `json:"time"`
-			Agent model.AgentID `json:"agent"`
+			Time      time.Time     `json:"time"`
+			Agent     model.AgentID `json:"agent"`
+			MCPServer string        `json:"mcpServer"`
+			MCPTool   string        `json:"mcpTool"`
 		}
-		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Agent == "" {
+		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Agent == "" || rec.Time.Before(cutoff) {
 			continue
 		}
 		h.Total[rec.Agent]++
 		if rec.Time.After(h.LastSeen[rec.Agent]) {
 			h.LastSeen[rec.Agent] = rec.Time
 		}
+		// Only an MCP call has a server: the guard records mcpServer for nothing else.
+		if rec.MCPServer == "" {
+			continue
+		}
+		byServer := h.MCP[rec.Agent]
+		if byServer == nil {
+			byServer = map[string]*findings.MCPUse{}
+			h.MCP[rec.Agent] = byServer
+		}
+		u := byServer[rec.MCPServer]
+		if u == nil {
+			u = &findings.MCPUse{Tools: map[string]bool{}}
+			byServer[rec.MCPServer] = u
+		}
+		u.Calls++
+		if rec.Time.After(u.Last) {
+			u.Last = rec.Time
+		}
+		if rec.MCPTool != "" {
+			u.Tools[rec.MCPTool] = true
+		}
 	}
-	return h
+}
+
+// attachSeenServers adds, to each installation, the MCP servers its agent called that
+// none of its configuration lists. A configured server is identified by its command or
+// URL elsewhere; one known only from being called has nothing but a name.
+func attachSeenServers(insts []model.Installation, h *findings.GuardHistory) {
+	if h == nil {
+		return
+	}
+	for i := range insts {
+		configured := map[string]bool{}
+		for _, s := range insts[i].MCPServers {
+			configured[s.Name] = true
+		}
+		var seen []model.MCPSeen
+		for name, u := range h.MCP[insts[i].Agent] {
+			if configured[name] {
+				continue
+			}
+			tools := make([]string, 0, len(u.Tools))
+			for t := range u.Tools {
+				tools = append(tools, t)
+			}
+			sort.Strings(tools)
+			if len(tools) > 10 {
+				tools = tools[:10]
+			}
+			seen = append(seen, model.MCPSeen{Name: name, Origin: mcp.OriginOf(name), Calls: u.Calls,
+				LastCalled: u.Last, Tools: tools})
+		}
+		sort.Slice(seen, func(a, b int) bool {
+			if seen[a].Calls != seen[b].Calls {
+				return seen[a].Calls > seen[b].Calls
+			}
+			return seen[a].Name < seen[b].Name
+		})
+		insts[i].MCPServersSeen = seen
+	}
 }

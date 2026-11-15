@@ -406,10 +406,17 @@ $savedHome3 = $env:HOME
 $env:USERPROFILE = $vulnHome
 $env:HOME = $vulnHome
 try {
+    # And a decision log showing a call to a claude.ai connector, which no file configures.
+    New-Item -ItemType Directory -Force -Path (Join-Path $vulnHome ".reeve") | Out-Null
+    $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    Write-Text (Join-Path $vulnHome ".reeve\decisions.jsonl") ('{"time":"' + $stamp + '","agent":"claude-code","kind":"mcp","mcpServer":"83261223-49e4-40a3-81e6-0f9387058f48","mcpTool":"createJiraIssue","effect":"allow"}' + "`n")
     $vulnOut = (& $reeve scan --dir $vulnHome --json 2>$null | Out-String)
     Check "an agent below a published fix is named, with the advisory to read" `
         ($vulnOut -match '"version\.known-vulnerability"' -and $vulnOut -match 'CVE-2026-54316' -and $vulnOut -match '"https://advisories\.gitlab\.com/') `
         "no known-vulnerability finding for Claude Code 2.1.100"
+    Check "an MCP server the agent calls and no file configures is named" `
+        ($vulnOut -match '"mcp\.called-not-configured"' -and $vulnOut -match 'claude\.ai connector' -and $vulnOut -match 'createJiraIssue') `
+        "no finding for the connector in the decision log"
 } finally {
     $env:USERPROFILE = $savedProfile3
     if ($savedHome3) { $env:HOME = $savedHome3 } else { Remove-Item Env:\HOME -ErrorAction SilentlyContinue }

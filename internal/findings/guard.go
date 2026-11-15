@@ -18,6 +18,15 @@ type GuardHistory struct {
 	LastSeen map[model.AgentID]time.Time
 	// Total is how many decisions each agent has recorded, ever.
 	Total map[model.AgentID]int
+	// MCP is which MCP servers each agent called, by the name in the tool's name.
+	MCP map[model.AgentID]map[string]*MCPUse
+}
+
+// MCPUse is how one agent used one MCP server, according to the guard's log.
+type MCPUse struct {
+	Calls int
+	Last  time.Time
+	Tools map[string]bool
 }
 
 // removedWindow is how recently the guard must have been working for its absence to

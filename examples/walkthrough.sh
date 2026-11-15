@@ -453,11 +453,20 @@ VULN_HOME="$SANDBOX/vulnerable"
 mkdir -p "$VULN_HOME/.claude"
 printf '{}\n' > "$VULN_HOME/.claude/settings.json"
 printf '{"version_from":"2.1.90","version_to":"2.1.100","outcome":"success"}\n' > "$VULN_HOME/.claude/.last-update-result.json"
+# And a decision log showing a call to a claude.ai connector, which no file configures.
+mkdir -p "$VULN_HOME/.reeve"
+printf '{"time":"%s","agent":"claude-code","kind":"mcp","mcpServer":"83261223-49e4-40a3-81e6-0f9387058f48","mcpTool":"createJiraIssue","effect":"allow"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$VULN_HOME/.reeve/decisions.jsonl"
 VULN_OUT=$(env HOME="$VULN_HOME" USERPROFILE="$VULN_HOME" "$REEVE" scan --dir "$VULN_HOME" --json 2>/dev/null)
 case "$VULN_OUT" in
     *'"version.known-vulnerability"'*'CVE-2026-54316'*'"https://advisories.gitlab.com/'*)
         check "an agent below a published fix is named, with the advisory to read" 1 ;;
     *) check "an agent below a published fix is named, with the advisory to read" 0 "no known-vulnerability finding for Claude Code 2.1.100" ;;
+esac
+case "$VULN_OUT" in
+    *'"mcp.called-not-configured"'*'claude.ai connector'*'createJiraIssue'*)
+        check "an MCP server the agent calls and no file configures is named" 1 ;;
+    *) check "an MCP server the agent calls and no file configures is named" 0 "no finding for the connector in the decision log" ;;
 esac
 
 # The capture is meant to be sent to a stranger, so the one property that
