@@ -134,6 +134,15 @@ type Report struct {
 	// the report was given both records, because it is the comparison of the two.
 	Quiet *QuietGuard `json:"quietGuard,omitempty"`
 
+	// DecisionGaps names the parts of the decision log inside the window that could
+	// not be read, a rotated segment and why, so a count over part of a window does
+	// not read as a quiet one. Set by the caller that read the log.
+	DecisionGaps []string `json:"decisionLogGaps,omitempty"`
+	// DecisionPruned names the segments inside the window whose records retention
+	// removed on schedule: routine, and kept apart from the gaps above so it does not
+	// read as a loss.
+	DecisionPruned []string `json:"decisionLogPruned,omitempty"`
+
 	ByTeam  []Group `json:"byTeam"`
 	ByAgent []Group `json:"byAgent"`
 	ByUser  []Group `json:"byUser"`

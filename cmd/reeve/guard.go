@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/feysal07/reeve/internal/adapter"
+	"github.com/feysal07/reeve/internal/audit"
 	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/hook"
 	"github.com/feysal07/reeve/internal/model"
@@ -519,52 +520,80 @@ func newDecisionRecord(a policy.Action, d policy.Decision, source string, elapse
 //
 // A busy day produces a lot of it, and the guard runs in front of a waiting agent. The
 // window in the policy decides what counts; this decides how far back it is worth
-// looking to find it, and a rule that wants a longer window than this holds gets a
-// truthful undercount rather than a slow answer.
+// looking to find it. A rule that wants a longer window than this holds is told the
+// history is truncated, and refuses when what was read is under its line, the same
+// answer a budget gets from a window it could not read to the start of.
 const historyLines = 5000
+
+// historyBytes bounds the same thing in bytes, from the end of each file read and in
+// what is kept. Found in review: the line count bounded nothing about size, so a file
+// in the log's directory, planted or just grown, could make the guard slow or large
+// enough to be killed or skipped, and a hook that times out is permission to several
+// agents.
+const historyBytes = 8 << 20
+
+// historyLineLimit is the longest line read as a decision, the same as report and
+// doctor use, so one line cannot be read by them and make the guard refuse.
+const historyLineLimit = 4 << 20
 
 // readHistory loads recent decisions, most recent first.
 //
 // A nil return means the history could not be read, which Evaluate treats as a reason
 // to refuse a rule that counts rather than as an empty history. The two are very
 // different and the type is what keeps them apart.
+//
+// The rotated segments inside the window are read as well as the live log. Found on a
+// live machine: rotation empties the live log every day, so a loop-breaker reading it
+// alone counted nothing straight after rotation and allowed. A segment inside the
+// window that is missing or unreadable, or a read cut short by the bounds above, marks
+// the history Truncated, which Evaluate refuses when what was read is under the line.
 func readHistory(path string, window time.Duration) *policy.History {
 	if path == "" {
 		return nil
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		// A log that does not exist yet is an empty history, not an unreadable one:
-		// nothing has happened because nothing has run. Any other error is a file
-		// that should be readable and is not, which must not read as quiet.
-		if os.IsNotExist(err) {
-			return &policy.History{}
-		}
-		return nil
-	}
-	defer f.Close()
+	cutoff := time.Now().Add(-window)
 
 	// Kept in a ring so a long log costs one pass and a bounded amount of memory.
-	ring := make([]string, 0, historyLines)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		if len(ring) == historyLines {
-			ring = append(ring[1:], line)
-			continue
-		}
-		ring = append(ring, line)
-	}
-	if err := sc.Err(); err != nil {
+	ring := make([]string, 0, 256)
+	size := 0
+	dropped := false
+	w, err := audit.ReadWindowWith(path, audit.WindowOptions{From: cutoff, MaxBytes: historyBytes},
+		func(p audit.Part, r io.Reader) error {
+			if p.Cut {
+				dropped = true
+			}
+			sc := bufio.NewScanner(r)
+			sc.Buffer(make([]byte, 0, 64*1024), historyLineLimit)
+			for sc.Scan() {
+				line := strings.TrimSpace(sc.Text())
+				if line == "" {
+					continue
+				}
+				ring = append(ring, line)
+				size += len(line)
+				for len(ring) > historyLines || size > historyBytes {
+					size -= len(ring[0])
+					ring = ring[1:]
+					dropped = true
+				}
+			}
+			return sc.Err()
+		})
+	if err != nil {
+		// A live log that cannot be read, a segment that could not be scanned, or a
+		// line too long to be a decision: a file that should be readable and is not,
+		// which must not read as quiet. A log that does not exist yet is an empty
+		// history and arrives here as no error: nothing has run.
 		return nil
 	}
 
-	cutoff := time.Now().Add(-window)
-	h := &policy.History{}
+	h := &policy.History{Truncated: !w.Complete()}
+	// The oldest record kept decides whether what was dropped could have been inside
+	// the window. Taken from the oldest that parses, not from the first record found
+	// outside the window walking back: found in review, one record out of order, a
+	// clock stepped back or a time missing, stopped that walk early, threw away
+	// older records inside the window and hid that anything had been dropped.
+	oldestKeptInside, anyParsed := false, false
 	for i := len(ring) - 1; i >= 0; i-- {
 		var rec decisionRecord
 		if json.Unmarshal([]byte(ring[i]), &rec) != nil {
@@ -573,8 +602,10 @@ func readHistory(path string, window time.Duration) *policy.History {
 			// refusal.
 			continue
 		}
+		anyParsed = true
+		oldestKeptInside = !rec.Time.Before(cutoff)
 		if rec.Time.Before(cutoff) {
-			break
+			continue
 		}
 		ra := policy.RecentAction{
 			Time:      rec.Time,
@@ -590,6 +621,12 @@ func readHistory(path string, window time.Duration) *policy.History {
 			ra.Who, ra.Team = rec.Who, rec.Team
 		}
 		h.Records = append(h.Records, ra)
+	}
+	if dropped && (oldestKeptInside || !anyParsed) {
+		// Older lines were dropped to keep these, and the oldest kept is still inside
+		// the window: those dropped may have been inside it too, so the count is a
+		// floor.
+		h.Truncated = true
 	}
 	return h
 }

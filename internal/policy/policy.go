@@ -551,6 +551,22 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 			}
 			continue
 		}
+		// Only when the rest of the rule matches. A gap in the log is not a reason to
+		// refuse an action the rule was never about.
+		if r.Match.Repeated != nil && a.History.Incomplete(a, *r.Match.Repeated, a.now()) && r.Match.matchesBesidesHistory(a) {
+			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+				d.Effect = EffectDeny
+				d.RuleID = r.ID
+				d.Reason = "This rule counts how often something has just happened, and " +
+					"part of the record it counts from could not be read: a rotated " +
+					"segment of the decision log inside its window is missing or " +
+					"unreadable, or the window holds more than the guard reads at once. " +
+					"What was read is under the limit, but that is a floor rather than " +
+					"the count. Refusing rather than assuming the rest was quiet. Run " +
+					"reeve doctor to see which, or shorten the rule's window."
+			}
+			continue
+		}
 		if !r.Match.matches(a) {
 			continue
 		}
@@ -570,6 +586,12 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 		}
 	}
 	return d
+}
+
+// matchesBesidesHistory reports whether every condition but the repeat count matches.
+func (m Match) matchesBesidesHistory(a Action) bool {
+	m.Repeated = nil
+	return m.matches(a)
 }
 
 func (m Match) matches(a Action) bool {

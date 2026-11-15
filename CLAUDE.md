@@ -80,7 +80,7 @@ Load-bearing; do not flatten it into a single rule.
    anything is refused when the file is parsed, not silently turned into zero.
 5. **The walkthrough is the acceptance test.** Any user-visible feature gets checks in
    `examples/walkthrough.sh`, and the count is updated in `README.md` and
-   `docs/QUICKSTART.md` (currently **104** in all three).
+   `docs/QUICKSTART.md` (currently **143** in all three).
 6. **Shipped examples and docs are loaded by a test.** `examples/telemetry/prices.yaml`,
    the YAML blocks in `docs/TELEMETRY.md`, `examples/policy/*.yaml` and the Grafana
    dashboard are all parsed by tests. Each of them broke silently at least once.
@@ -165,5 +165,5 @@ go build ./... && go test ./...
 bash examples/walkthrough.sh --quiet
 ```
 
-`go test ./...` covers 19 packages. The walkthrough is 104 checks and must end with 0
+`go test ./...` covers 19 packages. The walkthrough is 143 checks and must end with 0
 failures.

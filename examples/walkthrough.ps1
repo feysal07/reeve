@@ -1682,6 +1682,18 @@ Check "rotation and retention keep the decision log verifiable" `
     (($rot1 -eq 0) -and ($rot2 -eq 0) -and ($rotVerify -eq 0) -and (($rotOut -replace '\s+', ' ') -match "pruned decisions-")) `
     "rotate $rot1, rotate --keep $rot2, verify ${rotVerify}: $($rotOut.Trim())"
 
+# The report reads the rotated segments, not only the live log. Found on a live machine:
+# rotation empties the live log every day, and a seven-day report saw 105 of about 3,000
+# decisions without a word. Here one decision sits in the kept segment and one in the
+# live log, and the pruned segment is named rather than passed over in silence.
+$rotReport = (& $reeve report --decisions $rotLog --json 2>&1 | Out-String)
+$rotDoc = $null
+try { $rotDoc = $rotReport | ConvertFrom-Json } catch { }
+Check "the report counts decisions in rotated segments and names the pruned one" `
+    (($null -ne $rotDoc) -and ($rotDoc.overall.decisions -eq 2) -and `
+     (@($rotDoc.decisionLogPruned).Count -eq 1) -and ("$($rotDoc.decisionLogPruned)" -match "removed by retention")) `
+    $rotReport
+
 # The two records of one session side by side. The decision log knows what was refused,
 # which no vendor telemetry can; the event store knows what it cost. This walkthrough's
 # events carry no session id, so each session here is guard-only - and the timeline has

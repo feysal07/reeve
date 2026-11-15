@@ -52,15 +52,13 @@ func Segments(logPath string) ([]string, error) {
 		return nil, err
 	}
 	var out []string
-	prefix := filepath.Base(base) + segmentSeparator
 	for _, c := range chains {
 		seg := strings.TrimSuffix(c, ChainSuffix)
 		// Compared on base names. Found by the walkthrough: Glob hands back paths in
 		// the platform's separators, so a log named with forward slashes on Windows
 		// never matched its own segments' prefix, every segment was skipped, and
 		// retention silently removed nothing while reporting success.
-		stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(seg), prefix), ext)
-		if _, err := time.Parse(stampLayout, stamp); err != nil {
+		if _, ok := segmentStamp(logPath, seg); !ok {
 			continue
 		}
 		out = append(out, seg)

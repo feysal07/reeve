@@ -168,7 +168,11 @@ turn, for every agent the guard is registered with:
   does not refuse in the agent's shape fails doctor: every deny would go ahead with the
   log saying it was refused.
 - **decisions recorded**: whether the agent has ever actually called the hook. The two
-  probes prove Reeve's half; only this proves the agent's.
+  probes prove Reeve's half; only this proves the agent's. Counted across every rotated
+  segment of the decision log still on disk, not only the live file, which rotation
+  empties every day. Segments retention pruned are counted and said; a segment whose
+  records are missing with no tombstone, or a log that cannot be read, is named and
+  fails doctor, because that is what deleting part of the record looks like.
 
 Both probes write to a temporary log, never the real one. Where an agent's request shape
 was written from its documentation rather than captured from a real installation, doctor
@@ -494,6 +498,17 @@ there is no expressed intent to violate. An input that a rule which *does* exist
 depends on, and which cannot be read, denies — because an empty history is not evidence
 that nothing happened. A log that simply does not exist yet is treated as empty rather
 than unreadable: nothing has run because nothing has run.
+
+The count reads the rotated segments of the log inside the rule's window as well as the
+live file. Found on a live machine: rotation empties the live log every day, and a
+loop-breaker reading it alone counted nothing straight after rotation and allowed. A
+history with part of its window unread is a floor, not a count, and the rule refuses when
+what it could read is under the line - when a segment inside the window is missing or
+unreadable, or the window holds more than the guard reads at once (5,000 decisions, or
+8 MiB from the end of each file, so nothing in the log's directory can make the guard
+slow enough for an agent to give up waiting). If what was read is already over the line,
+the rule answers as written. Only files that are regular files are read, and a segment
+stamped in the future is treated as a gap rather than read.
 
 The rule fires on the call that would take the total past the line, not one call later:
 the action being decided is not itself counted.
