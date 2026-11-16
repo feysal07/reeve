@@ -1156,6 +1156,13 @@ if [ -f "$EVENTS" ]; then
         *"vendor cost"*) check "the vendors' own figure shown separately, not merged" 1 ;;
         *) check "the vendors' own figure shown separately, not merged" 0 ;;
     esac
+    # Every identity here arrived as the agent's own claim, with no token from an
+    # identity provider. Found in the v0.7.0 audit: the report mixed those with
+    # verified ones, so a cost per person read as proven when nothing was.
+    case "$REPORT" in
+        *"identities   : all asserted"*) check "the report says no identity in it was verified" 1 ;;
+        *) check "the report says no identity in it was verified" 0 ;;
+    esac
     case "$REPORT" in
         *"By team"*) check "spend attributed by team" 1 ;;
         *) check "spend attributed by team" 0 ;;

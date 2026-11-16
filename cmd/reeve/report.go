@@ -250,6 +250,27 @@ func renderReport(r telemetry.Report, top int) {
 		fmt.Printf("  money spent  : not known\n")
 	}
 
+	// Before any figure per person is read: how much of it rests on an identity the
+	// operator's identity provider proved, and how much on the agent's own claim.
+	if s := r.Identities; s != nil && s.Verified+s.Asserted > 0 {
+		switch {
+		case s.Verified == 0:
+			fmt.Printf("  identities   : all asserted. Every person on usage here is the agent's own\n")
+			fmt.Printf("                 claim; none was checked against your identity provider\n")
+		case s.Asserted == 0:
+			fmt.Printf("  identities   : all verified by your identity provider\n")
+		case s.VerifiedCostUSD+s.AssertedCostUSD <= 0:
+			// No priced usage: a share of nothing would read as none of it verified.
+			fmt.Printf("  identities   : %d of %d usage events with a person are verified; the rest\n",
+				s.Verified, s.Verified+s.Asserted)
+			fmt.Printf("                 is the agents' own claim\n")
+		default:
+			fmt.Printf("  identities   : %d of %d usage events with a person are verified, %s of their\n",
+				s.Verified, s.Verified+s.Asserted, percentOf(s.VerifiedCostUSD, s.VerifiedCostUSD+s.AssertedCostUSD))
+			fmt.Printf("                 equivalent cost; the rest is the agents' own claim\n")
+		}
+	}
+
 	if o.VendorCostUSD > 0 {
 		// Showing both is the point. A gap between them usually means a model is
 		// unpriced here, or the agent is reporting list price where the
@@ -495,4 +516,22 @@ func overageMeaning(o telemetry.Overage) string {
 	default:
 		return ""
 	}
+}
+
+// percentOf renders part of a whole as a percentage, or "none" for an empty whole.
+//
+// A share that is neither none nor all never rounds to 0% or 100%, which would read a
+// mixed report as a pure one.
+func percentOf(part, whole float64) string {
+	if whole <= 0 {
+		return "none"
+	}
+	p := part / whole * 100
+	switch {
+	case part > 0 && p < 1:
+		return "under 1%"
+	case part < whole && p > 99:
+		return "over 99%"
+	}
+	return fmt.Sprintf("%.0f%%", p)
 }

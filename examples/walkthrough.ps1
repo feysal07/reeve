@@ -1033,6 +1033,10 @@ if (Test-Path $events) {
 
     Check "consumption priced from tokens across four vendors" ($reportText -match "at your rates, from tokens")
     Check "the vendors' own figure shown separately, not merged" ($reportText -match "vendor cost")
+    # Every identity here arrived as the agent's own claim, with no token from an
+    # identity provider. Found in the v0.7.0 audit: the report mixed those with
+    # verified ones, so a cost per person read as proven when nothing was.
+    Check "the report says no identity in it was verified" ($reportText -match "identities   : all asserted")
     Check "spend attributed by team" ($reportText -match "By team")
     Check "refusals appear, which no vendor telemetry can report" ($reportText -match "blocked")
 
