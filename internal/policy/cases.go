@@ -40,6 +40,9 @@ type CaseAction struct {
 	MCPServer   string        `yaml:"mcpServer,omitempty"`
 	MCPTool     string        `yaml:"mcpTool,omitempty"`
 	Environment string        `yaml:"environment,omitempty"`
+	// MCPRegistry is the server's standing against the approved list, which the
+	// guard resolves; a case states it.
+	MCPRegistry string `yaml:"mcpRegistry,omitempty"`
 }
 
 // CaseExpect is the decision a case requires. Rule, when given, must be the rule that
@@ -128,6 +131,7 @@ func (c *Cases) Run(p *Policy) []CaseResult {
 			MCPServer:   tc.Action.MCPServer,
 			MCPTool:     tc.Action.MCPTool,
 			Environment: tc.Action.Environment,
+			MCPStanding: tc.Action.MCPRegistry,
 			History:     &History{},
 			Spend:       &Spend{},
 		}

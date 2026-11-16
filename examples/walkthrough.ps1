@@ -772,6 +772,27 @@ foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$
 Check "a production rule sees an MCP call that reaches production" `
     (($mcpExits -join ":") -eq "2:0") "exits were $($mcpExits -join ', '); want 2 and 0"
 
+# The approved list is enforced, not advisory. Found in the v0.7.0 audit: a server the
+# list refused ran, because nothing but reeve mcp check ever read it. The same server,
+# identified by its command, refused by one list and approved by another; the name it
+# is called by plays no part.
+Write-Text (Join-Path $Sandbox "mcp-registry-policy.yaml") ("version: 1`nrules:`n  - id: refused-mcp-server`n    decision: deny`n    match:`n      mcp: {registry: [denied, mismatch]}`n")
+foreach ($st in "denied", "approved") {
+    Write-Text (Join-Path $Sandbox "mcp-registry-$st.yaml") ("version: 1`nservers:`n  - name: k8s`n    status: $st`n    command: [npx, -y, kubernetes-mcp-server@latest]`n")
+}
+$saved = @{}
+foreach ($k in "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "REEVE_MCP_REGISTRY") { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+$regExits = foreach ($st in "denied", "approved") {
+    foreach ($k in "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA") { [Environment]::SetEnvironmentVariable($k, $mcpHome) }
+    [Environment]::SetEnvironmentVariable("REEVE_MCP_REGISTRY", $null)
+    $payload = '{"session_id":"r","hook_event_name":"PreToolUse","tool_name":"mcp__kubernetes__pods_list","tool_input":{},"cwd":' + (ConvertTo-Json $mcpHome) + '}'
+    $null = ($payload | & $reeve guard --agent claude-code --policy (Join-Path $Sandbox "mcp-registry-policy.yaml") --mcp-registry (Join-Path $Sandbox "mcp-registry-$st.yaml") 2>&1)
+    $LASTEXITCODE
+}
+foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+Check "the guard refuses an MCP server the approved list refuses, by what it runs" `
+    (($regExits -join ":") -eq "2:0") "exits were $($regExits -join ', '); want 2 and 0"
+
 # A policy is code, and a cases file is its tests: named actions and the decision each
 # must get. The baseline and every pack ship with one, so a change to them is checked
 # before anybody's agent finds out. A run that printed FAIL and exited zero would pass

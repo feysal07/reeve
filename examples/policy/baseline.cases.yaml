@@ -43,14 +43,26 @@ cases:
     action: {kind: shell, command: "kubectl apply -f k8s/", environment: production}
     expect: {effect: ask, rule: production-infrastructure}
   - name: changing production through an MCP server asks
-    action: {kind: mcp, mcpServer: kubernetes, mcpTool: resources_create_or_update, environment: production}
+    action: {kind: mcp, mcpServer: kubernetes, mcpTool: resources_create_or_update, environment: production, mcpRegistry: approved}
     expect: {effect: ask, rule: production-infrastructure}
   - name: an infrastructure command whose target is unknown asks
     action: {kind: shell, command: "kubectl delete pod api-0", environment: unknown}
     expect: {effect: ask, rule: infrastructure-unknown-target}
   - name: an MCP server nobody approved asks
-    action: {kind: mcp, mcpServer: some-server, mcpTool: do_thing}
+    action: {kind: mcp, mcpServer: some-server, mcpTool: do_thing, mcpRegistry: unregistered}
     expect: {effect: ask, rule: unknown-mcp-server}
+  - name: an MCP server the approved list refuses is refused
+    action: {kind: mcp, mcpServer: some-server, mcpTool: do_thing, mcpRegistry: denied}
+    expect: {effect: deny, rule: refused-mcp-server}
+  - name: a server using an approved name and running something else is refused
+    action: {kind: mcp, mcpServer: github, mcpTool: do_thing, mcpRegistry: mismatch}
+    expect: {effect: deny, rule: refused-mcp-server}
+  - name: an approved MCP server goes through without a prompt
+    action: {kind: mcp, mcpServer: github, mcpTool: list_issues, mcpRegistry: approved}
+    expect: {effect: allow}
+  - name: an MCP server whose standing could not be worked out is refused
+    action: {kind: mcp, mcpServer: github, mcpTool: list_issues, mcpRegistry: unresolved}
+    expect: {effect: deny}
   - name: running the tests is not interrupted
     action: {kind: shell, command: "go test ./..."}
     expect: {effect: allow}

@@ -50,7 +50,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 144 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 147 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -300,6 +300,23 @@ time is too late: the server could be taken out of `.mcp.json` in between. Calls
 by a guard older than v0.7.0 carry no such evidence, so they stay unverified until they
 age out of the 30-day window the scan reads, and a report from an older scan is
 reconciled as unverified rather than approved.
+
+**The guard enforces the list.** A policy rule can match on where an MCP server stands
+against it, `mcp: {registry: [...]}` with any of `approved`, `trial`, `denied`,
+`unregistered`, `mismatch`, `name-only` and `unverified`, and the guard works out the
+standing at the moment of each call with the same matcher `mcp check` uses. The baseline
+refuses `denied` and `mismatch` and asks about `unregistered`, `unverified` and
+`name-only`. The guard reads the list from `--mcp-registry`, then `REEVE_MCP_REGISTRY`,
+then `/etc/reeve/mcp-registry.yaml` (`%ProgramData%\Reeve\mcp-registry.yaml` on Windows),
+then `~/.reeve/mcp-registry.yaml`; the administrator's copy outranks the developer's
+because a list the governed party can edit governs nobody. With no list anywhere, every
+server is unregistered. A list that is named or found and cannot be read, or an agent
+configuration that cannot be read, leaves the standing unresolved, and a registry rule
+refuses the call rather than treating it as approved. Nothing here approves a server for
+you: the list is a file you write and review. On a machine with no administrator's list, the one in
+`~/.reeve` is the developer's own, and an agent running as the developer can edit it:
+deploy the list to `/etc/reeve` (or `%ProgramData%\Reeve`), where neither can, if it is
+to govern them.
 
 `denied` entries are kept rather than deleted. An entry that is simply absent looks
 like one nobody has looked at, and the next person re-runs a review that already

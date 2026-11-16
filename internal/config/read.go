@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 )
 
 // utf8BOM is the byte order mark Windows editors and PowerShell prepend to a file
@@ -25,21 +24,32 @@ func StripBOM(b []byte) []byte {
 }
 
 // ReadFile reads a configuration file and removes any byte order mark.
+//
+// Only a regular file is read, opened without waiting. Found in review: the guard reads
+// agent configuration from the project on every MCP call a registry rule asks about, and
+// a FIFO named .mcp.json or settings.local.json held it there until the agent gave up,
+// which several agents treat as permission to go ahead. Every configuration file is read
+// through here, so every one is covered.
 func ReadFile(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return StripBOM(b), nil
+	return readRegular(path, maxConfig)
 }
 
 // maxRegular is the most ReadRegularFile reads. Configuration files are kilobytes; a
 // file larger than this in a directory somebody else controls is not one.
 const maxRegular = 4 << 20
 
+// maxConfig is the most ReadFile reads. Larger than maxRegular because ~/.claude.json
+// carries a session history alongside its settings and runs to megabytes on a machine
+// that has been used for a while.
+const maxConfig = 128 << 20
+
 // ReadRegularFile reads a configuration file only if it is a regular file, opening it
 // without blocking and refusing one larger than maxRegular.
 func ReadRegularFile(path string) ([]byte, error) {
+	return readRegular(path, maxRegular)
+}
+
+func readRegular(path string, max int64) ([]byte, error) {
 	f, err := openNonBlocking(path)
 	if err != nil {
 		return nil, err
@@ -52,10 +62,10 @@ func ReadRegularFile(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", path)
 	}
-	if info.Size() > maxRegular {
+	if info.Size() > max {
 		return nil, fmt.Errorf("%s is %d bytes, larger than any configuration file", path, info.Size())
 	}
-	b, err := io.ReadAll(io.LimitReader(f, maxRegular+1))
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
 	}

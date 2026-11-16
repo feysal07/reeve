@@ -27,10 +27,10 @@ package mcp
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
+	"github.com/feysal07/reeve/internal/config"
 	"github.com/feysal07/reeve/internal/model"
 	"gopkg.in/yaml.v3"
 )
@@ -105,8 +105,12 @@ func (e Entry) Identified() bool {
 }
 
 // Load reads a registry file.
+//
+// Read only if it is a regular file, opened without waiting: the guard reads it on
+// every MCP call a registry rule asks about, and a FIFO in its place would hold the
+// guard in front of a waiting agent.
 func Load(path string) (*Registry, error) {
-	body, err := os.ReadFile(path)
+	body, err := config.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

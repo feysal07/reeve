@@ -371,3 +371,21 @@ rules:
 		t.Errorf("verdict = %+v", v)
 	}
 }
+
+// TestAnOldMCPRecordReplaysAsUnregistered. A record written before the guard recorded a
+// server's standing predates enforcing the approved list, when every server was in
+// effect unregistered. Replayed as unknown, a registry rule would refuse every MCP call
+// in an old log, and the replay would describe a policy that never refused them.
+func TestAnOldMCPRecordReplaysAsUnregistered(t *testing.T) {
+	old := Record{Kind: policy.KindMCP, MCPServer: "s"}
+	if got := old.Action().MCPStanding; got != policy.StandingUnregistered {
+		t.Errorf("old record = %q, want unregistered", got)
+	}
+	recorded := Record{Kind: policy.KindMCP, MCPServer: "s", MCPStanding: policy.StandingDenied}
+	if got := recorded.Action().MCPStanding; got != policy.StandingDenied {
+		t.Errorf("recorded = %q, want the standing the guard recorded", got)
+	}
+	if got := (Record{Kind: policy.KindShell}).Action().MCPStanding; got != "" {
+		t.Errorf("a shell record carries a standing: %q", got)
+	}
+}

@@ -144,6 +144,9 @@ type Match struct {
 	// plan shrank. This reads the allowance the price table declares, so the policy
 	// says "eighty per cent" and stays true across every change to the plan.
 	Allowance *AllowanceMatch `yaml:"allowance,omitempty"`
+
+	// MCP matches an MCP call on where its server stands against the approved list.
+	MCP *MCPMatch `yaml:"mcp,omitempty"`
 }
 
 // personScoped reports whether any counting match on this rule is totalled per person.
@@ -314,6 +317,11 @@ func Parse(b []byte) (*Policy, error) {
 		for _, k := range r.Match.Kinds {
 			if !validKind(k) {
 				return nil, fmt.Errorf("rules[%d] (%s): unknown kind %q", i, r.ID, k)
+			}
+		}
+		if r.Match.MCP != nil {
+			if err := r.Match.MCP.validate(r.ID); err != nil {
+				return nil, err
 			}
 		}
 		// An allowance rule that cannot mean anything is refused here rather than
@@ -551,6 +559,20 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 			}
 			continue
 		}
+		// The approved list could not be read, or the guard never resolved this
+		// call's standing. Refused where the rest of the rule matches, because an
+		// unreadable list is not one that approves nothing.
+		if r.Match.MCP != nil && r.Match.MCP.unresolved(a) && r.Match.matchesBesidesMCP(a) {
+			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+				d.Effect = EffectDeny
+				d.RuleID = r.ID
+				d.Reason = "This rule matches on where an MCP server stands against the approved " +
+					"list, and that could not be worked out: the list, or the agent's " +
+					"configuration that identifies the server, exists and cannot be read. " +
+					"Refusing rather than treating it as approved. Run reeve doctor."
+			}
+			continue
+		}
 		// Only when the rest of the rule matches. A gap in the log is not a reason to
 		// refuse an action the rule was never about.
 		if r.Match.Repeated != nil && a.History.Incomplete(a, *r.Match.Repeated, a.now()) && r.Match.matchesBesidesHistory(a) {
@@ -586,6 +608,12 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 		}
 	}
 	return d
+}
+
+// matchesBesidesMCP reports whether every condition but registry standing matches.
+func (m Match) matchesBesidesMCP(a Action) bool {
+	m.MCP = nil
+	return m.matches(a)
 }
 
 // matchesBesidesHistory reports whether every condition but the repeat count matches.
@@ -635,6 +663,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if m.Allowance != nil && !m.Allowance.matches(a) {
+		return false
+	}
+	if m.MCP != nil && !m.MCP.matches(a) {
 		return false
 	}
 	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {
