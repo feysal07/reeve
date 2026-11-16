@@ -2,6 +2,7 @@ package install
 
 import (
 	"fmt"
+	"github.com/BurntSushi/toml"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -320,7 +321,7 @@ func splitCommand(command string) (string, []string) {
 		switch {
 		case r == '"':
 			inQuote = !inQuote
-		case r == ' ' && !inQuote:
+		case (r == ' ' || r == '\t') && !inQuote:
 			if cur.Len() > 0 {
 				parts = append(parts, cur.String())
 				cur.Reset()
@@ -391,16 +392,66 @@ func (c codexCLI) remove(path string) (Outcome, string, error) {
 }
 
 func codexHasGuard(path string) bool {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return false
+	_, ok := codexGuardCommand(path)
+	return ok
+}
+
+// codexGuardCommand finds this tool's guard among the hooks in Codex's TOML and returns
+// its command line, program and arguments joined.
+//
+// Parsed, not matched line by line. Found in review: Codex keeps the program and its
+// arguments on separate lines, so a line check could not see the guard word beside the
+// program and fell back to a substring; a developer's own hook whose path held "reeve"
+// and "guard" then read as registered, and doctor ran it.
+func codexGuardCommand(path string) (string, bool) {
+	var doc map[string]any
+	if _, err := toml.DecodeFile(path, &doc); err != nil {
+		return "", false
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.Contains(line, "command") && isOurs(line) {
-			return true
+	hooks, _ := doc["hooks"].(map[string]any)
+	for _, event := range hooks {
+		for _, entry := range tableList(event) {
+			candidates := append([]map[string]any{entry}, tableList(entry["hooks"])...)
+			for _, h := range candidates {
+				exe, _ := h["command"].(string)
+				if exe == "" {
+					continue
+				}
+				line := quoteIfSpaced(exe)
+				if args, ok := h["args"].([]any); ok {
+					for _, a := range args {
+						if s, ok := a.(string); ok {
+							line += " " + quoteIfSpaced(s)
+						}
+					}
+				}
+				if isOurs(line) {
+					return line, true
+				}
+			}
 		}
 	}
-	return false
+	return "", false
+}
+
+// tableList reads a TOML array of tables, which the decoder hands back in either of two
+// shapes, as a list of maps.
+func tableList(v any) []map[string]any {
+	switch t := v.(type) {
+	case []map[string]any:
+		return t
+	case []any:
+		var out []map[string]any
+		for _, e := range t {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	case map[string]any:
+		return []map[string]any{t}
+	}
+	return nil
 }
 
 func codexManualDetail(path, command string) string {

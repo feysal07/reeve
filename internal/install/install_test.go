@@ -509,3 +509,65 @@ func TestClaudeCodeIsAlsoToldWhenAnActionRan(t *testing.T) {
 		t.Errorf("uninstall left a post-tool hook behind: %s", after)
 	}
 }
+
+// TestOnlyTheGuardItselfIsTakenForOurs.
+//
+// isOurs decides which hooks install replaces, uninstall removes and doctor runs, and it
+// matched any command containing "reeve" and "guard" anywhere. Found in the v0.7.0
+// audit: a hook of the developer's own, say a notifier script under a directory called
+// reeve-guard, was taken for this tool's. Found in review of the fix: matching on the
+// program's name lost hooks written by a renamed binary and compiled ones with an
+// unquoted path holding a space. It is ours by the shape this tool writes.
+func TestOnlyTheGuardItselfIsTakenForOurs(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		`"/usr/local/bin/reeve" guard --agent claude-code --policy "/p" --log "/l"`:               true,
+		`"C:\Program Files\Reeve\reeve.exe" guard --agent codex-cli --policy "C:\p" --log "C:\l"`: true,
+		// Compiled: the program from settings, unquoted, and no --policy.
+		`reeve guard --agent gemini-cli`:                                true,
+		`C:\Program Files\Reeve\reeve.exe guard --agent cursor --log x`: true,
+		`/opt/reeve-darwin-arm64 guard --agent gemini-cli`:              true,
+		"/usr/local/bin/reeve\tguard\t--agent claude-code":              true,
+		// Installed by a binary renamed or built somewhere temporary.
+		`"/tmp/go-build123/exe/main" guard --agent claude-code --policy "/p" --log "/l"`: true,
+		`"/usr/local/bin/rv" guard --agent claude-code --policy "/p" --log "/l"`:         true,
+		// Compiled with a custom program, which carries --log and no --policy.
+		`/opt/custom/rv guard --agent gemini-cli --log /l`: true,
+		// The developer's own.
+		`node /home/me/reeve-guard-notifier.js`:                false,
+		`/home/me/tools/reeve-guard/notify.sh guard`:           false,
+		`/home/me/tools/reeve-guard/notify.sh guard --dry-run`: false,
+		`/usr/local/bin/rv guard --agent claude-code`:          false,
+		`bash -c "reeve guard --agent claude-code"`:            false,
+		`/usr/local/bin/reeve scan --agent claude-code`:        false,
+		`/usr/local/bin/reeve guard`:                           false,
+		`/usr/local/bin/reeve`:                                 false,
+		`/usr/local/bin/reevester guard --agent claude-code`:   false,
+		`guard --agent claude-code --log x`:                    false,
+		``:                                                     false,
+	} {
+		if got := isOurs(cmd); got != want {
+			t.Errorf("isOurs(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}
+
+// TestCodexsGuardIsFoundByParsingNotByLine. Codex keeps the program and its arguments
+// on separate lines. Found in review: a line check could not see guard beside the
+// program, so a real install read as absent, and a developer's own hook whose path held
+// "reeve" and "guard" read as registered and was run by doctor.
+func TestCodexsGuardIsFoundByParsingNotByLine(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.toml")
+	write(t, real, "[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\n"+
+		"command = \"/usr/local/bin/reeve\"\nargs = [\"guard\", \"--agent\", \"codex-cli\", \"--policy\", \"/p\", \"--log\", \"/l\"]\n")
+	cmd, ok := codexGuardCommand(real)
+	if !ok || !strings.HasPrefix(cmd, "/usr/local/bin/reeve guard --agent codex-cli") {
+		t.Fatalf("real install: %q %v", cmd, ok)
+	}
+	theirs := filepath.Join(dir, "theirs.toml")
+	write(t, theirs, "[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\n"+
+		"command = \"/opt/reeve-guard/their-own-hook\"\n")
+	if cmd, ok := codexGuardCommand(theirs); ok {
+		t.Fatalf("the developer's own hook was taken for the guard: %q", cmd)
+	}
+}
