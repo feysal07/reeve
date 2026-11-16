@@ -1507,7 +1507,9 @@ Note "This is the only part of Reeve that writes to an agent's own files."
 Note "It runs against the sandbox home, never against yours."
 Write-Host ""
 
-# A hook the developer wrote themselves, which must survive both directions.
+# A hook the developer wrote themselves, which must survive both directions. Its path
+# holds "reeve" and "guard" on purpose: found in the v0.7.0 audit, that was enough for
+# install to take it for its own and replace it, and for uninstall to delete it.
 $instHome = Join-Path $Sandbox "install-home"
 New-Item -ItemType Directory -Force -Path (Join-Path $instHome ".claude") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $instHome ".cursor") | Out-Null
@@ -1517,7 +1519,7 @@ Write-Text $instSettings @'
   "permissions": { "allow": ["Bash(git:*)"] },
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/usr/local/bin/their-own-hook" }] }
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/opt/tools/reeve-guard/their-own-hook" }] }
     ]
   }
 }

@@ -124,19 +124,73 @@ func installers() []agentInstaller {
 }
 
 // Marker identifies a hook this tool installed.
-//
-// Matched loosely on purpose. A recorded command string is exact and therefore breaks
-// the moment the binary moves or a flag changes, and an uninstall that fails to find
-// what it installed leaves a broken hook behind, pointing at a path that no longer
-// exists — which on an agent that fails closed means the developer cannot work at all.
 const Marker = "reeve"
 
+// isOurs reports whether a hook command is this tool's guard, by the shape every guard
+// command this tool writes has: a program, then guard, then --agent, and either a
+// program named reeve or the --policy or --log this tool always passes.
+//
+// Not an exact recorded string, because that breaks the moment the binary moves or a
+// flag changes, and an uninstall that fails to find what it installed leaves a broken
+// hook behind, pointing at a path that no longer exists — which on an agent that fails
+// closed means the developer cannot work at all. So the path and the flags are free.
+//
+// Not a substring either. Found in the v0.7.0 audit: any command containing "reeve" and
+// "guard" anywhere matched, so a developer's own hook, a notifier script under a
+// directory called reeve-guard, was taken for this tool's: install replaced it,
+// uninstall deleted it, and doctor ran it.
+//
+// And not the program's name alone. Found in review: install writes whatever the
+// running binary is called, so a binary renamed rv or built to a temporary path wrote a
+// hook nothing could find again, and a policy compiled with an unquoted path holding a
+// space split the program in two. So the program is everything before the guard word,
+// and the flags this tool always writes identify it as well as the name does.
 func isOurs(command string) bool {
-	if command == "" {
+	parts := commandFields(command)
+	at := -1
+	for i, p := range parts {
+		if p == "guard" {
+			at = i
+			break
+		}
+	}
+	if at < 1 {
 		return false
 	}
-	lower := strings.ToLower(command)
-	return strings.Contains(lower, Marker) && strings.Contains(lower, "guard")
+	exe, args := strings.Join(parts[:at], " "), parts[at:]
+	if !hasArg(args, "--agent") {
+		return false
+	}
+	return isReeveBinary(exe) || hasArg(args, "--policy") || hasArg(args, "--log")
+}
+
+// commandFields splits a command line on unquoted spaces and tabs, the way the commands
+// this tool writes are quoted.
+func commandFields(command string) []string {
+	exe, args := splitCommand(command)
+	if exe == "" {
+		return nil
+	}
+	return append([]string{exe}, args...)
+}
+
+func hasArg(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, flag+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+// isReeveBinary reports whether a program path names a reeve binary: reeve, reeve.exe,
+// or a release asset such as reeve-darwin-arm64, in any directory, in any case.
+func isReeveBinary(exe string) bool {
+	if i := strings.LastIndexAny(exe, `/\`); i >= 0 {
+		exe = exe[i+1:]
+	}
+	base := strings.TrimSuffix(strings.ToLower(exe), ".exe")
+	return base == Marker || strings.HasPrefix(base, Marker+"-") || strings.HasPrefix(base, Marker+"_")
 }
 
 // GuardArgs builds the command line an agent will run.
@@ -195,21 +249,8 @@ func Registered(opts Options) []Registration {
 func commandIn(in agentInstaller, path string) string {
 	switch in.(type) {
 	case codexCLI:
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return ""
-		}
-		for _, line := range strings.Split(string(raw), "\n") {
-			if strings.Contains(line, "command") && isOurs(line) {
-				// The command is a quoted TOML string on this line.
-				if a := strings.Index(line, `"`); a >= 0 {
-					if b := strings.LastIndex(line, `"`); b > a {
-						return line[a+1 : b]
-					}
-				}
-			}
-		}
-		return ""
+		cmd, _ := codexGuardCommand(path)
+		return cmd
 	case copilotCLI:
 		doc, err := readJSON(copilotHookFilePath(path))
 		if err != nil {
