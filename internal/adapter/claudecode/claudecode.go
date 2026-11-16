@@ -801,3 +801,92 @@ func pluginServers(plugin, root string) []mcpSource {
 	})
 	return out
 }
+
+// ProjectMCPServers names the MCP servers a project's own configuration defines for a
+// call made in env.WorkDir: every .mcp.json from that directory up to the root, and the
+// local-scope servers ~/.claude.json keeps under any of those directories.
+//
+// Scan asks this of every directory an MCP call came from, because a server known only
+// from the guard's log is known only by its name, and a project can name a stdio server
+// after a desktop built-in or a claude.ai connector. Found in review: an approval by
+// that name was granted without anyone looking. Unlike Inspect, anything that would
+// leave the answer unknown is an error here, because "could not read it" must not
+// answer "it defines nothing":
+//
+//   - a directory that does not exist on this machine, which is a log from another
+//     machine, or a project since moved or deleted (found in review: read as a clean
+//     project, it approved the name);
+//   - a file that exists and cannot be read or parsed.
+//
+// The parents are read because the guard records where the agent is working, which
+// can be below the project root that holds .mcp.json. Found in review: reading only
+// the recorded directory missed a server defined at the root.
+//
+// Both the directory and the keys in ~/.claude.json are compared with symbolic links
+// resolved: the same project reached as /var and /private/var, as macOS does, would
+// otherwise not match, and not matching here reads as a project that defines nothing.
+// Files are read only if they are regular files, opened without blocking, because the
+// guard reads them in front of a waiting agent and a FIFO would hold it there.
+func (a *Adapter) ProjectMCPServers(env adapter.Env) ([]string, error) {
+	dir, err := filepath.EvalSymlinks(filepath.Clean(env.WorkDir))
+	if err != nil {
+		return nil, fmt.Errorf("%q cannot be read here: %w", env.WorkDir, err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("%q cannot be read here: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%q is not a directory", dir)
+	}
+
+	var cj claudeJSON
+	path := filepath.Join(env.Home, ".claude.json")
+	if doc := config.ReadRegularJSON(path, &cj); doc.Err != nil {
+		return nil, fmt.Errorf("%s: %w", path, doc.Err)
+	}
+	// Each key resolved once, as it would be found on disk; a key that no longer
+	// resolves is compared as written.
+	keys := make(map[string][]string, len(cj.Projects))
+	for key, p := range cj.Projects {
+		k := filepath.Clean(key)
+		if r, err := filepath.EvalSymlinks(k); err == nil {
+			k = r
+		}
+		for name := range p.MCPServers {
+			keys[filepath.ToSlash(k)] = append(keys[filepath.ToSlash(k)], name)
+		}
+	}
+
+	seen := map[string]bool{}
+	for d := dir; ; {
+		var proj mcpFile
+		file := filepath.Join(d, ".mcp.json")
+		if doc := config.ReadRegularJSON(file, &proj); doc.Err != nil {
+			return nil, fmt.Errorf("%s: %w", file, doc.Err)
+		}
+		for name := range proj.MCPServers {
+			seen[name] = true
+		}
+		want := filepath.ToSlash(d)
+		for key, names := range keys {
+			if sameDir(key, want, env.GOOS) {
+				for _, name := range names {
+					seen[name] = true
+				}
+			}
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out, nil
+}

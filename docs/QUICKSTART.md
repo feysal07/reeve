@@ -50,7 +50,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 143 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 144 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -286,6 +286,20 @@ reach `mcp check` scoped as `observed`. Give them `connector:` (the UUID their t
 named by) or `builtin:` (the app's name for it) instead of a command. Neither can match a
 configured server, whatever that server is called, and `builtin` accepts only the app's
 own names, so neither is a way back to matching on a name the developer chose.
+
+A name that looks like a connector or a built-in is still only a name: a stdio server
+in a project's own `.mcp.json` can be called `terminal` or given a connector's UUID. So
+on each Claude Code call to such a name, the guard reads the project the call came from,
+and every directory above it, and records whether any defines a server of that name.
+Scan reads those projects again. The approval holds only when every call carries the
+guard's "no" and the projects still say no. A project that defined one, at the call or
+now, makes it a `mismatch`, as loud as a different command under an approved name; a
+project that could not be read, or a call with no evidence, makes it `unverified`, with
+the reason. The guard looks at the moment of the call because checking only at scan
+time is too late: the server could be taken out of `.mcp.json` in between. Calls logged
+by a guard older than v0.7.0 carry no such evidence, so they stay unverified until they
+age out of the 30-day window the scan reads, and a report from an older scan is
+reconciled as unverified rather than approved.
 
 `denied` entries are kept rather than deleted. An entry that is simply absent looks
 like one nobody has looked at, and the next person re-runs a review that already

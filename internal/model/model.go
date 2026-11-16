@@ -260,6 +260,17 @@ type MCPSeen struct {
 	LastCalled time.Time `json:"lastCalled"`
 	// Tools are the tool names called, at most ten, never their arguments.
 	Tools []string `json:"tools,omitempty"`
+	// Verified says a name that looks like a connector or built-in was shown to be
+	// one: every call carried the guard's evidence that its project defined no server
+	// of that name, and every such project still defines none. Positive on purpose:
+	// a report from a scan that never checked has no field at all, and must not read
+	// as checked and clean.
+	Verified bool `json:"verified,omitempty"`
+	// DefinedIn is a project whose configuration defines a server of this name, so
+	// what answered there is that server and not the connector or built-in.
+	DefinedIn string `json:"definedIn,omitempty"`
+	// Unverified says why the name could not be shown either way.
+	Unverified string `json:"unverified,omitempty"`
 }
 
 // Hook is one configured lifecycle hook.

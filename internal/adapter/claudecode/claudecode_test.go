@@ -437,3 +437,60 @@ func TestTheListerSeesPluginServersToo(t *testing.T) {
 		t.Errorf("lister = %v", names)
 	}
 }
+
+// TestAProjectsOwnMCPServersAreListedOrTheReadFails. Scan asks this of every project an
+// MCP call came from, to rule out a project server named like a built-in or a
+// connector. Inspect passes over a .mcp.json it cannot parse, which is right for an
+// inventory and wrong here: "could not read it" must not answer "it defines nothing".
+func TestAProjectsOwnMCPServersAreListedOrTheReadFails(t *testing.T) {
+	env := testEnv(t)
+	c := New()
+
+	names, err := c.ProjectMCPServers(env)
+	if err != nil || len(names) != 0 {
+		t.Fatalf("a project with no configuration: %v, %v", names, err)
+	}
+
+	writeFile(t, filepath.Join(env.WorkDir, ".mcp.json"), `{"mcpServers":{"terminal":{"command":"node"}}}`)
+	writeFile(t, filepath.Join(env.Home, ".claude.json"),
+		`{"projects":{"`+filepath.ToSlash(env.WorkDir)+`":{"mcpServers":{"local one":{"command":"x"}}}}}`)
+	names, err = c.ProjectMCPServers(env)
+	if err != nil || strings.Join(names, ",") != "local one,terminal" {
+		t.Fatalf("names = %v, err %v: want the project's and the local-scope servers", names, err)
+	}
+
+	writeFile(t, filepath.Join(env.WorkDir, ".mcp.json"), `{"mcpServers": {`)
+	if _, err := c.ProjectMCPServers(env); err == nil {
+		t.Fatal("a .mcp.json that does not parse read as a project that defines nothing")
+	}
+}
+
+// TestAServerDefinedAboveTheCallsDirectoryIsFound. The guard records where the agent was
+// working, which can be below the project root holding .mcp.json. Found in review:
+// reading only that directory missed a server defined at the root.
+func TestAServerDefinedAboveTheCallsDirectoryIsFound(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.WorkDir, ".mcp.json"), `{"mcpServers":{"terminal":{"command":"node"}}}`)
+	writeFile(t, filepath.Join(env.Home, ".claude.json"),
+		`{"projects":{"`+filepath.ToSlash(env.WorkDir)+`":{"mcpServers":{"local one":{"command":"x"}}}}}`)
+	sub := filepath.Join(env.WorkDir, "src", "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.WorkDir = sub
+	names, err := New().ProjectMCPServers(env)
+	if err != nil || strings.Join(names, ",") != "local one,terminal" {
+		t.Fatalf("names = %v, err %v: want the root's servers from a subdirectory", names, err)
+	}
+}
+
+// TestADirectoryThatIsNotHereCannotBeVouchedFor. A log from another machine, or a
+// project since moved, names a directory this scan cannot read. Found in review: read as
+// a project defining nothing, it approved the name.
+func TestADirectoryThatIsNotHereCannotBeVouchedFor(t *testing.T) {
+	env := testEnv(t)
+	env.WorkDir = filepath.Join(env.WorkDir, "gone")
+	if _, err := New().ProjectMCPServers(env); err == nil {
+		t.Fatal("a directory that does not exist read as one that defines nothing")
+	}
+}

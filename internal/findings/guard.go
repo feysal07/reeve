@@ -20,6 +20,11 @@ type GuardHistory struct {
 	Total map[model.AgentID]int
 	// MCP is which MCP servers each agent called, by the name in the tool's name.
 	MCP map[model.AgentID]map[string]*MCPUse
+	// Problems names the parts of the log that could not be read: a segment missing
+	// or unreadable, a line too long to be a decision. Everything above is then a
+	// floor, and the scan says so rather than describing part of the history as
+	// all of it.
+	Problems []string
 }
 
 // MCPUse is how one agent used one MCP server, according to the guard's log.
@@ -27,6 +32,14 @@ type MCPUse struct {
 	Calls int
 	Last  time.Time
 	Tools map[string]bool
+	// Dirs are the projects the server was called from, as the guard recorded them.
+	Dirs map[string]bool
+	// DefinedIn are the projects whose configuration defined a server of this name
+	// at the moment it was called, as the guard found them.
+	DefinedIn map[string]bool
+	// Unchecked counts calls with no evidence from the moment of the call: recorded
+	// before the guard looked, or where it could not read what it needed to.
+	Unchecked int
 }
 
 // removedWindow is how recently the guard must have been working for its absence to

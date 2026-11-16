@@ -3,6 +3,8 @@ package config
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 )
 
@@ -25,6 +27,35 @@ func StripBOM(b []byte) []byte {
 // ReadFile reads a configuration file and removes any byte order mark.
 func ReadFile(path string) ([]byte, error) {
 	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return StripBOM(b), nil
+}
+
+// maxRegular is the most ReadRegularFile reads. Configuration files are kilobytes; a
+// file larger than this in a directory somebody else controls is not one.
+const maxRegular = 4 << 20
+
+// ReadRegularFile reads a configuration file only if it is a regular file, opening it
+// without blocking and refusing one larger than maxRegular.
+func ReadRegularFile(path string) ([]byte, error) {
+	f, err := openNonBlocking(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if info.Size() > maxRegular {
+		return nil, fmt.Errorf("%s is %d bytes, larger than any configuration file", path, info.Size())
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxRegular+1))
 	if err != nil {
 		return nil, err
 	}

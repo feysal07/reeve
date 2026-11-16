@@ -422,3 +422,64 @@ func TestTheShippedExampleRegistryLoads(t *testing.T) {
 		t.Error("the example no longer shows a connector or a built-in entry")
 	}
 }
+
+// TestAnUnverifiedConnectorOrBuiltinIsNeverApproved.
+//
+// Found in review of the observed-server inventory: a server known only from the guard's
+// log is identified by its name, and a stdio server in a project's own .mcp.json can be
+// called anything, a built-in's name or a connector's id included. Scan now checks the
+// configuration of every project the server was called from; when it could not, the
+// approval does not hold, and the reconciliation says why rather than "approved".
+func TestAnUnverifiedConnectorOrBuiltinIsNeverApproved(t *testing.T) {
+	reg := load(t, connectorRegistry)
+	browser := seen("Claude_Browser", OriginBuiltin)
+	browser.Unverified = "the configuration in /work/repo defines a server of this name"
+	jira := seen("83261223-49e4-40a3-81e6-0f9387058f48", OriginConnector)
+	jira.Unverified = "some calls were recorded without the project they came from"
+	denied := seen("0c66cbd0-7f04-4609-a5ba-551391ddcc4f", OriginConnector)
+	denied.Unverified = "some calls were recorded without the project they came from"
+
+	rep := Reconcile(reg, []Observed{browser, jira, denied})
+	want := map[string]Verdict{
+		"Claude_Browser":                       VerdictUnverified,
+		"83261223-49e4-40a3-81e6-0f9387058f48": VerdictUnverified,
+		// A refusal needs no verifying: whatever it is, it is called by a refused name.
+		"0c66cbd0-7f04-4609-a5ba-551391ddcc4f": VerdictDenied,
+	}
+	for _, r := range rep.Results {
+		if r.Verdict != want[r.Name] {
+			t.Errorf("%s: %s, want %s (%s)", r.Name, r.Verdict, want[r.Name], r.Detail)
+		}
+		if r.Verdict == VerdictUnverified && !strings.Contains(r.Detail, "recorded without") &&
+			!strings.Contains(r.Detail, "/work/repo") {
+			t.Errorf("%s: the detail does not say why: %q", r.Name, r.Detail)
+		}
+	}
+	if VerdictUnverified.Severity() != model.SeverityMedium {
+		t.Errorf("unverified is %s, want medium, as loud as unregistered", VerdictUnverified.Severity())
+	}
+}
+
+// TestAProjectServerNamedAfterAnApprovedBuiltinIsAMismatch. The project the call came
+// from runs a server of that name, so the approval by name reached something else:
+// what a different command under an approved name is, and as loud. A refusal stays one.
+func TestAProjectServerNamedAfterAnApprovedBuiltinIsAMismatch(t *testing.T) {
+	reg := load(t, connectorRegistry)
+	browser := seen("Claude_Browser", OriginBuiltin)
+	browser.DefinedIn = "/work/repo"
+	denied := seen("0c66cbd0-7f04-4609-a5ba-551391ddcc4f", OriginConnector)
+	denied.DefinedIn = "/work/repo"
+	rep := Reconcile(reg, []Observed{browser, denied})
+	for _, r := range rep.Results {
+		want := VerdictMismatch
+		if r.Name == denied.Server.Name {
+			want = VerdictDenied
+		}
+		if r.Verdict != want {
+			t.Errorf("%s: %s, want %s (%s)", r.Name, r.Verdict, want, r.Detail)
+		}
+		if r.Verdict == VerdictMismatch && !strings.Contains(r.Detail, "/work/repo") {
+			t.Errorf("the detail does not name the project: %q", r.Detail)
+		}
+	}
+}

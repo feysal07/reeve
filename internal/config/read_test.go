@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 // TestStripBOM guards a failure that is invisible when it happens.
@@ -63,5 +65,51 @@ func TestReadFileStripsBOM(t *testing.T) {
 	}
 	if len(parsed.Permissions.Deny) != 1 {
 		t.Error("the deny rule was lost, which is exactly the silent failure this guards")
+	}
+}
+
+// TestARegularReadRefusesAFIFOWithoutBlocking. A FIFO named as a project's .mcp.json
+// blocked the read for ever, and the guard reads that file in front of a waiting agent.
+func TestARegularReadRefusesAFIFOWithoutBlocking(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no FIFOs in the filesystem on Windows")
+	}
+	p := filepath.Join(t.TempDir(), ".mcp.json")
+	if err := mkfifo(p); err != nil {
+		t.Skip("cannot make a FIFO here: ", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := ReadRegularFile(p); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a FIFO was read as a configuration file")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the read blocked on a FIFO")
+	}
+	if doc := ReadRegularJSON(p, &struct{}{}); doc.Err == nil {
+		t.Error("ReadRegularJSON did not report the FIFO")
+	}
+	missing := filepath.Join(t.TempDir(), "absent.json")
+	if doc := ReadRegularJSON(missing, &struct{}{}); doc.Found || doc.Err != nil {
+		t.Errorf("a missing file = %+v, want not found and no error", doc)
+	}
+}
+
+// TestARegularReadRefusesAFileLargerThanAnyConfiguration. A project's .mcp.json is read
+// in front of a waiting agent; one grown, or made, to gigabytes must not hold it there.
+func TestARegularReadRefusesAFileLargerThanAnyConfiguration(t *testing.T) {
+	p := filepath.Join(t.TempDir(), ".mcp.json")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxRegular + 1); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if _, err := ReadRegularFile(p); err == nil {
+		t.Fatal("a file larger than any configuration was read")
 	}
 }

@@ -57,9 +57,24 @@ func (d Document) OK() bool { return d.Found && d.Err == nil }
 //
 // A missing file is not an error: it is the normal case for most sources.
 func ReadJSON(path string, into any) Document {
-	var doc Document
-
 	raw, err := ReadFile(path)
+	return decodeJSON(raw, err, into)
+}
+
+// ReadRegularJSON is ReadJSON for a file in a directory somebody else controls: only a
+// regular file is read, opened without waiting, and no more than maxRegular of it.
+//
+// Found in review: scan, and the guard in front of a waiting agent, read a project's
+// .mcp.json to tell a project's server from a desktop built-in of the same name. A FIFO
+// in its place blocked the read for ever, and several agents treat a hook that times
+// out as permission to go ahead.
+func ReadRegularJSON(path string, into any) Document {
+	raw, err := ReadRegularFile(path)
+	return decodeJSON(raw, err, into)
+}
+
+func decodeJSON(raw []byte, err error, into any) Document {
+	var doc Document
 	if err != nil {
 		if os.IsNotExist(err) {
 			return doc
