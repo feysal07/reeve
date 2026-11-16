@@ -333,6 +333,28 @@ func (s *Spend) Total(a Action, m SpendMatch, now time.Time) float64 {
 // History is a bounded window of what came before, most recent first.
 type History struct {
 	Records []RecentAction
+
+	// Truncated says part of the window was not read: a rotated segment of the log
+	// inside it is missing or unreadable, or the reader hit its own limit before
+	// reaching the start of it. Records is then the part that could be seen.
+	//
+	// Found on a live machine: the guard read only the live log, which rotation
+	// empties every day, so straight after rotation a loop-breaker counted nothing
+	// and allowed. A count over part of a window is a floor, and a rule compared
+	// against a floor fails in the permissive direction, exactly as a budget does.
+	Truncated bool
+}
+
+// Incomplete reports that this history cannot answer the repeat rule it was read for.
+//
+// Only when both are true: part of the window was not read, and the part that was is
+// still under the line. If the visible part already crosses it, the unread remainder
+// cannot bring it back under, so the answer is known.
+func (h *History) Incomplete(a Action, m RepeatedMatch, now time.Time) bool {
+	if h == nil || !h.Truncated {
+		return false
+	}
+	return h.Count(a, m, now) < m.MoreThan
 }
 
 // RecentAction is one earlier decision, reduced to what a rule can match on.

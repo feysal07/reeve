@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,9 +265,25 @@ func ReadDecisions(path string) ([]Event, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return DecodeDecisions(f)
+}
 
+// CheckDecisionLog reports what is wrong with a path given as a decision log before
+// anything reads it: that it does not exist, or that it is a directory, naming the
+// log sitting in it when there is one.
+func CheckDecisionLog(path string) error {
+	f, err := openRecordFile(path, "decision log")
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// DecodeDecisions reads guard decisions from one file of the decision log, a segment
+// or the live log, as events.
+func DecodeDecisions(r io.Reader) ([]Event, error) {
 	var out []Event
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())

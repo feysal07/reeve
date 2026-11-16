@@ -237,11 +237,14 @@ func runTrialStatus() error {
 	fmt.Printf("  policy    : %s\n", exists(policyPath))
 	fmt.Printf("  backup    : %s\n", exists(backup))
 
-	events, err := telemetry.ReadDecisions(logPath)
+	// The rotated segments too, as report reads them: a trial long enough to rotate
+	// would otherwise count only today.
+	dw, err := readDecisionWindow(logPath, time.Time{})
 	if err != nil {
 		fmt.Printf("  decisions : none recorded yet\n\n")
 		return nil
 	}
+	events := dw.Events
 
 	var wouldBlock, wouldAsk int
 	for _, e := range events {
@@ -263,16 +266,18 @@ func runTrialReport() error {
 		return err
 	}
 
-	events, err := telemetry.ReadDecisions(logPath)
+	dw, err := readDecisionWindow(logPath, time.Time{})
 	if err != nil {
 		return fmt.Errorf("no decision log at %s: has the trial been running?", logPath)
 	}
+	events := dw.Events
 	if len(events) == 0 {
 		fmt.Println("\nNothing recorded yet. Use Claude Code for a while and try again.")
 		return nil
 	}
 
 	rep := telemetry.Aggregate(events, time.Time{}, time.Time{})
+	rep.DecisionGaps, rep.DecisionPruned = dw.Unread, dw.Pruned
 	renderReport(rep, 20)
 
 	// What each rule actually matched, not just how often.

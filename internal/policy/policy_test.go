@@ -975,3 +975,69 @@ func TestATruncatedStoreRefusesATokenBudgetToo(t *testing.T) {
 			d.Effect, d.Reason)
 	}
 }
+
+// TestARepeatCountedOverAHistoryWithAGapRefuses.
+//
+// Found on a live machine: the guard read only the live decision log, and rotation
+// empties it every day, so straight after rotation a loop-breaker counted nothing and
+// allowed. A history with part of its window missing is a floor, and a count compared
+// against a floor permits; the same asymmetry a budget over a partial window has.
+func TestARepeatCountedOverAHistoryWithAGapRefuses(t *testing.T) {
+	p := mustParse(t, `
+version: 1
+rules:
+  - id: loop-breaker
+    decision: ask
+    match:
+      repeated: {same: tool, within: 5m, moreThan: 3}
+`)
+	act := Action{Agent: "claude-code", Kind: KindShell, ToolName: "Bash", SessionID: "s1"}
+
+	act.History = makeHistory(1, "s1", "Bash", "ls", time.Second)
+	act.History.Truncated = true
+	d := p.Evaluate(act)
+	if d.Effect != EffectDeny || d.RuleID != "loop-breaker" {
+		t.Fatalf("decision = %+v, want a refusal when the visible part is under the line", d)
+	}
+	if !strings.Contains(d.Reason, "part of") {
+		t.Errorf("the reason does not say part of the record was unread: %q", d.Reason)
+	}
+
+	// Already over the line in what was read: the unread part cannot bring it back
+	// under, so the rule answers as written.
+	act.History = makeHistory(5, "s1", "Bash", "ls", time.Second)
+	act.History.Truncated = true
+	if d := p.Evaluate(act); d.Effect != EffectAsk {
+		t.Errorf("effect = %q, want the rule's own ask when the visible part already crosses it", d.Effect)
+	}
+
+	// Exactly at the line counts as crossing it, since the action being decided is
+	// the one that would take it over, so the answer is known there too.
+	act.History = makeHistory(3, "s1", "Bash", "ls", time.Second)
+	act.History.Truncated = true
+	if d := p.Evaluate(act); d.Effect != EffectAsk {
+		t.Errorf("effect = %q, want ask at the line itself", d.Effect)
+	}
+
+	// A gap is not a reason to refuse an action the rule was never about.
+	scoped := mustParse(t, `
+version: 1
+rules:
+  - id: codex-loops
+    decision: ask
+    match:
+      agents: [codex]
+      repeated: {same: tool, within: 5m, moreThan: 3}
+`)
+	act.History = makeHistory(1, "s1", "Bash", "ls", time.Second)
+	act.History.Truncated = true
+	if d := scoped.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q, want allow: the rule is for another agent", d.Effect)
+	}
+
+	// A whole history under the line is an answer, not a gap.
+	act.History = makeHistory(1, "s1", "Bash", "ls", time.Second)
+	if d := p.Evaluate(act); d.Effect != EffectAllow {
+		t.Errorf("effect = %q, want allow for a complete history under the line", d.Effect)
+	}
+}

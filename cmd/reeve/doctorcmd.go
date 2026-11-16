@@ -7,8 +7,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -159,9 +161,20 @@ type policyHealth struct {
 }
 
 type decisionStats struct {
-	Exists  bool      `json:"exists"`
-	Total   int       `json:"total"`
-	Newest  time.Time `json:"newest,omitempty"`
+	// Exists says any of the log was there: the live file or a rotated segment.
+	Exists bool `json:"exists"`
+	// Total counts every decision in the log, rotated segments included.
+	Total int `json:"total"`
+	// LiveLines counts the lines of the live log alone, which is what its seals cover.
+	LiveLines int       `json:"liveLines"`
+	Newest    time.Time `json:"newest,omitempty"`
+	// Pruned counts segments whose records retention removed on schedule.
+	Pruned int `json:"pruned,omitempty"`
+	// Gaps names segments whose records are missing or unreadable with no tombstone
+	// to say retention removed them.
+	Gaps []string `json:"gaps,omitempty"`
+	// Problem says the log exists and could not be read.
+	Problem string `json:"problem,omitempty"`
 	byAgent map[model.AgentID]int
 }
 
@@ -215,6 +228,13 @@ func (r doctorReport) healthy() bool {
 	// A seal that no longer matches is evidence the log was changed, or damaged.
 	// Unsealed is a gap in a control; broken is the control reporting something.
 	if r.Seal != nil && (r.Seal.Broken || r.Seal.Problem != "") {
+		return false
+	}
+	// The same for the log itself. Found in review: a log that could not be read, or
+	// a segment gone with no tombstone saying retention took it, printed a warning and
+	// exited healthy, so a script running this saw a pass. A missing segment is what
+	// deleting part of the record looks like.
+	if r.Decisions.Problem != "" || len(r.Decisions.Gaps) > 0 {
 		return false
 	}
 	var any bool
@@ -459,38 +479,58 @@ func checkPolicy(path string) policyHealth {
 }
 
 // readDecisionSummary counts what the guard has actually recorded.
+//
+// Every rotated segment still on disk is read, then the live log. Found on a live
+// machine: reading the live log alone, doctor said straight after each day's rotation
+// that nothing had been written and that every registered agent had never recorded a
+// decision, and exited unhealthy on a machine where the guard was working.
 func readDecisionSummary(path string) decisionStats {
 	s := decisionStats{byAgent: map[model.AgentID]int{}}
 	if path == "" {
 		return s
 	}
-	f, err := os.Open(path)
+	w, err := audit.ReadWindow(path, time.Time{}, func(p audit.Part, r io.Reader) error {
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			if p.Live {
+				s.LiveLines++
+			}
+			var rec struct {
+				Time  time.Time     `json:"time"`
+				Agent model.AgentID `json:"agent"`
+			}
+			if json.Unmarshal([]byte(line), &rec) != nil {
+				continue
+			}
+			s.Total++
+			s.byAgent[rec.Agent]++
+			if rec.Time.After(s.Newest) {
+				s.Newest = rec.Time
+			}
+		}
+		return sc.Err()
+	})
 	if err != nil {
-		return s
+		// Said rather than swallowed: an unreadable log used to read as one nothing
+		// had been written to, which sends somebody to use the agent again rather
+		// than to fix a file.
+		s.Problem = err.Error()
 	}
-	defer f.Close()
-	s.Exists = true
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
+	for _, g := range w.Missing {
+		if g.Pruned {
+			s.Pruned++
 			continue
 		}
-		var rec struct {
-			Time  time.Time     `json:"time"`
-			Agent model.AgentID `json:"agent"`
-		}
-		if json.Unmarshal([]byte(line), &rec) != nil {
-			continue
-		}
-		s.Total++
-		s.byAgent[rec.Agent]++
-		if rec.Time.After(s.Newest) {
-			s.Newest = rec.Time
-		}
+		s.Gaps = append(s.Gaps, filepath.Base(g.Segment)+": "+g.Why)
 	}
+	// A log that exists only as segments, every one of them pruned, is an old log and
+	// not a path nothing was written to; found in review saying the second.
+	s.Exists = w.LiveExists || w.Segments > 0 || err != nil
 	return s
 }
 
@@ -512,17 +552,35 @@ func renderDoctor(r doctorReport) {
 		}
 	}
 
-	if r.Decisions.Exists {
+	switch {
+	case r.Decisions.Problem != "":
+		fmt.Printf("  decision log : CANNOT BE READ, so what the guard decided is not known\n")
+		fmt.Printf("                 %s\n", r.Decisions.Problem)
+	case r.Decisions.Exists:
 		age := "never"
 		if !r.Decisions.Newest.IsZero() {
 			age = humanAge(time.Since(r.Decisions.Newest)) + " ago"
 		}
 		fmt.Printf("  decision log : %d recorded, most recent %s\n", r.Decisions.Total, age)
-	} else if r.LogPath != "" {
+		if r.Decisions.Pruned > 0 {
+			fmt.Printf("                 %d older %s removed by retention\n", r.Decisions.Pruned,
+				plural(r.Decisions.Pruned, "segments", "segment"))
+		}
+	case r.LogPath != "":
 		fmt.Printf("  decision log : nothing has been written to %s\n", r.LogPath)
 	}
+	// Named one by one. A segment with no tombstone and no records is what deleting
+	// part of the record looks like, and run reeve audit verify says which it was.
+	if len(r.Decisions.Gaps) > 0 {
+		fmt.Printf("                 %d %s missing or unreadable, so these counts are low;\n",
+			len(r.Decisions.Gaps), plural(len(r.Decisions.Gaps), "segments", "segment"))
+		fmt.Printf("                 run reeve audit verify:\n")
+		for _, g := range r.Decisions.Gaps {
+			fmt.Printf("                 %s\n", g)
+		}
+	}
 	if s := r.Seal; s != nil {
-		renderSeal(*s, r.Decisions.Total)
+		renderSeal(*s, r.Decisions.LiveLines)
 	}
 	fmt.Println()
 
@@ -566,7 +624,17 @@ func renderDoctor(r doctorReport) {
 
 		// The quiet one. A hook can be registered, and answer perfectly when
 		// called by hand, and never once be called by the agent.
-		if a.SeenInLog == 0 {
+		if r.Decisions.Problem != "" {
+			// Found in review: with the log unreadable, every agent was also said
+			// never to have recorded a decision, and told to use the agent again,
+			// which is the wrong fix for a file that cannot be read.
+			fmt.Printf("  %-20s decisions recorded: not known, the log cannot be read\n", "")
+		} else if a.SeenInLog == 0 && len(r.Decisions.Gaps) > 0 {
+			fmt.Printf("  %-20s no decision in the part of the log that could be read\n", "")
+			problems = append(problems, fmt.Sprintf(
+				"%s has no decision in the part of the decision log that could be read, and "+
+					"part of it is missing. Run reeve audit verify.", a.Name))
+		} else if a.SeenInLog == 0 {
 			fmt.Printf("  %-20s has never recorded a decision\n", "")
 			problems = append(problems, fmt.Sprintf(
 				"%s has never recorded a decision. Either it has not been used since the "+

@@ -1845,6 +1845,17 @@ case "$ROT1:$ROT2:$ROT_VERIFY:$ROT_OUT" in
     *) check "rotation and retention keep the decision log verifiable" 0 "rotate $ROT1, rotate --keep $ROT2, verify $ROT_VERIFY: $ROT_OUT" ;;
 esac
 
+# The report reads the rotated segments, not only the live log. Found on a live machine:
+# rotation empties the live log every day, and a seven-day report saw 105 of about 3,000
+# decisions without a word. Here one decision sits in the kept segment and one in the
+# live log, and the pruned segment is named rather than passed over in silence.
+ROT_REPORT=$("$REEVE" report --decisions "$ROT_LOG" --json 2>&1 | tr -s '[:space:]' ' ')
+case "$ROT_REPORT" in
+    *'"overall": {'*'"decisions": 2,'*'"decisionLogPruned": [ "decisions-'*'removed by retention"'*)
+        check "the report counts decisions in rotated segments and names the pruned one" 1 ;;
+    *) check "the report counts decisions in rotated segments and names the pruned one" 0 "$ROT_REPORT" ;;
+esac
+
 # The two records of one session side by side. The decision log knows what was refused,
 # which no vendor telemetry can; the event store knows what it cost. This walkthrough's
 # events carry no session id, so each session here is guard-only - and the timeline has

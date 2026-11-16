@@ -266,7 +266,13 @@ the decision log, prints nothing and exits 0. It never reads the tool's input or
 A separate file, because everything that reads the decision log reads each line as a
 decision, and a repetition rule would count each action twice.
 
-`reeve report --decisions` reads the outcome log beside each decision log and joins on
+`reeve report --decisions` reads every rotated segment of the decision log inside the
+`--since` window, then the live file. A segment inside the window whose records are
+missing or unreadable is named at the top of the report and in `decisionLogGaps`, because
+every figure from the guard is then a floor; one that retention removed on schedule is
+named apart, in `decisionLogPruned`, so routine housekeeping does not read as loss.
+
+`reeve report --decisions` also reads the outcome log beside each decision log and joins on
 session and tool-use id:
 
 ```

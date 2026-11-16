@@ -73,6 +73,17 @@ your behalf. "reeve install" registers the guard and gives it a log to write.
 See docs/TELEMETRY.md`)
 	}
 
+	// Parsed before anything is read, because the window decides which rotated
+	// segments of the decision log are read at all.
+	var from time.Time
+	if *since != "" {
+		d, err := time.ParseDuration(*since)
+		if err != nil {
+			return fmt.Errorf("--since: %w", err)
+		}
+		from = time.Now().Add(-d)
+	}
+
 	var events []telemetry.Event
 
 	stores := foundStores
@@ -95,12 +106,15 @@ See docs/TELEMETRY.md`)
 	}
 	var outcomes []telemetry.Outcome
 	outcomesRecorded := false
+	var gaps, pruned []string
 	for _, path := range logs {
-		d, err := telemetry.ReadDecisions(path)
+		d, err := readDecisionWindow(path, from)
 		if err != nil {
 			return err
 		}
-		events = append(events, d...)
+		events = append(events, d.Events...)
+		gaps = append(gaps, d.Unread...)
+		pruned = append(pruned, d.Pruned...)
 		// Beside each log, where the guard writes them. Absent is not an error: it is
 		// a machine where the post-tool hook was never installed, and the report says
 		// that rather than calling every ask declined.
@@ -112,13 +126,7 @@ See docs/TELEMETRY.md`)
 		outcomesRecorded = outcomesRecorded || exists
 	}
 
-	var from time.Time
-	if *since != "" {
-		d, err := time.ParseDuration(*since)
-		if err != nil {
-			return fmt.Errorf("--since: %w", err)
-		}
-		from = time.Now().Add(-d)
+	if !from.IsZero() {
 		events = telemetry.Window(events, from, time.Time{})
 	}
 
@@ -135,6 +143,7 @@ See docs/TELEMETRY.md`)
 	}
 
 	rep := telemetry.AggregateWith(events, from, time.Time{}, billing)
+	rep.DecisionGaps, rep.DecisionPruned = gaps, pruned
 	if len(logs) > 0 {
 		rep.Asks = telemetry.MeasureAsks(events, outcomes, outcomesRecorded)
 	}
@@ -195,6 +204,19 @@ func renderReport(r telemetry.Report, top int) {
 	fmt.Printf("\nUsage\n")
 	if !r.From.IsZero() {
 		fmt.Printf("  since        : %s\n", r.From.Format(time.RFC3339))
+	}
+	// First, because every figure below that comes from the guard is a floor when
+	// part of its log is missing, and reads as a quiet stretch unless said.
+	if n := len(r.DecisionGaps); n > 0 {
+		fmt.Printf("  decision log : %d %s inside this window could not be read, so what the\n", n, plural(n, "segments", "segment"))
+		fmt.Printf("                 guard decided is undercounted. Run reeve audit verify:\n")
+		for _, g := range r.DecisionGaps {
+			fmt.Printf("                 %s\n", g)
+		}
+	}
+	if n := len(r.DecisionPruned); n > 0 {
+		fmt.Printf("  retention    : %d %s inside this window removed on schedule, so the\n", n, plural(n, "segments", "segment"))
+		fmt.Printf("                 guard's decisions start later than the window does\n")
 	}
 	fmt.Printf("  sessions     : %d\n", o.Sessions)
 	fmt.Printf("  requests     : %d\n", o.Requests)
