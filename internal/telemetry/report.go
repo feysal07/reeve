@@ -142,6 +142,9 @@ type Report struct {
 	// removed on schedule: routine, and kept apart from the gaps above so it does not
 	// read as a loss.
 	DecisionPruned []string `json:"decisionLogPruned,omitempty"`
+	// OutcomeGaps names outcome segments inside the window that could not be read, so
+	// an ask counted as not seen to run may have run.
+	OutcomeGaps []string `json:"outcomeLogGaps,omitempty"`
 
 	ByTeam  []Group `json:"byTeam"`
 	ByAgent []Group `json:"byAgent"`

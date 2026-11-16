@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -76,7 +77,15 @@ func ReadOutcomes(path string) (out []Outcome, exists bool, err error) {
 		return nil, false, fmt.Errorf("outcome log: %w", err)
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
+	out, err = DecodeOutcomes(f)
+	return out, true, err
+}
+
+// DecodeOutcomes reads outcomes from one file of the outcome log, a rotated segment or
+// the live one.
+func DecodeOutcomes(r io.Reader) ([]Outcome, error) {
+	var out []Outcome
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -89,7 +98,7 @@ func ReadOutcomes(path string) (out []Outcome, exists bool, err error) {
 		}
 		out = append(out, o)
 	}
-	return out, true, sc.Err()
+	return out, sc.Err()
 }
 
 // AskRule is what became of the asks one rule made.

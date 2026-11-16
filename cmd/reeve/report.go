@@ -106,7 +106,7 @@ See docs/TELEMETRY.md`)
 	}
 	var outcomes []telemetry.Outcome
 	outcomesRecorded := false
-	var gaps, pruned []string
+	var gaps, pruned, outcomeGaps []string
 	for _, path := range logs {
 		d, err := readDecisionWindow(path, from)
 		if err != nil {
@@ -118,7 +118,8 @@ See docs/TELEMETRY.md`)
 		// Beside each log, where the guard writes them. Absent is not an error: it is
 		// a machine where the post-tool hook was never installed, and the report says
 		// that rather than calling every ask declined.
-		o, exists, err := telemetry.ReadOutcomes(telemetry.OutcomesPathFor(path))
+		o, exists, ogaps, err := readOutcomeWindow(path, from)
+		outcomeGaps = append(outcomeGaps, ogaps...)
 		if err != nil {
 			return err
 		}
@@ -144,6 +145,7 @@ See docs/TELEMETRY.md`)
 
 	rep := telemetry.AggregateWith(events, from, time.Time{}, billing)
 	rep.DecisionGaps, rep.DecisionPruned = gaps, pruned
+	rep.OutcomeGaps = outcomeGaps
 	if len(logs) > 0 {
 		rep.Asks = telemetry.MeasureAsks(events, outcomes, outcomesRecorded)
 	}
@@ -211,6 +213,13 @@ func renderReport(r telemetry.Report, top int) {
 		fmt.Printf("  decision log : %d %s inside this window could not be read, so what the\n", n, plural(n, "segments", "segment"))
 		fmt.Printf("                 guard decided is undercounted. Run reeve audit verify:\n")
 		for _, g := range r.DecisionGaps {
+			fmt.Printf("                 %s\n", g)
+		}
+	}
+	if n := len(r.OutcomeGaps); n > 0 {
+		fmt.Printf("  outcome log  : %d %s inside this window could not be read, so asks counted\n", n, plural(n, "segments", "segment"))
+		fmt.Printf("                 as not seen to run may have run. Run reeve audit verify:\n")
+		for _, g := range r.OutcomeGaps {
 			fmt.Printf("                 %s\n", g)
 		}
 	}

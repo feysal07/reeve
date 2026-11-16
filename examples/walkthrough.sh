@@ -1891,6 +1891,23 @@ case "$ROT1:$ROT2:$ROT_VERIFY:$ROT_OUT" in
     *) check "rotation and retention keep the decision log verifiable" 0 "rotate $ROT1, rotate --keep $ROT2, verify $ROT_VERIFY: $ROT_OUT" ;;
 esac
 
+# The outcome log beside it rotates with it. Found in the v0.7.0 audit: it was never
+# rotated or pruned, so it grew for ever and kept the outcomes of decisions retention
+# had removed.
+OUT_DIR="$SANDBOX/outcome-rotation"
+mkdir -p "$OUT_DIR"
+printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$OUT_DIR/decisions.jsonl" >/dev/null 2>&1
+printf '{"time":"%s","agent":"claude-code","sessionId":"loop","toolUseId":"t1","tool":"Bash","outcome":"ran"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT_DIR/outcomes.jsonl"
+OUT_ROT=$("$REEVE" audit rotate "$OUT_DIR/decisions.jsonl" --json 2>&1 | tr -s '[:space:]' ' ')
+case "$OUT_ROT" in
+    *'"outcomesSegment": "'*'outcomes-'*)
+        [ ! -e "$OUT_DIR/outcomes.jsonl" ] &&
+            check "rotation moves the outcome log aside with the decision log" 1 ||
+            check "rotation moves the outcome log aside with the decision log" 0 "outcomes.jsonl is still in place" ;;
+    *) check "rotation moves the outcome log aside with the decision log" 0 "$OUT_ROT" ;;
+esac
+
 # The report reads the rotated segments, not only the live log. Found on a live machine:
 # rotation empties the live log every day, and a seven-day report saw 105 of about 3,000
 # decisions without a word. Here one decision sits in the kept segment and one in the

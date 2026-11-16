@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -59,4 +60,30 @@ func readDecisionWindow(path string, from time.Time) (decisionWindow, error) {
 		d.Unread = append(d.Unread, line)
 	}
 	return d, nil
+}
+
+// readOutcomeWindow reads the outcome log beside a decision log, every rotated segment
+// inside the window and then the live file, as the decision log is read. exists is false
+// when there has never been one, a machine where the post-tool hook was never
+// installed, which the report says rather than calling every ask declined.
+//
+// gaps names outcome segments inside the window that could not be read. Found in
+// review: discarded, an unreadable segment left its asks with no outcome, and the
+// report counted them as not seen to run, which reads as somebody declining them and can
+// hide an ask nobody ever refuses. Retention removes outcome segments whole, so a pruned
+// one leaves no gap; every gap here is one that should not be.
+func readOutcomeWindow(decisionLog string, from time.Time) (out []telemetry.Outcome, exists bool, gaps []string, err error) {
+	path := telemetry.OutcomesPathFor(decisionLog)
+	w, err := audit.ReadWindow(path, from, func(_ audit.Part, r io.Reader) error {
+		o, err := telemetry.DecodeOutcomes(r)
+		out = append(out, o...)
+		return err
+	})
+	if err != nil {
+		return nil, false, nil, fmt.Errorf("outcome log: %w", err)
+	}
+	for _, g := range w.Missing {
+		gaps = append(gaps, filepath.Base(g.Segment)+": "+g.Why)
+	}
+	return out, w.LiveExists || w.Segments > 0, gaps, nil
 }

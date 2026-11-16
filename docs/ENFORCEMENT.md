@@ -1027,6 +1027,13 @@ segments:
 Pruning records itself: it appends a tombstone to the segment's chain, chained to its
 last seal, naming when it ran and the retention period it ran under.
 
+The outcome log beside the decision log, `outcomes.jsonl`, goes with it: moved aside as
+`outcomes-<UTC time>.jsonl` under the same stamp, so a report over a window reads the
+two together and still joins an ask made before rotation to the outcome seen after it,
+and removed by `--keep` on the same schedule. It is not sealed, so it has no chain and
+no tombstone. Until v0.7.0 it was never rotated or pruned, and kept the outcomes of
+decisions retention had removed.
+
 `reeve audit verify` walks back through every segment and reports each as:
 
 - `intact` — its records match every seal, and nothing was added after it was rotated;

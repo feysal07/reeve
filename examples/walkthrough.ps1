@@ -1734,6 +1734,19 @@ Check "rotation and retention keep the decision log verifiable" `
     (($rot1 -eq 0) -and ($rot2 -eq 0) -and ($rotVerify -eq 0) -and (($rotOut -replace '\s+', ' ') -match "pruned decisions-")) `
     "rotate $rot1, rotate --keep $rot2, verify ${rotVerify}: $($rotOut.Trim())"
 
+# The outcome log beside it rotates with it. Found in the v0.7.0 audit: it was never
+# rotated or pruned, so it grew for ever and kept the outcomes of decisions retention
+# had removed.
+$outDir = Join-Path $Sandbox "outcome-rotation"
+New-Item -ItemType Directory -Force $outDir | Out-Null
+$outLog = Join-Path $outDir "decisions.jsonl"
+$null = ($loopPayload | & $reeve guard --agent claude-code --policy $policy --log $outLog 2>&1)
+$outStamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+Write-Text (Join-Path $outDir "outcomes.jsonl") ('{"time":"' + $outStamp + '","agent":"claude-code","sessionId":"loop","toolUseId":"t1","tool":"Bash","outcome":"ran"}' + "`n")
+$outRot = (& $reeve audit rotate $outLog --json 2>&1 | Out-String)
+Check "rotation moves the outcome log aside with the decision log" `
+    (($outRot -match '"outcomesSegment": ".*outcomes-') -and -not (Test-Path (Join-Path $outDir "outcomes.jsonl"))) $outRot
+
 # The report reads the rotated segments, not only the live log. Found on a live machine:
 # rotation empties the live log every day, and a seven-day report saw 105 of about 3,000
 # decisions without a word. Here one decision sits in the kept segment and one in the

@@ -272,7 +272,9 @@ missing or unreadable is named at the top of the report and in `decisionLogGaps`
 every figure from the guard is then a floor; one that retention removed on schedule is
 named apart, in `decisionLogPruned`, so routine housekeeping does not read as loss.
 
-`reeve report --decisions` also reads the outcome log beside each decision log and joins on
+`reeve report --decisions` also reads the outcome log beside each decision log, its rotated
+segments inside the window included (it rotates and is pruned with the decision log), and
+joins on
 session and tool-use id:
 
 ```
@@ -283,6 +285,10 @@ Policy
     dr-database                asked  288, went ahead  288, not seen to run    0  <- never refused
     destructive-delete         asked    3, went ahead    1, not seen to run    2
 ```
+
+An outcome segment inside the window that cannot be read is named in `outcomeLogGaps`,
+because an ask whose outcome was in it is counted as not seen to run, which reads as
+somebody declining it and can hide an ask nobody ever refuses.
 
 The honest states are *went ahead* and *not seen to run*. A declined ask fires no event at
 all, so not seen to run is declined, interrupted, or never reached - never "declined".

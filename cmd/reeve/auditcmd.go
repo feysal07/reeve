@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/feysal07/reeve/internal/audit"
+	"github.com/feysal07/reeve/internal/telemetry"
 )
 
 // runAudit seals and verifies the decision log.
@@ -220,17 +222,52 @@ func runAuditRotate(args []string) error {
 		return fmt.Errorf("--keep cannot be negative")
 	}
 
-	rot, err := audit.Rotate(path, time.Now(), *keep, version)
+	now := time.Now()
+	// The outcome log beside it goes with it, under the same stamp, and is pruned on
+	// the same schedule. Found in the v0.7.0 audit: it was never rotated or pruned, so
+	// it grew for ever and kept the outcomes of decisions retention had removed.
+	//
+	// Checked before anything moves, so a clash refuses with nothing changed. Found in
+	// review: checked after, the decision log had already rotated, and the failure hid
+	// what had happened to it.
+	outcomes := telemetry.OutcomesPathFor(path)
+	if dest := audit.CompanionSegmentPath(outcomes, now); pathTaken(dest) {
+		return fmt.Errorf("not rotated: %s already exists", dest)
+	}
+	rot, err := audit.Rotate(path, now, *keep, version)
 	if err != nil {
 		return err
 	}
+	// Moved whenever it holds anything, not only when the decision log rotated. Found
+	// in review: an outcome log that once failed to move stayed in place, and nothing
+	// moved it again until the decision log next had lines to rotate.
+	var outErrs []error
+	outSeg, err := audit.RotateCompanionAt(outcomes, now)
+	if err != nil {
+		outErrs = append(outErrs, err)
+	}
+	outPruned, err := audit.PruneCompanion(outcomes, now, *keep)
+	if err != nil {
+		outErrs = append(outErrs, fmt.Errorf("old outcome segments could not all be pruned: %w", err))
+	}
+	outErr := errors.Join(outErrs...)
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(struct {
+		outProblem := ""
+		if outErr != nil {
+			outProblem = outErr.Error()
+		}
+		if err := enc.Encode(struct {
 			SchemaVersion string `json:"schemaVersion"`
 			audit.Rotation
-		}{audit.SchemaVersion, rot})
+			OutcomesSegment string   `json:"outcomesSegment,omitempty"`
+			OutcomesPruned  []string `json:"outcomesPruned,omitempty"`
+			OutcomesProblem string   `json:"outcomesProblem,omitempty"`
+		}{audit.SchemaVersion, rot, outSeg, outPruned, outProblem}); err != nil {
+			return err
+		}
+		return outErr
 	}
 
 	if rot.Segment == "" {
@@ -240,17 +277,32 @@ func runAuditRotate(args []string) error {
 		fmt.Printf("  sealed and moved : %d lines to %s\n", rot.Lines, rot.Segment)
 		fmt.Printf("  next chain       : %s, linked to it\n", audit.ChainPath(path))
 	}
+	if outSeg != "" {
+		fmt.Printf("  outcomes moved   : to %s\n", outSeg)
+	}
+	for _, p := range outPruned {
+		fmt.Printf("  pruned outcomes  : %s\n", p)
+	}
 	for _, p := range rot.Pruned {
 		fmt.Printf("  pruned           : %s (its chain is kept)\n", p)
 	}
 	for _, k := range rot.Kept {
 		fmt.Printf("  NOT pruned       : %s\n", k)
 	}
+	if outErr != nil {
+		fmt.Printf("  OUTCOMES         : %v\n", outErr)
+	}
 	fmt.Println()
 	if len(rot.Kept) > 0 {
 		return fmt.Errorf("%d segment(s) were due for removal and were kept because they do not verify", len(rot.Kept))
 	}
-	return nil
+	return outErr
+}
+
+// pathTaken reports that anything at all is at p: a file, a directory or a link.
+func pathTaken(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
 }
 
 func boolToInt(b bool) int {
