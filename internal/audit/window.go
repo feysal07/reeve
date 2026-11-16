@@ -190,7 +190,7 @@ func ReadWindowWith(logPath string, o WindowOptions, visit func(p Part, r io.Rea
 		defer live.Close()
 	case errors.Is(err, os.ErrNotExist):
 	default:
-		return w, fmt.Errorf("the decision log %s cannot be read: %w", logPath, err)
+		return w, fmt.Errorf("%s cannot be read: %w", logPath, err)
 	}
 	if rotateAfterOpen != nil {
 		rotateAfterOpen()
@@ -211,7 +211,7 @@ func ReadWindowWith(logPath string, o WindowOptions, visit func(p Part, r io.Rea
 		if liveInfo, err = live.Stat(); err != nil {
 			// Without it the rotated copy of the live log cannot be told from the
 			// live log, and would be counted twice.
-			return w, fmt.Errorf("the decision log %s cannot be read: %w", logPath, err)
+			return w, fmt.Errorf("%s cannot be read: %w", logPath, err)
 		}
 	}
 	isLive := func(seg string) bool {
