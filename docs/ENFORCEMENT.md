@@ -516,7 +516,15 @@ the action being decided is not itself counted.
 **No agent can express this natively**, so a counting rule is always guard-only, and
 never partial. Emitting the rest of the match without the count produces a different
 and stricter rule — "deny curl after fifty tries" would compile to "deny curl" — so the
-compilers emit nothing for it and say why.
+compilers emit nothing for it and say why. The same holds for every condition only the
+guard can see: a budget of money, tokens or a plan's allowance, and an environment.
+Until v0.7.0 the compilers knew only about counts and money, so "deny kubectl in
+production" compiled to "deny kubectl" and was reported as native. A rule that names
+`agents:` is compiled only for those agents and reported as `not-applicable` for the
+rest, where until v0.7.0 it was written into every agent's managed settings.
+
+When the policy does not register the guard, every compiler says so and names the rules
+that are then held by nothing, whether or not the policy has a `settings` block.
 
 **Per person or per team.** `scope: person` counts the repetitions of whoever is at the
 keyboard across every session in the log, and `scope: team` those of their team. Both
@@ -1072,6 +1080,7 @@ So the compiler reports what happened to every rule:
 | `native` | The agent's own configuration enforces this. It holds with the guard absent. |
 | `partial` | Some of the rule compiled. The guard covers the rest. |
 | `guard-only` | Nothing about this rule can be expressed natively. |
+| `not-applicable` | The rule names other agents with `agents:`, so it is not this agent's. |
 
 Compiling the shipped baseline reports, out of eleven rules:
 
@@ -1080,7 +1089,7 @@ Compiling the shipped baseline reports, out of eleven rules:
 | Claude Code | 1 | 0 | 10 |
 | GitHub Copilot CLI | 1 | 0 | 10 |
 | Codex CLI | 1 | 0 | 10 |
-| Gemini CLI | 6 | 2 | 3 |
+| Gemini CLI | 8 | 0 | 3 |
 | Cursor | 0 | 0 | 11 |
 
 Those numbers are not a defect in the compiler. They are the honest measure of how
@@ -1095,13 +1104,13 @@ compiled hooks file is the only thing an organisation can deploy that a develope
 cannot edit.
 
 Gemini scores higher because its rules take a regex, so the baseline's substring
-matching survives translation. It is not a clean sweep: three rules still need the
-guard, two of them because they combine a command pattern and a substring with AND,
-and Gemini tests one condition per rule. Emitting both as separate rules would match
-either instead of both, turning a narrow prompt about force-pushing to a protected
-branch into one that fires on any command containing " main". The compiler reports
-those as guard-only rather than shipping a rule that shares a name with the
-operator's intent and not its meaning.
+matching survives translation. Three rules still need the guard there. Two ask about
+infrastructure commands in a production or unknown environment, and the environment is
+resolved from the tool's own state when it runs, which no agent's configuration can see.
+Until v0.7.0 Gemini emitted them for every environment and called them partial, so its
+policy engine prompted on every `kubectl`, production or not, and the report did not
+say so. The third asks about any MCP server not on the approved list, and Gemini's
+`mcpName` names one server; it cannot say "every server but these".
 
 A rule is never quietly narrowed to make it fit. A rule written to catch `rm -rf`
 anywhere would become a rule catching it only at the start of a command, which is a

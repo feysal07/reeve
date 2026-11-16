@@ -2,6 +2,7 @@ package compile
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -627,5 +628,186 @@ rules:
 				}
 			}
 		})
+	}
+}
+
+// TestNoConditionalRuleIsEmittedWithoutItsCondition.
+//
+// The same silent change of meaning as the counting rule, for every other condition
+// no native syntax can see. Found in the v0.7.0 audit: "deny kubectl in production"
+// compiled to "deny kubectl" on Claude Code, Copilot and Codex and was reported as
+// native; "deny curl once a day's tokens pass a thousand" and "ask once the seat's
+// allowance is 80% used" compiled to an unconditional deny on four of the five. Each
+// would hold without the guard. Each would be the wrong rule.
+func TestNoConditionalRuleIsEmittedWithoutItsCondition(t *testing.T) {
+	cases := []struct {
+		name, condition string
+		// reason is the explanation the rule must carry, from the function that
+		// owns it, so a reason from the wrong branch cannot pass on a shared word.
+		reason func(policy.Rule, model.AgentID) Coverage
+	}{
+		{"environment", `environment: [production]`, func(r policy.Rule, _ model.AgentID) Coverage { return environmentCoverage(r) }},
+		{"tokens", `tokens: {within: 24h, moreThan: 1000}`, spendCoverage},
+		{"allowance", `allowance: {usedAtLeast: 80, of: seat, within: "168h"}`, spendCoverage},
+		{"spend", `spend: {within: 24h, moreThan: 10}`, spendCoverage},
+		{"repeated", `repeated: {same: tool, within: 5m, moreThan: 10}`, func(r policy.Rule, _ model.AgentID) Coverage { return repeatCoverage(r) }},
+	}
+	for _, tc := range cases {
+		for _, decision := range []string{"deny", "ask", "allow"} {
+			t.Run(tc.name+"/"+decision, func(t *testing.T) {
+				p := mustParse(t, `
+version: 1
+settings:
+  guard:
+    enabled: true
+rules:
+  - id: conditional
+    decision: `+decision+`
+    match:
+      kind: [shell]
+      command: ["kubectl *"]
+      `+tc.condition+`
+`)
+				for _, c := range All() {
+					res, err := c.Compile(p, "linux")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(res.Coverage) != 1 {
+						t.Fatalf("%s: coverage = %d entries, want 1", c.Agent(), len(res.Coverage))
+					}
+					got := res.Coverage[0]
+					want := tc.reason(p.Rules[0], c.Agent())
+					if c.Agent() == model.AgentCursor && want.Status == StatusGuardOnly {
+						want.Reason += " " + cursorNoFile
+					}
+					if got.Status != want.Status {
+						t.Errorf("%s: status = %q, want %q: the condition cannot be expressed, "+
+							"and emitting the rest changes what the rule means", c.Agent(), got.Status, want.Status)
+					}
+					if got.Reason != want.Reason {
+						t.Errorf("%s: reason = %q, want %q", c.Agent(), got.Reason, want.Reason)
+					}
+					if len(got.Emitted) != 0 {
+						t.Errorf("%s: emitted %v, which is the rule without its condition", c.Agent(), got.Emitted)
+					}
+					for _, a := range res.Artifacts {
+						if strings.Contains(string(a.Content), "kubectl") {
+							t.Errorf("%s: the command reached %s without the condition that limits it",
+								c.Agent(), a.Filename)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestARuleForAnotherAgentIsNotEmittedHere.
+//
+// Found in review: no compiler read a rule's agents, so "deny rm -rf on Codex" was
+// written into Claude Code's, Copilot's and Gemini's managed settings and reported as
+// native on each. A rule nobody wrote, holding where it was not meant to.
+func TestARuleForAnotherAgentIsNotEmittedHere(t *testing.T) {
+	// Two targets, so that every compiler is both the agent named and one that is not.
+	for _, target := range []model.AgentID{model.AgentCodexCLI, model.AgentClaudeCode} {
+		p := mustParse(t, `
+version: 1
+settings:
+  guard:
+    enabled: true
+rules:
+  - id: one-agent
+    decision: deny
+    match:
+      agents: [`+string(target)+`]
+      kind: [shell]
+      command: ["kubectl *"]
+`)
+		for _, c := range All() {
+			res, err := c.Compile(p, "linux")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := res.Coverage[0]
+			if c.Agent() == target {
+				if got.Status != StatusNative {
+					t.Errorf("%s: status = %q, want native: the rule is its own", c.Agent(), got.Status)
+				}
+				continue
+			}
+			if got.Status != StatusNotApplicable || !strings.Contains(got.Reason, string(target)) {
+				t.Errorf("%s: coverage = %+v, want not applicable, naming %s", c.Agent(), got, target)
+			}
+			for _, a := range res.Artifacts {
+				if strings.Contains(string(a.Content), "kubectl") {
+					t.Errorf("%s: %s's rule reached %s", c.Agent(), target, a.Filename)
+				}
+			}
+			if s := Summarise(res.Coverage); s.NotApplicable != 1 || s.GuardOnly+s.Native+s.Partial != 0 {
+				t.Errorf("%s: summary = %+v, want it counted apart", c.Agent(), s)
+			}
+		}
+	}
+}
+
+// TestTheGuardOffWarningNamesTheRulesThatNeedIt.
+//
+// Found in review: on Claude Code, Codex and Gemini the warning sat inside a check for a
+// settings block, so a policy with none compiled every guard-only rule to an empty
+// managed file in silence, which reads as a policy deployed.
+func TestTheGuardOffWarningNamesTheRulesThatNeedIt(t *testing.T) {
+	p := mustParse(t, `
+version: 1
+rules:
+  - id: prod-kubectl
+    decision: deny
+    match: {kind: [shell], command: ["kubectl *"], environment: [production]}
+`)
+	for _, c := range All() {
+		res, err := c.Compile(p, "linux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, w := range res.Warnings {
+			if strings.Contains(w, "guard is not registered") && (c.Agent() == model.AgentCursor || strings.Contains(w, "prod-kubectl")) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: no warning names the rule that holds nowhere without the guard: %v", c.Agent(), res.Warnings)
+		}
+	}
+}
+
+// TestEveryMatchFieldIsClassifiedForCompilation.
+//
+// The environment, tokens and allowance gaps were all the same mistake: a field added
+// to the match without anyone deciding what a compiler should do with it. This fails
+// the day the next one is added, until somebody decides.
+func TestEveryMatchFieldIsClassifiedForCompilation(t *testing.T) {
+	classified := map[string]string{
+		// Selects which compiler the rule belongs to at all.
+		"Agents": "forOtherAgents",
+		// What the action is: each compiler expresses these natively or says why not.
+		"Kinds": "native", "Tools": "native", "Command": "native", "CommandContains": "native",
+		"CommandRuns": "native", "Path": "native", "URL": "native", "MCPServer": "native",
+		"MCPTool": "native",
+		// Conditions no native syntax can see.
+		"Environment": "conditionalCoverage", "Repeated": "conditionalCoverage",
+		"Spend": "conditionalCoverage", "TokenBudget": "conditionalCoverage",
+		"Allowance": "conditionalCoverage",
+	}
+	mt := reflect.TypeOf(policy.Match{})
+	for i := 0; i < mt.NumField(); i++ {
+		f := mt.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		if _, ok := classified[f.Name]; !ok {
+			t.Errorf("policy.Match.%s is not classified: decide whether each compiler can "+
+				"express it or whether conditionalCoverage must keep it out of native files", f.Name)
+		}
 	}
 }

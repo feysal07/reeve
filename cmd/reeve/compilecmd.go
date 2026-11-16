@@ -124,6 +124,9 @@ func printCoverage(res compile.Result) {
 	if s.Observe > 0 {
 		fmt.Printf(", %d observed only", s.Observe)
 	}
+	if s.NotApplicable > 0 {
+		fmt.Printf(", %d for other agents", s.NotApplicable)
+	}
 	fmt.Print("\n\n")
 
 	for _, c := range res.Coverage {

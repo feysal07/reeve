@@ -58,6 +58,15 @@ const (
 	// would start refusing people on every machine the file reached, including the
 	// ones where the guard is not installed to record why.
 	StatusObserve Status = "observe"
+	// StatusNotApplicable means the rule names other agents, so it is not this
+	// agent's rule: nothing is emitted for it here and the guard does not apply it
+	// here either.
+	//
+	// Found in review: no compiler read the rule's agents, so "deny rm -rf on Codex"
+	// was written into Claude Code's, Copilot's and Gemini's managed settings and
+	// reported as native on each: a rule nobody wrote, holding where it was not meant
+	// to. Counted apart, because it is not a gap in this agent's coverage either.
+	StatusNotApplicable Status = "not-applicable"
 )
 
 // Coverage records what happened to one rule, and why.
@@ -179,6 +188,7 @@ var effectRank = map[policy.Effect]int{
 func sortCoverage(c []Coverage) {
 	statusRank := map[Status]int{
 		StatusUnenforceable: -1, StatusGuardOnly: 0, StatusPartial: 1, StatusNative: 2, StatusObserve: 3,
+		StatusNotApplicable: 4,
 	}
 	sort.SliceStable(c, func(i, j int) bool {
 		if statusRank[c[i].Status] != statusRank[c[j].Status] {
@@ -220,6 +230,8 @@ type Summary struct {
 	// Observe counts rules in observe mode. They are not a gap: nothing enforcing
 	// them is what the operator asked for.
 	Observe int
+	// NotApplicable counts rules written for other agents.
+	NotApplicable int
 }
 
 // Summarise counts a coverage list.
@@ -237,9 +249,109 @@ func Summarise(c []Coverage) Summary {
 			s.Unenforceable++
 		case StatusObserve:
 			s.Observe++
+		case StatusNotApplicable:
+			s.NotApplicable++
 		}
 	}
 	return s
+}
+
+// forOtherAgents returns the entry for a rule that names agents and not this one, and
+// false for a rule this agent should compile. Every compiler asks first, before observe
+// mode and before any condition: a rule for another agent is nothing to this one.
+func forOtherAgents(r policy.Rule, agent model.AgentID) (Coverage, bool) {
+	if len(r.Match.Agents) == 0 {
+		return Coverage{}, false
+	}
+	names := make([]string, 0, len(r.Match.Agents))
+	for _, a := range r.Match.Agents {
+		if a == agent {
+			return Coverage{}, false
+		}
+		names = append(names, string(a))
+	}
+	return Coverage{
+		RuleID:   r.ID,
+		Decision: r.Decision,
+		Status:   StatusNotApplicable,
+		Reason: "This rule names " + strings.Join(names, ", ") + ", so nothing is emitted " +
+			"for " + string(agent) + " and the guard does not apply it here either.",
+	}, true
+}
+
+// guardOff reports that the policy does not register the guard.
+func guardOff(p *policy.Policy) bool {
+	return p.Settings == nil || p.Settings.Guard == nil || !p.Settings.Guard.Enabled
+}
+
+// guardOffWarning is what every compiler says when the policy does not register the
+// guard, naming the rules that then hold nowhere.
+//
+// Found in review: the warning was a fixed sentence, and on Claude Code, Codex and
+// Gemini it sat inside a check for a settings block, so a policy with no settings at
+// all said nothing. A policy whose every rule is scoped to an environment or a budget
+// compiled to an empty managed file with no warning, which reads as a policy deployed.
+// The rules that need the guard are named, because a count of them is easy to read
+// past and a list of rule ids is not.
+func guardOffWarning(cov []Coverage) string {
+	var ids []string
+	for _, c := range cov {
+		if c.Status == StatusGuardOnly || c.Status == StatusPartial {
+			ids = append(ids, c.RuleID)
+		}
+	}
+	w := "The guard is not registered, so only the natively expressible rules above are enforced."
+	if len(ids) > 0 {
+		w += fmt.Sprintf(" %d %s held in whole or in part by the guard alone, and so by nothing "+
+			"here: %s.", len(ids), plural(len(ids), "rules are", "rule is"), strings.Join(ids, ", "))
+	}
+	return w
+}
+
+func plural(n int, many, one string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// conditionalCoverage is the entry every compiler returns for a rule whose match
+// depends on something no agent's native syntax can see, and false for a rule with no
+// such condition. One function, called by every compiler, because the alternative was
+// the same two checks copied into each, and the copies drifted: they knew about a
+// repeat count and a money budget, and nothing else.
+//
+// Found in the v0.7.0 audit. "Deny kubectl in production" compiled to "deny kubectl"
+// on Claude Code, Copilot and Codex and was reported as native, and Gemini emitted it
+// while calling it partial; a tokens budget and an allowance compiled to an
+// unconditional deny on all four. Every one held without the guard, and every one was
+// the wrong rule: stricter for a deny, and for an allow, had allows been emitted, the
+// permissive direction.
+func conditionalCoverage(r policy.Rule, agent model.AgentID) (Coverage, bool) {
+	switch {
+	case countsRepetitions(r):
+		return repeatCoverage(r), true
+	case countsSpend(r):
+		return spendCoverage(r, agent), true
+	case len(r.Match.Environment) > 0:
+		return environmentCoverage(r), true
+	}
+	return Coverage{}, false
+}
+
+// environmentCoverage is the entry every compiler returns for a rule scoped to an
+// environment.
+func environmentCoverage(r policy.Rule) Coverage {
+	return Coverage{
+		RuleID:   r.ID,
+		Decision: r.Decision,
+		Status:   StatusGuardOnly,
+		Reason: "This rule is scoped to an environment, which the guard resolves from " +
+			"the tool's own ambient state at the moment it runs, and which no agent's " +
+			"own configuration can see. Emitting the rest of the match without the " +
+			"environment would apply it in every environment, a different rule, so " +
+			"nothing is emitted. It holds only while the guard is running.",
+	}
 }
 
 // countsRepetitions reports whether a rule matches on what came before rather than on
@@ -259,7 +371,13 @@ func countsRepetitions(r policy.Rule) bool { return r.Match.Repeated != nil }
 // reason emitting the rest of the match alone would produce a different, stricter
 // rule: "deny deploys once we have spent fifty dollars" would compile to "deny
 // deploys".
-func countsSpend(r policy.Rule) bool { return r.Match.Spend != nil }
+//
+// A tokens budget and an allowance are budgets too. Found in the v0.7.0 audit: this
+// checked only the money form, so "deny curl once a day's tokens pass a thousand"
+// compiled to "deny curl" and was reported as native.
+func countsSpend(r policy.Rule) bool {
+	return r.Match.Spend != nil || r.Match.TokenBudget != nil || r.Match.Allowance != nil
+}
 
 // spendCoverage is the entry every compiler returns for a budget.
 //
@@ -272,7 +390,8 @@ func spendCoverage(r policy.Rule, agent model.AgentID) Coverage {
 			RuleID:   r.ID,
 			Decision: r.Decision,
 			Status:   StatusUnenforceable,
-			Reason: "This rule is a budget, and this agent does not export usage to an " +
+			Reason: "This rule is a budget, of money, tokens or a plan's allowance, and " +
+				"this agent does not export usage to an " +
 				"endpoint you choose, so none of its spend reaches the store the guard " +
 				"totals. The budget would sit at zero for this agent and never fire. " +
 				"Nothing is emitted, and the guard cannot cover it either: this agent is " +
@@ -283,12 +402,13 @@ func spendCoverage(r policy.Rule, agent model.AgentID) Coverage {
 		RuleID:   r.ID,
 		Decision: r.Decision,
 		Status:   StatusGuardOnly,
-		Reason: "This rule is a budget, and no agent's own configuration can total " +
-			"spend. Emitting the rest of the match without the threshold would produce " +
-			"a different and stricter rule, so nothing is emitted. It holds only while " +
-			"the guard is running, only where the guard has an event store to total " +
-			"from, and only as closely as that store is up to date: cost arrives by the " +
-			"agent's own batched export, so the figure lags real spend.",
+		Reason: "This rule is a budget, of money, tokens or a plan's allowance, and no " +
+			"agent's own configuration can total usage. Emitting the rest of the match " +
+			"without the threshold would produce a different and stricter rule, so " +
+			"nothing is emitted. It holds only while the guard is running, only where " +
+			"the guard has an event store to total from, and only as closely as that " +
+			"store is up to date: usage arrives by the agent's own batched export, so " +
+			"the figure lags the real one.",
 	}
 }
 
