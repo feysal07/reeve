@@ -64,3 +64,20 @@ func OriginOf(name string) string {
 	}
 	return OriginUnknown
 }
+
+// ServerKey is a server's name as Claude Code puts it in a tool's name.
+//
+// Claude Code replaces anything but letters, digits, _ and - with _, so a server
+// configured as "my server" is called as my_server. Found in review: compared as
+// written, every such server was reported as called while configured nowhere. Two
+// configured names that differ only in such characters share a key, as they share tool
+// names in the agent.
+func ServerKey(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			return r
+		}
+		return '_'
+	}, name)
+}

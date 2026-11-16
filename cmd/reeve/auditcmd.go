@@ -179,9 +179,15 @@ func runAuditSeal(args []string) error {
 	}
 
 	if *asJSON {
+		// Sealed says whether this run wrote the seal. Found in review: once a seal
+		// was written only when there was something new to cover, an unchanged log
+		// printed the last seal, and a script could not tell it from a fresh one.
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(s)
+		return enc.Encode(struct {
+			audit.Seal
+			Sealed bool `json:"sealed"`
+		}{s, sealed})
 	}
 
 	fmt.Printf("\nSealed %s\n\n", path)

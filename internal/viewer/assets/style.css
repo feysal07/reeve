@@ -36,7 +36,7 @@ dd { margin: 0; }
 .tabs a.current { font-weight: 600; color: var(--fg); }
 #mcp-view { overflow-x: auto; }
 td.verdict.denied, td.verdict.mismatch { color: var(--deny); font-weight: 600; }
-td.verdict.unregistered, td.verdict.name-only { color: var(--ask); font-weight: 600; }
+td.verdict.unregistered, td.verdict.unverified, td.verdict.name-only { color: var(--ask); font-weight: 600; }
 td.detail { white-space: normal; min-width: 18em; color: var(--muted); }
 #timeline { list-style: none; padding: 0; margin: 0 0 40px; }
 #timeline .day { color: var(--muted); font-weight: 600; margin: 14px 0 4px; }

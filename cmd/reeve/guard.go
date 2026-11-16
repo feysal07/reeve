@@ -379,24 +379,32 @@ func writeResponse(r hook.Response) {
 // decisionRecord is one line of the decision log. It records what was decided and
 // why, and deliberately never records prompt text or file contents.
 type decisionRecord struct {
-	Time        time.Time     `json:"time"`
-	Agent       model.AgentID `json:"agent"`
-	Event       string        `json:"event,omitempty"`
-	SessionID   string        `json:"sessionId,omitempty"`
-	Kind        policy.Kind   `json:"kind"`
-	Tool        string        `json:"tool,omitempty"`
-	ToolUseID   string        `json:"toolUseId,omitempty"`
-	Command     string        `json:"command,omitempty"`
-	Paths       []string      `json:"paths,omitempty"`
-	URLs        []string      `json:"urls,omitempty"`
-	MCPServer   string        `json:"mcpServer,omitempty"`
-	MCPTool     string        `json:"mcpTool,omitempty"`
-	Environment string        `json:"environment,omitempty"`
-	EnvDetail   string        `json:"environmentDetail,omitempty"`
-	Effect      policy.Effect `json:"effect"`
-	RuleID      string        `json:"ruleId,omitempty"`
-	Reason      string        `json:"reason,omitempty"`
-	PolicyFile  string        `json:"policyFile,omitempty"`
+	Time      time.Time     `json:"time"`
+	Agent     model.AgentID `json:"agent"`
+	Event     string        `json:"event,omitempty"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Kind      policy.Kind   `json:"kind"`
+	Tool      string        `json:"tool,omitempty"`
+	ToolUseID string        `json:"toolUseId,omitempty"`
+	Command   string        `json:"command,omitempty"`
+	Paths     []string      `json:"paths,omitempty"`
+	URLs      []string      `json:"urls,omitempty"`
+	MCPServer string        `json:"mcpServer,omitempty"`
+	MCPTool   string        `json:"mcpTool,omitempty"`
+	// CWD is the project an MCP call came from. Recorded for MCP calls only, so that
+	// scan can read that project's own configuration: a server in its .mcp.json can
+	// be named after a desktop built-in or a claude.ai connector, and the name is all
+	// the log otherwise has. Found in review of the observed-server inventory.
+	CWD string `json:"cwd,omitempty"`
+	// MCPConfigured is whether that project defined a server of the called name at
+	// the moment of the call: yes, no or unknown. See mcpConfiguredAt.
+	MCPConfigured string        `json:"mcpConfigured,omitempty"`
+	Environment   string        `json:"environment,omitempty"`
+	EnvDetail     string        `json:"environmentDetail,omitempty"`
+	Effect        policy.Effect `json:"effect"`
+	RuleID        string        `json:"ruleId,omitempty"`
+	Reason        string        `json:"reason,omitempty"`
+	PolicyFile    string        `json:"policyFile,omitempty"`
 	// ReeveVersion is the build that made the decision. A log shared from somebody
 	// else's machine carried nothing to say it came from the very first build, so
 	// its gaps were read as defects in the current one.
@@ -505,6 +513,10 @@ func newDecisionRecord(a policy.Action, d policy.Decision, source string, elapse
 		DryRun:       notApplied,
 		Observe:      notApplied && d.Observed != nil,
 		Observed:     observed,
+	}
+	if a.MCPServer != "" {
+		rec.CWD = a.CWD
+		rec.MCPConfigured = mcpConfiguredAt(a)
 	}
 	if id := a.Identity; id != nil && id.Key() != "" {
 		rec.Who, rec.Team = id.Key(), id.Team

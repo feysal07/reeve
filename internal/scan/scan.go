@@ -10,9 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/feysal07/reeve/internal/adapter"
@@ -108,9 +111,61 @@ func Run(ctx context.Context, reg *adapter.Registry, opts Options) (model.Report
 	}
 
 	history := readGuardHistory(opts.DecisionLog, time.Now())
-	attachSeenServers(report.Installations, history)
+	attachSeenServers(report.Installations, history, projectCheckerFor(reg, env))
+	if history != nil && len(history.Problems) > 0 {
+		report.Findings = append(report.Findings, model.Finding{
+			ID:       "scan.history-partial",
+			Severity: model.SeverityMedium,
+			Title:    "Part of the guard's decision log could not be read",
+			Detail: "What this scan says the guard has seen, and the MCP servers called " +
+				"that no configuration lists, are a floor: " + strings.Join(history.Problems, "; ") +
+				". Run reeve audit verify on the log.",
+		})
+	}
 	report.Findings = append(report.Findings, findings.EvaluateWith(report.Installations, history)...)
 	return report, nil
+}
+
+// projectCheckerFor asks each agent's own adapter what a project configures, reading
+// that project's directory in place of the one the scan runs in. Nil when no adapter
+// can, which leaves every connector or built-in name unverified.
+func projectCheckerFor(reg *adapter.Registry, env adapter.Env) projectChecker {
+	byAgent := map[model.AgentID]adapter.ProjectMCP{}
+	for _, a := range reg.All() {
+		if p, ok := a.(adapter.ProjectMCP); ok {
+			byAgent[a.ID()] = p
+		}
+	}
+	if len(byAgent) == 0 {
+		return nil
+	}
+	type key struct {
+		agent model.AgentID
+		dir   string
+	}
+	cache := map[key][]string{}
+	return func(agent model.AgentID, dir, name string) (bool, error) {
+		p, ok := byAgent[agent]
+		if !ok {
+			return false, fmt.Errorf("nothing in this build can read %s's project configuration", agent)
+		}
+		names, seen := cache[key{agent, dir}]
+		if !seen {
+			e := env
+			e.WorkDir = dir
+			var err error
+			if names, err = p.ProjectMCPServers(e); err != nil {
+				return false, err
+			}
+			cache[key{agent, dir}] = names
+		}
+		for _, n := range names {
+			if mcp.ServerKey(n) == mcp.ServerKey(name) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 }
 
 // buildEnv assembles the filesystem context adapters read from.
@@ -140,20 +195,19 @@ func buildEnv(opts Options) (adapter.Env, error) {
 // readGuardHistory summarises the decision log: which agents it has decided for, how
 // often, and how recently.
 //
-// Read-only, like the rest of a scan, and tolerant: a log that cannot be opened, or a
-// line that does not parse, yields less evidence rather than an error. The scan's job
-// is to describe a machine, and failing it over a malformed line in an optional input
-// would be a worse answer than a partial one.
+// Read-only, like the rest of a scan. A line that does not parse yields less evidence
+// rather than an error, but a part of the log that could not be read at all is named in
+// Problems: found in review, the reader dropped a listing error, skipped a segment it
+// could not open and stopped at a line too long for its buffer, each time reporting
+// fewer MCP servers as though that were all of them.
 //
-// The rotated segments are read as well as the live log. Found with the MCP inventory:
-// the log rotates daily, so the live file alone holds a day at most, and a server
-// called yesterday - or a guard that stopped yesterday - was missing from the evidence
-// by breakfast. Records older than historyWindow are passed over.
+// The rotated segments are read as well as the live log, through the same reader the
+// guard, report and doctor use. The log rotates daily, so the live file alone holds a
+// day at most, and a server called yesterday - or a guard that stopped yesterday - was
+// missing from the evidence by breakfast. Records older than historyWindow are passed
+// over.
 func readGuardHistory(path string, now time.Time) *findings.GuardHistory {
 	if path == "" {
-		return nil
-	}
-	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
 	h := &findings.GuardHistory{
@@ -162,10 +216,30 @@ func readGuardHistory(path string, now time.Time) *findings.GuardHistory {
 		Total:    map[model.AgentID]int{},
 		MCP:      map[model.AgentID]map[string]*findings.MCPUse{},
 	}
-	segments, _ := audit.Segments(path)
 	cutoff := now.Add(-historyWindow)
-	for _, p := range append(segments, path) {
-		readHistoryFile(p, cutoff, h)
+	w, err := audit.ReadWindow(path, cutoff, func(p audit.Part, r io.Reader) error {
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for sc.Scan() {
+			readHistoryLine(sc.Bytes(), cutoff, h)
+		}
+		if err := sc.Err(); err != nil {
+			// Said, and the rest of the window still read: one damaged segment is
+			// not a reason to describe none of it.
+			h.Problems = append(h.Problems, filepath.Base(p.Path)+": "+err.Error())
+		}
+		return nil
+	})
+	if err != nil {
+		h.Problems = append(h.Problems, err.Error())
+	}
+	if !w.LiveExists && w.Segments == 0 && err == nil {
+		return nil // nothing has ever been written there
+	}
+	for _, g := range w.Missing {
+		if !g.Pruned {
+			h.Problems = append(h.Problems, filepath.Base(g.Segment)+": "+g.Why)
+		}
 	}
 	return h
 }
@@ -173,67 +247,84 @@ func readGuardHistory(path string, now time.Time) *findings.GuardHistory {
 // historyWindow is how far back the scan looks for what the guard has seen.
 const historyWindow = 30 * 24 * time.Hour
 
-func readHistoryFile(path string, cutoff time.Time, h *findings.GuardHistory) {
-	f, err := os.Open(path)
-	if err != nil {
+func readHistoryLine(line []byte, cutoff time.Time, h *findings.GuardHistory) {
+	var rec struct {
+		Time      time.Time     `json:"time"`
+		Agent     model.AgentID `json:"agent"`
+		MCPServer string        `json:"mcpServer"`
+		MCPTool   string        `json:"mcpTool"`
+		CWD       string        `json:"cwd"`
+		// Configured is the guard's evidence from the moment of the call.
+		Configured string `json:"mcpConfigured"`
+	}
+	if json.Unmarshal(line, &rec) != nil || rec.Agent == "" || rec.Time.Before(cutoff) {
 		return
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
-		var rec struct {
-			Time      time.Time     `json:"time"`
-			Agent     model.AgentID `json:"agent"`
-			MCPServer string        `json:"mcpServer"`
-			MCPTool   string        `json:"mcpTool"`
-		}
-		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Agent == "" || rec.Time.Before(cutoff) {
-			continue
-		}
-		h.Total[rec.Agent]++
-		if rec.Time.After(h.LastSeen[rec.Agent]) {
-			h.LastSeen[rec.Agent] = rec.Time
-		}
-		// Only an MCP call has a server: the guard records mcpServer for nothing else.
-		if rec.MCPServer == "" {
-			continue
-		}
-		byServer := h.MCP[rec.Agent]
-		if byServer == nil {
-			byServer = map[string]*findings.MCPUse{}
-			h.MCP[rec.Agent] = byServer
-		}
-		u := byServer[rec.MCPServer]
-		if u == nil {
-			u = &findings.MCPUse{Tools: map[string]bool{}}
-			byServer[rec.MCPServer] = u
-		}
-		u.Calls++
-		if rec.Time.After(u.Last) {
-			u.Last = rec.Time
-		}
-		if rec.MCPTool != "" {
-			u.Tools[rec.MCPTool] = true
-		}
+	h.Total[rec.Agent]++
+	if rec.Time.After(h.LastSeen[rec.Agent]) {
+		h.LastSeen[rec.Agent] = rec.Time
+	}
+	// Only an MCP call has a server: the guard records mcpServer for nothing else.
+	if rec.MCPServer == "" {
+		return
+	}
+	byServer := h.MCP[rec.Agent]
+	if byServer == nil {
+		byServer = map[string]*findings.MCPUse{}
+		h.MCP[rec.Agent] = byServer
+	}
+	u := byServer[rec.MCPServer]
+	if u == nil {
+		u = &findings.MCPUse{Tools: map[string]bool{}, Dirs: map[string]bool{}, DefinedIn: map[string]bool{}}
+		byServer[rec.MCPServer] = u
+	}
+	u.Calls++
+	if rec.Time.After(u.Last) {
+		u.Last = rec.Time
+	}
+	if rec.MCPTool != "" {
+		u.Tools[rec.MCPTool] = true
+	}
+	if rec.CWD != "" {
+		u.Dirs[rec.CWD] = true
+	}
+	switch rec.Configured {
+	case "yes":
+		u.DefinedIn[rec.CWD] = true
+	case "no":
+	default:
+		u.Unchecked++
 	}
 }
+
+// projectChecker reports whether the project at dir configures an MCP server of this
+// name for the agent, or that its configuration could not be read.
+type projectChecker func(agent model.AgentID, dir, name string) (bool, error)
 
 // attachSeenServers adds, to each installation, the MCP servers its agent called that
 // none of its configuration lists. A configured server is identified by its command or
 // URL elsewhere; one known only from being called has nothing but a name.
-func attachSeenServers(insts []model.Installation, h *findings.GuardHistory) {
+//
+// A name that looks like a claude.ai connector or a desktop built-in is only a name.
+// Found in review: a stdio server in a project's own .mcp.json can be called anything,
+// and the registry approved it by that name without anyone looking. So every project
+// the server was called from is checked, and the name stands only where all of them
+// could be read and none defines it; otherwise Unverified says why, and reconciliation
+// says unverified rather than approved. Connectors and built-ins are Claude's: on any
+// other agent the origin is unknown.
+func attachSeenServers(insts []model.Installation, h *findings.GuardHistory, check projectChecker) {
 	if h == nil {
 		return
 	}
 	for i := range insts {
+		agent := insts[i].Agent
 		configured := map[string]bool{}
 		for _, s := range insts[i].MCPServers {
-			configured[s.Name] = true
+			configured[mcp.ServerKey(s.Name)] = true
 		}
 		var seen []model.MCPSeen
-		for name, u := range h.MCP[insts[i].Agent] {
-			if configured[name] {
+		for name, u := range h.MCP[agent] {
+			if configured[mcp.ServerKey(name)] {
 				continue
 			}
 			tools := make([]string, 0, len(u.Tools))
@@ -244,8 +335,16 @@ func attachSeenServers(insts []model.Installation, h *findings.GuardHistory) {
 			if len(tools) > 10 {
 				tools = tools[:10]
 			}
-			seen = append(seen, model.MCPSeen{Name: name, Origin: mcp.OriginOf(name), Calls: u.Calls,
-				LastCalled: u.Last, Tools: tools})
+			s := model.MCPSeen{Name: name, Origin: mcp.OriginUnknown, Calls: u.Calls,
+				LastCalled: u.Last, Tools: tools}
+			if agent == model.AgentClaudeCode {
+				s.Origin = mcp.OriginOf(name)
+			}
+			if s.Origin != mcp.OriginUnknown {
+				s.DefinedIn, s.Unverified = verifyOrigin(agent, name, u, check)
+				s.Verified = s.DefinedIn == "" && s.Unverified == ""
+			}
+			seen = append(seen, s)
 		}
 		sort.Slice(seen, func(a, b int) bool {
 			if seen[a].Calls != seen[b].Calls {
@@ -255,4 +354,71 @@ func attachSeenServers(insts []model.Installation, h *findings.GuardHistory) {
 		})
 		insts[i].MCPServersSeen = seen
 	}
+}
+
+// maxProjectsChecked bounds how many projects scan reads for one name. The directories
+// come from the log, which the agent writes; past this, the name is left unverified
+// rather than the scan left reading for as long as somebody cares to make it.
+const maxProjectsChecked = 50
+
+// verifyOrigin decides what a name that looks like a connector or built-in is.
+//
+// definedIn is a project that defines a server of that name, by the guard's evidence
+// from the moment of a call or by scan's own read now: whatever answered there is that
+// server. unverified says why neither could be settled. Both empty means every call
+// carried the guard's evidence that its project defined none, and every such project,
+// read again now, still defines none.
+//
+// The guard's evidence comes first because scan's alone is too late: found in review,
+// the agent can take the impostor out of .mcp.json between the call and the scan.
+// Scan's read is kept because a project read twice is better evidence than once.
+func verifyOrigin(agent model.AgentID, name string, u *findings.MCPUse, check projectChecker) (definedIn, unverified string) {
+	if len(u.DefinedIn) > 0 {
+		return firstKey(u.DefinedIn), ""
+	}
+	if u.Unchecked > 0 {
+		return "", fmt.Sprintf("%d %s no evidence from the moment of the call that its project "+
+			"did not define a server of this name: recorded by a guard older than this check, "+
+			"or one that could not read the project", u.Unchecked, plural(u.Unchecked, "calls have", "call has"))
+	}
+	if check == nil {
+		return "", "nothing in this build can read that agent's project configuration"
+	}
+	if len(u.Dirs) > maxProjectsChecked {
+		return "", fmt.Sprintf("it was called from %d projects, more than the %d this scan reads", len(u.Dirs), maxProjectsChecked)
+	}
+	dirs := make([]string, 0, len(u.Dirs))
+	for d := range u.Dirs {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	for _, d := range dirs {
+		defined, err := check(agent, d, name)
+		if err != nil {
+			return "", fmt.Sprintf("the configuration in %q cannot be read: %v", d, err)
+		}
+		if defined {
+			return d, ""
+		}
+	}
+	return "", ""
+}
+
+func firstKey(m map[string]bool) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+func plural(n int, many, one string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

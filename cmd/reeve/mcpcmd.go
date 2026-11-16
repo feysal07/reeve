@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/feysal07/reeve/internal/mcp"
@@ -99,8 +100,17 @@ func observedIn(r model.Report, machine string) []mcp.Observed {
 			out = append(out, mcp.Observed{Server: s, Agent: inst.Agent, Machine: machine})
 		}
 		for _, s := range inst.MCPServersSeen {
-			out = append(out, mcp.Observed{Agent: inst.Agent, Machine: machine,
-				Server: model.MCPServer{Name: s.Name, Transport: s.Origin, Scope: model.ScopeObserved}})
+			o := mcp.Observed{Agent: inst.Agent, Machine: machine, Unverified: s.Unverified,
+				DefinedIn: s.DefinedIn,
+				Server:    model.MCPServer{Name: s.Name, Transport: s.Origin, Scope: model.ScopeObserved}}
+			// Verified is positive evidence. A report from a scan that never checked
+			// carries none of these fields, and found in review it reconciled as
+			// approved: an absent check must not read as a clean one.
+			if !s.Verified && o.Unverified == "" && o.DefinedIn == "" {
+				o.Unverified = "the scan that reported it did not check what the name runs " +
+					"(a scan older than v0.7.0)"
+			}
+			out = append(out, o)
 		}
 	}
 	return out
@@ -282,13 +292,26 @@ func renderMCP(r mcp.Report) {
 	for _, res := range r.Results {
 		counts[res.Verdict]++
 	}
-	for _, v := range []mcp.Verdict{
-		mcp.VerdictMismatch, mcp.VerdictDenied, mcp.VerdictUnregistered,
+	order := []mcp.Verdict{
+		mcp.VerdictMismatch, mcp.VerdictDenied, mcp.VerdictUnregistered, mcp.VerdictUnverified,
 		mcp.VerdictNameOnly, mcp.VerdictTrial, mcp.VerdictApproved,
-	} {
+	}
+	for _, v := range order {
 		if counts[v] > 0 {
 			fmt.Printf("  %-14s %d\n", v, counts[v])
 		}
+		delete(counts, v)
+	}
+	// Any verdict this list does not know is still counted. Found when unverified was
+	// added: a fixed list would have left it out of the summary while the results
+	// below named it.
+	rest := make([]string, 0, len(counts))
+	for v := range counts {
+		rest = append(rest, string(v))
+	}
+	sort.Strings(rest)
+	for _, v := range rest {
+		fmt.Printf("  %-14s %d\n", v, counts[mcp.Verdict(v)])
 	}
 	fmt.Println()
 

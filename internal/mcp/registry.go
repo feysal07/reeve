@@ -166,6 +166,13 @@ type Observed struct {
 	Server  model.MCPServer
 	Agent   model.AgentID
 	Machine string
+	// Unverified says why a server known only from the guard's log could not be
+	// shown to be the connector or built-in its name says it is. See observedIn,
+	// which fills it for a report from a scan that never checked.
+	Unverified string
+	// DefinedIn is a project whose configuration defines a server of this name, so
+	// whatever answered there is that server, not the connector or built-in.
+	DefinedIn string
 }
 
 // Verdict is what reconciliation concluded about one observed server.
@@ -189,6 +196,10 @@ const (
 	// as approved. A registry is meant to make a reviewer's decision stick, and
 	// this is the case where the label says it did and the command says it did not.
 	VerdictMismatch Verdict = "mismatch"
+	// VerdictUnverified matched an approved connector or built-in by name, and the
+	// name could not be shown to be that server rather than a project's own server
+	// called the same thing.
+	VerdictUnverified Verdict = "unverified"
 )
 
 // Severity maps a verdict to how loudly it should be reported.
@@ -196,7 +207,7 @@ func (v Verdict) Severity() model.Severity {
 	switch v {
 	case VerdictMismatch, VerdictDenied:
 		return model.SeverityHigh
-	case VerdictUnregistered:
+	case VerdictUnregistered, VerdictUnverified:
 		return model.SeverityMedium
 	case VerdictNameOnly:
 		return model.SeverityLow
@@ -325,11 +336,28 @@ func Reconcile(reg *Registry, observed []Observed) Report {
 			used[matched.Name] = true
 			res.Entry = matched.Name
 			res.Identity = identityKind(o)
-			switch matched.Effective() {
-			case StatusDenied:
+			switch {
+			case matched.Effective() != StatusDenied && o.DefinedIn != "" && observedAs(o) != "":
+				// The project the call came from runs a server of this name, so
+				// the approval by name reached something else: the same thing a
+				// command that differs from the approved one is, and as loud.
+				res.Verdict = VerdictMismatch
+				res.Detail = fmt.Sprintf("Uses the name of the registered %s %q, and the "+
+					"configuration in %q defines a server of that name, so it ran whatever "+
+					"that configuration says.", res.Identity, matched.Name, o.DefinedIn)
+			case matched.Effective() != StatusDenied && o.Unverified != "" && observedAs(o) != "":
+				// Found in review: a stdio server in a project's .mcp.json can be
+				// named after a built-in or a connector, and the guard's log records
+				// only the name. An approval or a trial by that name holds only where
+				// scan could rule that out. A refusal needs no verifying: whatever it
+				// is, it is called by a refused name.
+				res.Verdict = VerdictUnverified
+				res.Detail = "Matches a registered " + res.Identity + " by name, and it " +
+					"could not be shown to be that server: " + o.Unverified + "."
+			case matched.Effective() == StatusDenied:
 				res.Verdict = VerdictDenied
 				res.Detail = "This server was reviewed and refused, and it is configured anyway."
-			case StatusTrial:
+			case matched.Effective() == StatusTrial:
 				res.Verdict = VerdictTrial
 				res.Detail = "Permitted while under trial. Recorded so the decision gets revisited rather than expiring into approval."
 			default:

@@ -722,6 +722,9 @@ func mcpCalledNotConfigured(inst model.Installation) []model.Finding {
 		Evidence: strings.Join(parts, "; "),
 		Remedy: "Decide on each: add it to the approved list by connector id or built-in name, " +
 			"or remove the connector from the account. `reeve mcp check` and the MCP page in " +
-			"`reeve view` report them as unregistered until you do.",
+			"`reeve view` report them as unregistered until you do, and an approval by name " +
+			"holds only where every project the server was called from was shown not to " +
+			"define a server of that name: unverified where that could not be shown, " +
+			"mismatch where one did.",
 	}}
 }

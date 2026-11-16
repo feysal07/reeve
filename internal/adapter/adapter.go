@@ -62,6 +62,14 @@ type Env struct {
 	ProgramData string
 }
 
+// ProjectMCP is an adapter that can name the MCP servers one project's own
+// configuration defines, reporting a file it could not read as an error rather than as
+// a project that defines nothing. Scan uses it to check servers known only from the
+// guard's log, which are known only by name.
+type ProjectMCP interface {
+	ProjectMCPServers(env Env) ([]string, error)
+}
+
 // Registry holds the adapters a build supports.
 type Registry struct {
 	adapters []Adapter
