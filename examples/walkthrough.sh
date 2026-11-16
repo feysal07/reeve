@@ -927,6 +927,28 @@ case "$BUDGET_CLAUDE" in
     *)  check "the same budget is guard-enforced where cost does reach the store" 1 ;;
 esac
 
+# A rule scoped to an environment, or to a tokens budget, cannot be written into an
+# agent's own config with its condition, and without it it is a different rule. Found in
+# the v0.7.0 audit: "deny kubectl in production" compiled to "deny kubectl" and was
+# reported as native, holding everywhere. Nothing may reach the file, and the report
+# must say guard-only.
+COND_POLICY="$SANDBOX/conditional.yaml"
+printf '%s\n' 'version: 1' 'rules:' \
+    '  - id: prod-kubectl' '    decision: deny' \
+    '    match: {kind: [shell], command: ["kubectl *"], environment: [production]}' \
+    '  - id: token-curl' '    decision: deny' \
+    '    match: {kind: [shell], command: ["curl *"], tokens: {within: 24h, moreThan: 1000}}' > "$COND_POLICY"
+COND_OUT=$("$REEVE" policy compile "$COND_POLICY" --agent claude-code --out "$DIST/conditional" 2>&1 | tr -s ' ')
+COND_FILES=$(cat "$DIST/conditional"/* 2>/dev/null)
+case "$COND_OUT" in
+    *"guard-only prod-kubectl"*"guard-only token-curl"*)
+        case "$COND_FILES" in
+            *kubectl*|*curl*) check "a rule scoped to an environment or a tokens budget is never compiled without its condition" 0 "the command reached the native file" ;;
+            *) check "a rule scoped to an environment or a tokens budget is never compiled without its condition" 1 ;;
+        esac ;;
+    *) check "a rule scoped to an environment or a tokens budget is never compiled without its condition" 0 "$COND_OUT" ;;
+esac
+
 
 # ------------------------------------------------------------ telemetry ----
 

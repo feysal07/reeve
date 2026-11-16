@@ -822,6 +822,27 @@ Check "the same budget is guard-enforced where cost does reach the store" `
     (-not ($budgetClaude -match "NOT ENFORCED ANYWHERE")) `
     "reported as unenforceable on an agent that exports cost"
 
+# A rule scoped to an environment, or to a tokens budget, cannot be written into an
+# agent's own config with its condition, and without it it is a different rule. Found in
+# the v0.7.0 audit: "deny kubectl in production" compiled to "deny kubectl" and was
+# reported as native, holding everywhere. Nothing may reach the file, and the report
+# must say guard-only.
+$condPolicy = Join-Path $Sandbox "conditional.yaml"
+@(
+    'version: 1', 'rules:',
+    '  - id: prod-kubectl', '    decision: deny',
+    '    match: {kind: [shell], command: ["kubectl *"], environment: [production]}',
+    '  - id: token-curl', '    decision: deny',
+    '    match: {kind: [shell], command: ["curl *"], tokens: {within: 24h, moreThan: 1000}}'
+) | Set-Content $condPolicy -Encoding utf8
+$condDir = Join-Path $dist "conditional"
+$condOut = ((& $reeve policy compile $condPolicy --agent claude-code --out $condDir 2>&1 | Out-String) -replace ' +', ' ')
+$condFiles = (Get-ChildItem $condDir -File -ErrorAction SilentlyContinue | Get-Content -Raw) -join "`n"
+Check "a rule scoped to an environment or a tokens budget is never compiled without its condition" `
+    (($condOut -match "guard-only prod-kubectl") -and ($condOut -match "guard-only token-curl") -and `
+     -not ($condFiles -match "kubectl|curl")) `
+    $condOut
+
 
 # ------------------------------------------------------------ telemetry ----
 

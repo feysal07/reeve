@@ -72,6 +72,10 @@ func (c *copilotCLI) Compile(p *policy.Policy, platform string) (Result, error) 
 	perms := &copilotPermissions{}
 
 	for _, r := range p.Rules {
+		if cov, ok := forOtherAgents(r, c.Agent()); ok {
+			res.Coverage = append(res.Coverage, cov)
+			continue
+		}
 		if r.Observes() {
 			res.Coverage = append(res.Coverage, observeCoverage(r))
 			continue
@@ -163,8 +167,7 @@ func (c *copilotCLI) Compile(p *policy.Policy, platform string) (Result, error) 
 			Describe: "Copilot CLI policy hook. This directory is the only place a hook cannot be disabled by a developer, so the guard belongs here rather than in managed settings.",
 		})
 	} else {
-		res.Warnings = append(res.Warnings,
-			"The guard is not registered, so only the natively expressible rules above are enforced.")
+		res.Warnings = append(res.Warnings, guardOffWarning(res.Coverage))
 	}
 
 	sortCoverage(res.Coverage)
@@ -183,13 +186,10 @@ func toCopilotMatcher(ref policy.MCPRef) copilotMCPMatcher {
 // differ from Claude Code's, which is exactly the sort of difference an operator
 // should never have to hold in their head.
 func (c *copilotCLI) compileRule(r policy.Rule) (Coverage, []string, []string) {
-	if countsRepetitions(r) {
-		return repeatCoverage(r), nil, nil
-	}
-	// A budget is guard-only for the same reason, and on an agent that
-	// exports no cost it is not enforced anywhere at all.
-	if countsSpend(r) {
-		return spendCoverage(r, c.Agent()), nil, nil
+	// A count, a budget or an environment: a condition no native syntax can see,
+	// so emitting the rest of the match would be a different rule.
+	if cov, ok := conditionalCoverage(r, c.Agent()); ok {
+		return cov, nil, nil
 	}
 
 	cov := Coverage{RuleID: r.ID, Decision: r.Decision}

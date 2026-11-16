@@ -50,7 +50,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 143 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 144 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -124,8 +124,8 @@ reeve policy compile examples/policy/baseline.yaml --platform linux
 Renders the policy as each agent's own administrator-owned configuration. Add `--out`
 to write the files.
 
-Read the coverage report rather than the files. It reports one rule enforced natively
-and eight guard-only, because the baseline leans on substring matching that no agent's
+Read the coverage report rather than the files. For Claude Code it reports one rule
+enforced natively and ten guard-only, because the baseline leans on substring matching that no agent's
 permission syntax can express. That is the honest measure of how much of a real policy
 an agent can enforce by itself, and the reason both layers are deployed together.
 

@@ -68,35 +68,40 @@ const cursorEvent = "preToolUse"
 // indefinitely, and with failClosed set a timeout refuses rather than permits.
 const cursorHookTimeoutSeconds = 10
 
+// cursorNoFile is why nothing about a rule reaches Cursor natively.
+const cursorNoFile = "Cursor has no administrator-owned file for permission rules. Its " +
+	"permissions, approval mode, sandbox and MCP list all live in files the developer can " +
+	"edit, so there is nowhere to write a rule that a developer cannot remove. This holds " +
+	"while the guard is running and not otherwise."
+
 func (c *cursorCLI) Compile(p *policy.Policy, platform string) (Result, error) {
 	res := Result{Agent: c.Agent()}
 
 	for _, r := range p.Rules {
+		if cov, ok := forOtherAgents(r, c.Agent()); ok {
+			res.Coverage = append(res.Coverage, cov)
+			continue
+		}
 		if r.Observes() {
 			res.Coverage = append(res.Coverage, observeCoverage(r))
 			continue
 		}
-		// A counting rule is guard-only everywhere, for a reason that would still
-		// hold if Cursor had a rules file, so it gets the accurate explanation
-		// rather than this compiler's blanket one.
-		if countsRepetitions(r) {
-			res.Coverage = append(res.Coverage, repeatCoverage(r))
-			continue
-		}
-		// A budget is guard-only for the same reason, and on an agent that
-		// exports no cost it is not enforced anywhere at all.
-		if countsSpend(r) {
-			res.Coverage = append(res.Coverage, spendCoverage(r, c.Agent()))
+		// A count, a budget or an environment gets the accurate explanation of why
+		// nothing native could hold it, which would be true even if Cursor had a rules
+		// file, followed by this compiler's own; a budget on an agent that exports no
+		// cost is not enforced anywhere at all.
+		if cov, ok := conditionalCoverage(r, c.Agent()); ok {
+			if cov.Status == StatusGuardOnly {
+				cov.Reason += " " + cursorNoFile
+			}
+			res.Coverage = append(res.Coverage, cov)
 			continue
 		}
 		res.Coverage = append(res.Coverage, Coverage{
 			RuleID:   r.ID,
 			Decision: r.Decision,
 			Status:   StatusGuardOnly,
-			Reason: "Cursor has no administrator-owned file for permission rules. Its " +
-				"permissions, approval mode, sandbox and MCP list all live in files the " +
-				"developer can edit, so there is nowhere to write a rule that a developer " +
-				"cannot remove. This holds while the guard is running and not otherwise.",
+			Reason:   cursorNoFile,
 		})
 	}
 
