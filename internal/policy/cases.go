@@ -43,6 +43,22 @@ type CaseAction struct {
 	// MCPRegistry is the server's standing against the approved list, which the
 	// guard resolves; a case states it.
 	MCPRegistry string `yaml:"mcpRegistry,omitempty"`
+	// RepositoryEnvironment and Branch place the action in a repository the guard
+	// read; RepositoryState says it could not, unknown or unreadable.
+	RepositoryEnvironment string `yaml:"repositoryEnvironment,omitempty"`
+	Branch                string `yaml:"branch,omitempty"`
+	RepositoryState       string `yaml:"repositoryState,omitempty"`
+}
+
+// repository is the repository a case places its action in, or nil when it states none.
+func (c CaseAction) repository() *RepositoryContext {
+	switch {
+	case c.RepositoryState != "":
+		return &RepositoryContext{State: c.RepositoryState}
+	case c.RepositoryEnvironment != "" || c.Branch != "":
+		return &RepositoryContext{State: RepositoryResolved, Environment: c.RepositoryEnvironment, Branch: c.Branch}
+	}
+	return nil
 }
 
 // CaseExpect is the decision a case requires. Rule, when given, must be the rule that
@@ -132,6 +148,7 @@ func (c *Cases) Run(p *Policy) []CaseResult {
 			MCPTool:     tc.Action.MCPTool,
 			Environment: tc.Action.Environment,
 			MCPStanding: tc.Action.MCPRegistry,
+			Repository:  tc.Action.repository(),
 			History:     &History{},
 			Spend:       &Spend{},
 		}

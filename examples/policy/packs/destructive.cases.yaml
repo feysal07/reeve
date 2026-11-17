@@ -1,0 +1,16 @@
+cases:
+  - name: a recursive force delete asks
+    action: {kind: shell, command: "rm -rf build/"}
+    expect: {effect: ask, rule: destructive-delete}
+  - name: force-pushing main asks
+    action: {kind: shell, command: "git push --force origin main"}
+    expect: {effect: ask, rule: rewrite-history}
+  - name: filter-repo asks
+    action: {kind: shell, command: "git filter-repo --path secrets.txt --invert-paths"}
+    expect: {effect: ask, rule: history-rewrite-tools}
+  - name: a hard reset asks
+    action: {kind: shell, command: "git reset --hard HEAD~1"}
+    expect: {effect: ask, rule: discard-working-tree}
+  - name: removing one file goes ahead
+    action: {kind: shell, command: "rm build.log"}
+    expect: {effect: allow}

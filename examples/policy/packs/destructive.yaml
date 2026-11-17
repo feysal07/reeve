@@ -1,0 +1,85 @@
+# Destructive commands: deleting files, rewriting history, discarding work.
+#
+# The baseline's destructive rules, as a pack an organisation can adopt without the rest
+# of the baseline. Kept identical to the baseline's rules by a test, so the two cannot
+# drift apart.
+version: 1
+name: destructive
+default: allow
+
+rules:
+  - id: destructive-delete
+    description: Recursive force delete
+    decision: ask
+    reason: >-
+      A recursive force delete is unrecoverable and, when a path is wrong or a
+      variable is empty, removes far more than intended. Check the path before
+      letting this through.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "rm -rf"
+        - "rm -fr"
+        - "Remove-Item -Recurse -Force"
+
+  - id: rewrite-history
+    description: Rewriting history on a shared branch
+    decision: ask
+    reason: >-
+      This rewrites history on a branch other people pull from. Confirm nobody else
+      is working from it.
+    # Narrowed to protected branches. Force-pushing your own feature branch is
+    # routine and no longer prompts, including with --force-with-lease, which the
+    # earlier rule punished despite it being the safer idiom.
+    #
+    # The two fields are combined with AND: a force-push form, and a protected
+    # branch named in the command.
+    #
+    # Known gap: `git push --force` with an upstream already configured names no
+    # branch, so it is not caught. Catching that needs the current branch, which is
+    # not in the command line. Widening the rule to compensate would put us back
+    # where we started.
+    match:
+      kind: [shell]
+      command:
+        - "*push*--force*"
+        - "*push*-f *"
+        - "*--force*push*"
+      commandRuns:
+        - " main"
+        - " master"
+        - " develop"
+        - " release"
+        - "+main"
+        - "+master"
+
+  - id: history-rewrite-tools
+    description: Rewriting history wholesale
+    decision: ask
+    reason: >-
+      These rewrite every commit they touch. They are almost never part of ordinary
+      work, so a prompt costs nothing and catching a mistake is worth a great deal.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "filter-branch"
+        - "filter-repo"
+
+  - id: discard-working-tree
+    description: Discarding uncommitted work
+    decision: ask
+    reason: >-
+      This throws away changes that are not committed anywhere, including work you
+      may not have looked at yet.
+    match:
+      kind: [shell]
+      commandRuns:
+        - "git checkout -- ."
+        - "git clean -fd"
+        - "git restore ."
+        # Moved here from rewrite-history, where it never belonged: a hard reset
+        # discards uncommitted work rather than rewriting published history. It is
+        # left in place rather than narrowed because destroying work nobody has
+        # committed is the most common way an agent loses something, and the command
+        # line does not say whether there was any.
+        - "reset --hard"

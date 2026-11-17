@@ -2,6 +2,7 @@ package policy
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -122,5 +123,50 @@ func TestEveryPackShipsWithCases(t *testing.T) {
 	}
 	if n == 0 {
 		t.Fatal("no packs found")
+	}
+}
+
+// TestThePacksCarvedFromTheBaselineStayIdenticalToIt. The secrets and destructive packs
+// are the baseline's own rules, for an organisation that wants them without the rest. A
+// fix made to one copy and not the other would leave whichever was adopted weaker, with
+// nothing to say so.
+func TestThePacksCarvedFromTheBaselineStayIdenticalToIt(t *testing.T) {
+	base, err := Load("../../examples/policy/baseline.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Rule{}
+	for _, r := range base.Rules {
+		byID[r.ID] = r
+	}
+	// Both ways: every rule in the pack is the baseline's, and every one of the
+	// baseline's rules the pack is for is in it. Found in review: checked one way, a
+	// rule added to the baseline later would leave the pack weaker in silence.
+	want := map[string][]string{
+		"secrets":     {"read-secrets", "print-secrets"},
+		"destructive": {"destructive-delete", "rewrite-history", "history-rewrite-tools", "discard-working-tree"},
+	}
+	for pack, ids := range want {
+		p, err := Load("../../examples/policy/packs/" + pack + ".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, r := range p.Rules {
+			got = append(got, r.ID)
+		}
+		if strings.Join(got, ",") != strings.Join(ids, ",") {
+			t.Errorf("%s holds %v, want %v", pack, got, ids)
+		}
+		for _, r := range p.Rules {
+			b, ok := byID[r.ID]
+			if !ok {
+				t.Errorf("%s: %s is not in the baseline", pack, r.ID)
+				continue
+			}
+			if !reflect.DeepEqual(r, b) {
+				t.Errorf("%s: %s differs from the baseline's", pack, r.ID)
+			}
+		}
 	}
 }

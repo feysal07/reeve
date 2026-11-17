@@ -1,0 +1,58 @@
+# Git: pushes to protected branches of production repositories.
+#
+# Matched on the repository an action works in and the branch a push lands on, which the
+# guard reads from .git itself (see docs/ENFORCEMENT.md, "Repositories and branches").
+# The environment comes from the resource registry's repositories lists; a remote none
+# lists is unknown. git push origin HEAD:main from a feature branch is a push to main.
+#
+# Each rule matches any command that runs git and mentions push, not the literal words
+# "git push", which git -C . push, two spaces or /usr/bin/git would walk past. A push the
+# guard cannot read plainly, chained, quoted or with options it does not follow, is
+# unknown and is refused by the first rule, which does not name unknown; so is any git
+# command with quotes that mentions push, such as a commit message about pushing. Write
+# that commit with -F, or relax the rule, if it gets in the way.
+version: 1
+name: git
+default: allow
+
+rules:
+  - id: push-to-protected-production-branch
+    description: Pushing to a protected branch of a production repository
+    decision: deny
+    reason: >-
+      This pushes straight to a protected branch of a production repository. Open a
+      pull request instead, so somebody reviews it before it lands.
+    match:
+      kind: [shell]
+      commandRuns: ["git"]
+      commandContains: ["push"]
+      repository: {environment: [production], branch: [main, master, "release/*"]}
+
+  - id: force-push-production
+    description: Force-pushing, with -f, --force or a +refspec, to a production repository
+    decision: ask
+    reason: >-
+      A force-push rewrites history that others may already have, in a production
+      repository.
+    match:
+      kind: [shell]
+      commandRuns: ["git"]
+      commandContains: ["push"]
+      command: ["*push* -f*", "*push* --force*", "*push* +*"]
+      repository: {environment: [production]}
+
+  # A push the guard cannot place at all, chained, quoted, or through a shell, is
+  # refused by the rule above, which does not name unknown: an input a rule depends on
+  # and cannot read refuses. This one asks about a push it can place to a remote that
+  # no environment lists.
+  - id: push-to-unlisted-repository
+    description: Pushing to a repository no environment lists
+    decision: ask
+    reason: >-
+      This repository is on none of the resource registry's lists, so Reeve cannot tell
+      whether it is production. Check where the push lands.
+    match:
+      kind: [shell]
+      commandRuns: ["git"]
+      commandContains: ["push"]
+      repository: {environment: [unknown]}
