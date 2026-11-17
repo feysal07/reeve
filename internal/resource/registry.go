@@ -20,6 +20,7 @@ package resource
 import (
 	"fmt"
 	"os"
+	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -258,4 +259,34 @@ func DefaultPaths(goos, programData, home string) []string {
 		out = append(out, home+"/.reeve/resources.yaml")
 	}
 	return out
+}
+
+// RepositoryEnvironment names the environment whose repositories list matches a
+// normalised remote, such as github.com/acme/payments. The list was accepted and ignored
+// until v0.7.0; a remote no environment lists is unknown, which a rule can name. A remote
+// two environments list is unknown too: found in review, the first match won, so the
+// answer depended on the order of the file.
+func (r *Registry) RepositoryEnvironment(remote string) string {
+	if r == nil || remote == "" {
+		return EnvUnknown
+	}
+	found := ""
+	for _, e := range r.Environments {
+		for _, p := range e.Repositories {
+			pat := NormaliseRemote(p)
+			if !strings.Contains(p, "://") && !strings.Contains(p, "@") {
+				pat = strings.ToLower(strings.Trim(p, "/"))
+			}
+			if ok, _ := path.Match(pat, remote); ok {
+				if found != "" && found != e.Name {
+					return EnvUnknown
+				}
+				found = e.Name
+			}
+		}
+	}
+	if found == "" {
+		return EnvUnknown
+	}
+	return found
 }

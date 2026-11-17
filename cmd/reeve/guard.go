@@ -116,6 +116,9 @@ func runGuard(args []string) error {
 	if pol.NeedsMCPStanding() {
 		resolveMCPStanding(&act, *mcpRegistryPath)
 	}
+	if pol.NeedsRepository() {
+		resolveRepository(&act, *resourcesPath)
+	}
 
 	// Read what came before, but only when a rule asks. Most policies never do, and
 	// every tool call would otherwise pay to open and parse a file that grows all
@@ -428,13 +431,19 @@ type decisionRecord struct {
 	// MCPStanding is where the server stood against the approved list, when a rule
 	// asked, so a replay decides on what the guard knew rather than refusing an MCP
 	// call it cannot resolve after the fact.
-	MCPStanding string        `json:"mcpStanding,omitempty"`
-	Environment string        `json:"environment,omitempty"`
-	EnvDetail   string        `json:"environmentDetail,omitempty"`
-	Effect      policy.Effect `json:"effect"`
-	RuleID      string        `json:"ruleId,omitempty"`
-	Reason      string        `json:"reason,omitempty"`
-	PolicyFile  string        `json:"policyFile,omitempty"`
+	MCPStanding string `json:"mcpStanding,omitempty"`
+	// Repository, Branch and RepositoryEnvironment are the repository an action worked
+	// in, when a rule asked: the remote, with any credential in its URL already removed,
+	// the branch a push landed on, and the environment the registry put it in.
+	Repository            string        `json:"repository,omitempty"`
+	Branch                string        `json:"branch,omitempty"`
+	RepositoryEnvironment string        `json:"repositoryEnvironment,omitempty"`
+	Environment           string        `json:"environment,omitempty"`
+	EnvDetail             string        `json:"environmentDetail,omitempty"`
+	Effect                policy.Effect `json:"effect"`
+	RuleID                string        `json:"ruleId,omitempty"`
+	Reason                string        `json:"reason,omitempty"`
+	PolicyFile            string        `json:"policyFile,omitempty"`
 	// ReeveVersion is the build that made the decision. A log shared from somebody
 	// else's machine carried nothing to say it came from the very first build, so
 	// its gaps were read as defects in the current one.
@@ -543,6 +552,12 @@ func newDecisionRecord(a policy.Action, d policy.Decision, source string, elapse
 		DryRun:       notApplied,
 		Observe:      notApplied && d.Observed != nil,
 		Observed:     observed,
+	}
+	if r := a.Repository; r != nil {
+		rec.Repository, rec.Branch, rec.RepositoryEnvironment = r.Remote, r.Branch, r.Environment
+		if r.State == policy.RepositoryUnknown || r.State == policy.RepositoryUnreadable {
+			rec.RepositoryEnvironment = r.State
+		}
 	}
 	if a.MCPServer != "" {
 		rec.CWD = a.CWD

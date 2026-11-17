@@ -851,6 +851,46 @@ unreadable registry leaves everything `unknown` rather than stopping work.
 Resolution reads local files only and costs roughly a millisecond, which stays well
 inside every agent's hook timeout.
 
+### Repositories and branches
+
+A rule can match the repository an action works in, and the branch:
+
+```yaml
+- id: production-main
+  decision: ask
+  match:
+    kind: [shell]
+    commandRuns: ["git push"]
+    repository: {environment: [production], branch: [main, "release/*"]}
+```
+
+The guard reads the repository from `.git` itself, with no git subprocess, because
+running git would run whatever hooks and aliases the repository chose. It follows a
+worktree's `.git` file to its own HEAD and the shared config, `include.path`,
+`insteadOf` and `pushInsteadOf`, `pushRemote` and `remote.pushDefault`, and simple git
+aliases. The branch is the one a push lands on: `git push origin HEAD:main` from a
+feature branch is a push to `main`. The remote is normalised to `host/path`, so the scp,
+ssh and https forms of one repository are equal, and anything before the host, a token
+in an `https://user:token@` URL included, is gone before it is matched or logged.
+
+The environment comes from the resource registry's `repositories` lists, globs over the
+normalised remote such as `github.com/acme/payments*`; a remote none lists is `unknown`.
+It is kept apart from `environment`, which is what a command reaches, so a production
+rule on infrastructure does not start asking on every `ls` inside a production
+repository. Not being in a repository matches nothing.
+
+The reader is conservative on purpose. Only a plain `git push [-u|-f|-n|-v|-q|...]
+[remote [one refspec]]` is read; anything else that involves git, chained with `&&` or
+`;`, quoted, run through `sh -c` or `xargs`, given `-c` or `-C`, a full path to git, an
+environment prefix, `--all`, `--mirror`, `-o`, a remote with two URLs or configured push
+refspecs, is `unknown`, and so is a hook environment that sets `GIT_DIR` or `GIT_CONFIG*`.
+`unknown` refuses a repository rule where the rest of it matches, unless the rule names
+`unknown` itself. A `.git` that exists and cannot be read, or a resource registry that
+cannot be read, refuses too. `includeIf` sections are read unconditionally, so the reader
+sees every remote and rewrite that might apply. The decision log
+records the repository, the branch and its environment; the read takes about 20
+microseconds.
+
 ### MCP servers reach environments too
 
 A Kubernetes MCP server is a second door into every cluster its kubeconfig can reach,

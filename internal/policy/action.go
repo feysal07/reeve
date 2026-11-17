@@ -75,6 +75,9 @@ type Action struct {
 	// of the Standing values, resolved by the guard before Evaluate. Empty when no rule
 	// asked, which a registry rule refuses rather than reads as approved.
 	MCPStanding string `json:"-"`
+	// Repository is the repository the action works in, resolved by the guard before
+	// Evaluate when a rule asks. Nil when none did, which a repository rule refuses.
+	Repository *RepositoryContext `json:"-"`
 
 	// Environment is what the action is about to touch, resolved from the command
 	// and from the tool's own current state rather than guessed from the text. It is

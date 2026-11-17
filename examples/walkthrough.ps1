@@ -802,6 +802,32 @@ foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$
 Check "the guard refuses an MCP server the approved list refuses, by what it runs" `
     (($regExits -join ":") -eq "2:0") "exits were $($regExits -join ', '); want 2 and 0"
 
+# A push to main of a production repository, which no rule could express until v0.7.0:
+# the guard knew neither the repository nor the branch. Read from .git with no git
+# subprocess, the push lands on main though a feature branch is checked out, and the
+# token in the remote's URL never reaches the decision log.
+$repoHome = Join-Path $Sandbox "repo-home"
+$repoDir = Join-Path $repoHome "payments"
+New-Item -ItemType Directory -Force (Join-Path $repoDir ".git") | Out-Null
+Write-Text (Join-Path $repoDir ".git\HEAD") "ref: refs/heads/feature`n"
+Write-Text (Join-Path $repoDir ".git\config") ("[remote `"origin`"]`n`turl = https://bot:ghp_WALKTHROUGHTOKEN@github.com/acme/payments.git`n")
+Write-Text (Join-Path $Sandbox "repo-resources.yaml") ("version: 1`nenvironments:`n  - name: production`n    repositories: [`"github.com/acme/payments`"]`n")
+Write-Text (Join-Path $Sandbox "repo-policy.yaml") ("version: 1`nrules:`n  - id: production-main`n    decision: deny`n    match:`n      repository: {environment: [production], branch: [main]}`n")
+$repoLog = Join-Path $Sandbox "repo-decisions.jsonl"
+$saved = @{}
+foreach ($k in "HOME", "USERPROFILE") { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+$repoExits = foreach ($cmd in "git push origin HEAD:main", "git push origin feature") {
+    foreach ($k in "HOME", "USERPROFILE") { [Environment]::SetEnvironmentVariable($k, $repoHome) }
+    $payload = '{"session_id":"g","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"' + $cmd + '"},"cwd":' + (ConvertTo-Json $repoDir) + '}'
+    $null = ($payload | & $reeve guard --agent claude-code --policy (Join-Path $Sandbox "repo-policy.yaml") --resources (Join-Path $Sandbox "repo-resources.yaml") --log $repoLog 2>&1)
+    $LASTEXITCODE
+}
+foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+$repoLogText = Get-Content $repoLog -Raw -ErrorAction SilentlyContinue
+Check "a push to main of a production repository is refused, and the token stays out of the log" `
+    ((($repoExits -join ":") -eq "2:0") -and ($repoLogText -match '"repository":"github.com/acme/payments"') -and -not ($repoLogText -match "WALKTHROUGHTOKEN")) `
+    "exits were $($repoExits -join ', '); want 2 and 0"
+
 # A policy is code, and a cases file is its tests: named actions and the decision each
 # must get. The baseline and every pack ship with one, so a change to them is checked
 # before anybody's agent finds out. A run that printed FAIL and exited zero would pass
