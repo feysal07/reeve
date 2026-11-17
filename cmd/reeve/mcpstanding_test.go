@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,7 +181,11 @@ func TestTheGuardResolvesStandingBeforeItDecides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.WriteString(`{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"mcp__kube__pods_list","tool_input":{},"cwd":"` + project + `"}`)
+	// The directory JSON-encoded: found by CI on Windows, a path pasted in raw put its
+	// backslashes into the payload unescaped, and the guard refused a request it could
+	// not parse and exited the test.
+	cwd, _ := json.Marshal(project)
+	w.WriteString(`{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"mcp__kube__pods_list","tool_input":{},"cwd":` + string(cwd) + `}`)
 	w.Close()
 	old := os.Stdin
 	os.Stdin = r
