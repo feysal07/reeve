@@ -222,7 +222,7 @@ func runAuditRotate(args []string) error {
 		return fmt.Errorf("--keep cannot be negative")
 	}
 
-	now := time.Now()
+	now := auditNow()
 	// The outcome log beside it goes with it, under the same stamp, and is pruned on
 	// the same schedule. Found in the v0.7.0 audit: it was never rotated or pruned, so
 	// it grew for ever and kept the outcomes of decisions retention had removed.
@@ -298,6 +298,12 @@ func runAuditRotate(args []string) error {
 	}
 	return outErr
 }
+
+// auditNow is the clock rotation stamps by. A variable so a test can name the stamp a
+// rotation will take rather than race the clock for it: found by CI, a test that
+// planted a clash across the next three seconds of stamps was outrun on a slow Windows
+// runner and rotated past them.
+var auditNow = time.Now
 
 // pathTaken reports that anything at all is at p: a file, a directory or a link.
 func pathTaken(p string) bool {

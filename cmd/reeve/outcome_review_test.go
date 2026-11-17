@@ -53,13 +53,12 @@ func TestAClashRefusesTheRotationBeforeAnythingMoves(t *testing.T) {
 	log := filepath.Join(dir, "decisions.jsonl")
 	logDenies(t, log, 1)
 	outcomes := telemetry.OutcomesPathFor(log)
-	// Every stamp in the next few seconds: a test cannot know the millisecond.
-	start := time.Now().Truncate(time.Second)
-	for ms := 0; ms < 3000; ms++ {
-		p := audit.CompanionSegmentPath(outcomes, start.Add(time.Duration(ms)*time.Millisecond))
-		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	// The stamp the rotation will take, named rather than raced for.
+	at := time.Date(2026, 11, 1, 3, 0, 0, 0, time.UTC)
+	auditNow = func() time.Time { return at }
+	t.Cleanup(func() { auditNow = time.Now })
+	if err := os.WriteFile(audit.CompanionSegmentPath(outcomes, at), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := captureStdout(t, func() error { return runAuditRotate([]string{log}) }); err == nil {
 		t.Fatal("rotated despite a clash")
