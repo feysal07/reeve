@@ -887,6 +887,31 @@ REG_APPROVED=$(registry_call "$SANDBOX/mcp-registry-approved.yaml")
     check "the guard refuses an MCP server the approved list refuses, by what it runs" 1 ||
     check "the guard refuses an MCP server the approved list refuses, by what it runs" 0 "exits were refused $REG_DENIED, approved $REG_APPROVED; want 2 and 0"
 
+# A push to main of a production repository, which no rule could express until v0.7.0:
+# the guard knew neither the repository nor the branch. Read from .git with no git
+# subprocess, the push lands on main though a feature branch is checked out, and the
+# token in the remote's URL never reaches the decision log.
+REPO_DIR="$SANDBOX/repo-home/payments"
+mkdir -p "$REPO_DIR/.git"
+printf 'ref: refs/heads/feature\n' > "$REPO_DIR/.git/HEAD"
+printf '[remote "origin"]\n\turl = https://bot:ghp_WALKTHROUGHTOKEN@github.com/acme/payments.git\n' > "$REPO_DIR/.git/config"
+printf 'version: 1\nenvironments:\n  - name: production\n    repositories: ["github.com/acme/payments"]\n' > "$SANDBOX/repo-resources.yaml"
+printf 'version: 1\nrules:\n  - id: production-main\n    decision: deny\n    match:\n      repository: {environment: [production], branch: [main]}\n' > "$SANDBOX/repo-policy.yaml"
+repo_push() {
+    printf '{"session_id":"g","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"},"cwd":"%s"}' "$1" "$REPO_DIR" |
+        env HOME="$SANDBOX/repo-home" USERPROFILE="$SANDBOX/repo-home" "$REEVE" guard --agent claude-code \
+            --policy "$SANDBOX/repo-policy.yaml" --resources "$SANDBOX/repo-resources.yaml" --log "$SANDBOX/repo-decisions.jsonl" >/dev/null 2>&1
+    echo $?
+}
+REPO_MAIN=$(repo_push "git push origin HEAD:main")
+REPO_FEATURE=$(repo_push "git push origin feature")
+if [ "$REPO_MAIN:$REPO_FEATURE" = "2:0" ] && grep -q '"repository":"github.com/acme/payments"' "$SANDBOX/repo-decisions.jsonl" &&
+    ! grep -q WALKTHROUGHTOKEN "$SANDBOX/repo-decisions.jsonl"; then
+    check "a push to main of a production repository is refused, and the token stays out of the log" 1
+else
+    check "a push to main of a production repository is refused, and the token stays out of the log" 0 "exits main $REPO_MAIN, feature $REPO_FEATURE; want 2 and 0"
+fi
+
 # A policy is code, and a cases file is its tests: named actions and the decision each
 # must get. The baseline and every pack ship with one, so a change to them is checked
 # before anybody's agent finds out. A run that printed FAIL and exited zero would pass

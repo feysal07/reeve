@@ -147,6 +147,9 @@ type Match struct {
 
 	// MCP matches an MCP call on where its server stands against the approved list.
 	MCP *MCPMatch `yaml:"mcp,omitempty"`
+
+	// Repository matches the repository an action works in, and the branch.
+	Repository *RepositoryMatch `yaml:"repository,omitempty"`
 }
 
 // personScoped reports whether any counting match on this rule is totalled per person.
@@ -325,6 +328,11 @@ func Parse(b []byte) (*Policy, error) {
 		}
 		if r.Match.MCP != nil {
 			if err := r.Match.MCP.validate(r.ID); err != nil {
+				return nil, err
+			}
+		}
+		if r.Match.Repository != nil {
+			if err := r.Match.Repository.validate(r.ID); err != nil {
 				return nil, err
 			}
 		}
@@ -577,6 +585,22 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 			}
 			continue
 		}
+		// The repository could not be read, or was never resolved. Refused where the
+		// rest of the rule matches, because a .git that cannot be read is not a
+		// directory outside any repository.
+		if r.Match.Repository != nil && r.Match.Repository.unresolved(a) && r.Match.matchesBesidesRepository(a) {
+			if stricter(EffectDeny, d.Effect) || d.RuleID == "" {
+				d.Effect = EffectDeny
+				d.RuleID = r.ID
+				d.Reason = "This rule matches on the repository an action works in and the " +
+					"branch it reaches, and that could not be worked out"
+				if a.Repository != nil && a.Repository.Detail != "" {
+					d.Reason += ": " + a.Repository.Detail
+				}
+				d.Reason += ". Refusing rather than assuming it is not the repository the rule is about."
+			}
+			continue
+		}
 		// Only when the rest of the rule matches. A gap in the log is not a reason to
 		// refuse an action the rule was never about.
 		if r.Match.Repeated != nil && a.History.Incomplete(a, *r.Match.Repeated, a.now()) && r.Match.matchesBesidesHistory(a) {
@@ -612,6 +636,12 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 		}
 	}
 	return d
+}
+
+// matchesBesidesRepository reports whether every condition but the repository matches.
+func (m Match) matchesBesidesRepository(a Action) bool {
+	m.Repository = nil
+	return m.matches(a)
 }
 
 // matchesBesidesMCP reports whether every condition but registry standing matches.
@@ -670,6 +700,9 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if m.MCP != nil && !m.MCP.matches(a) {
+		return false
+	}
+	if m.Repository != nil && !m.Repository.matches(a) {
 		return false
 	}
 	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {

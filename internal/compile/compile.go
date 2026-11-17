@@ -337,6 +337,8 @@ func conditionalCoverage(r policy.Rule, agent model.AgentID) (Coverage, bool) {
 		return environmentCoverage(r), true
 	case r.Match.MCP != nil:
 		return registryCoverage(r), true
+	case r.Match.Repository != nil:
+		return repositoryCoverage(r), true
 	}
 	return Coverage{}, false
 }
@@ -353,6 +355,22 @@ func environmentCoverage(r policy.Rule) Coverage {
 			"own configuration can see. Emitting the rest of the match without the " +
 			"environment would apply it in every environment, a different rule, so " +
 			"nothing is emitted. It holds only while the guard is running.",
+	}
+}
+
+// repositoryCoverage is the entry every compiler returns for a rule on the repository an
+// action works in, which the guard reads from .git at the moment of the call and no
+// agent's own configuration can see. Emitted without it, "ask before pushing to main of a
+// production repository" would ask before every push everywhere.
+func repositoryCoverage(r policy.Rule) Coverage {
+	return Coverage{
+		RuleID:   r.ID,
+		Decision: r.Decision,
+		Status:   StatusGuardOnly,
+		Reason: "This rule matches on the repository an action works in and the branch it " +
+			"pushes to, which the guard reads from .git at the moment of the call and which no " +
+			"agent's own configuration can see. Emitting the rest of the match would apply it " +
+			"in every repository, so nothing is emitted. It holds only while the guard is running.",
 	}
 }
 
