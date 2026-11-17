@@ -50,7 +50,7 @@ The sandbox has a home directory of its own, which it points the agents at for t
 duration. Nothing you have installed is read, and the counts below are the same
 whatever is on the machine running it.
 
-It ends with a summary like `All 147 checks passed.` and exits non-zero if any did not,
+It ends with a summary like `All 149 checks passed.` and exits non-zero if any did not,
 so it doubles as a smoke test. Add `--quiet` (or `-Quiet`) for just the checks.
 
 The shell version uses `jq` or `python3` to read the scan's JSON. With neither
@@ -98,6 +98,23 @@ treat another directory as the project root, `--json` for the full report, and
 
 The column that matters is `managed config`. Anything a developer can edit is a
 default, not a control, and the findings say so.
+
+An organisation can set its own floor for each agent's release in the policy:
+
+```yaml
+settings:
+  agents:
+    claude-code: {minVersion: "2.1.110"}
+```
+
+`reeve scan` reads it from `--policy`, or from the policy the guard would find, and
+names an install below it, and one whose version it cannot read as unknown rather than
+passing; `reeve posture` counts those machines per agent, and `reeve doctor` notes them
+beside each registered agent. A minimum that is not a version is refused when the policy
+loads. Today only Claude Code's installed version is read, so a minimum for another
+agent reports every install of it as unknown. No agent is known to enforce a minimum from
+its own managed configuration, so `reeve policy compile` writes nothing for it and says
+so.
 
 ### 2. Policy
 

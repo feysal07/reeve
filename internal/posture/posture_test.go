@@ -440,3 +440,32 @@ func TestUTF16SaysWhatIsWrong(t *testing.T) {
 		t.Errorf("reason = %q, want it to name the encoding", bad[0].Reason)
 	}
 }
+
+// TestPostureCountsMachinesBelowThePolicyMinimumPerAgent. The finding scan raises for an
+// install below settings.agents.<id>.minVersion reaches the fleet view as a count per
+// agent, out of the machines running that agent.
+func TestPostureCountsMachinesBelowThePolicyMinimumPerAgent(t *testing.T) {
+	below := model.Finding{ID: "version.below-minimum", Severity: model.SeverityHigh,
+		Agent: model.AgentClaudeCode, Title: "Older than the minimum version policy requires"}
+	var loaded []Loaded
+	for i, host := range []string{"a", "b", "c"} {
+		r := report(host, base, agent(model.AgentClaudeCode, "Claude Code", false))
+		if i < 2 {
+			r.Findings = []model.Finding{below}
+		}
+		loaded = append(loaded, Loaded{Path: host, Report: r})
+	}
+	f, err := Aggregate(loaded, nil, Options{Now: base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range f.Findings {
+		if s.ID == "version.below-minimum" && s.Agent == model.AgentClaudeCode {
+			if s.Machines != 2 {
+				t.Errorf("machines below the minimum = %d, want 2", s.Machines)
+			}
+			return
+		}
+	}
+	t.Fatalf("no per-agent count of machines below the minimum: %+v", f.Findings)
+}

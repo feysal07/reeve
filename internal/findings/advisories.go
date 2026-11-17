@@ -3,7 +3,6 @@ package findings
 import (
 	_ "embed"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/feysal07/reeve/internal/model"
+	"github.com/feysal07/reeve/internal/semver"
 )
 
 //go:embed advisories.yaml
@@ -224,83 +224,10 @@ func orUnknown(s string) string {
 	return "unreadable version " + strconv.Quote(s)
 }
 
-// version is a release number with an optional pre-release suffix, as the agents write
-// them: "2.1.163", "v0.39.1", "0.40.0-preview.2", "2.1.278 (Claude Code)".
-type version struct {
-	n   [3]int
-	pre []string
-}
+// version and its helpers are the shared ones, so a minimum version in a policy and a
+// fix in the advisory table are compared the same way.
+type version = semver.Version
 
-var versionRE = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?`)
+func parseVersion(s string) (version, bool) { return semver.Parse(s) }
 
-func parseVersion(s string) (version, bool) {
-	m := versionRE.FindStringSubmatch(strings.TrimSpace(s))
-	if m == nil {
-		return version{}, false
-	}
-	var v version
-	for i := 0; i < 3; i++ {
-		n, err := strconv.Atoi(m[i+1])
-		if err != nil {
-			return version{}, false
-		}
-		v.n[i] = n
-	}
-	if m[4] != "" {
-		v.pre = strings.Split(m[4], ".")
-	}
-	return v, true
-}
-
-// compareVersions orders two versions the way semantic versioning does: numbers first,
-// and a pre-release before the release it precedes, so 0.40.0-preview.2 is older than
-// 0.40.0 and newer than 0.39.1.
-func compareVersions(a, b version) int {
-	for i := 0; i < 3; i++ {
-		if a.n[i] != b.n[i] {
-			if a.n[i] < b.n[i] {
-				return -1
-			}
-			return 1
-		}
-	}
-	switch {
-	case len(a.pre) == 0 && len(b.pre) == 0:
-		return 0
-	case len(a.pre) == 0:
-		return 1
-	case len(b.pre) == 0:
-		return -1
-	}
-	for i := 0; i < len(a.pre) && i < len(b.pre); i++ {
-		if c := comparePre(a.pre[i], b.pre[i]); c != 0 {
-			return c
-		}
-	}
-	switch {
-	case len(a.pre) < len(b.pre):
-		return -1
-	case len(a.pre) > len(b.pre):
-		return 1
-	}
-	return 0
-}
-
-func comparePre(a, b string) int {
-	an, aerr := strconv.Atoi(a)
-	bn, berr := strconv.Atoi(b)
-	switch {
-	case aerr == nil && berr == nil:
-		if an < bn {
-			return -1
-		} else if an > bn {
-			return 1
-		}
-		return 0
-	case aerr == nil:
-		return -1
-	case berr == nil:
-		return 1
-	}
-	return strings.Compare(a, b)
-}
+func compareVersions(a, b version) int { return semver.Compare(a, b) }

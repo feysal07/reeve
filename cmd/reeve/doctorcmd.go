@@ -7,6 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/feysal07/reeve/internal/adapter"
+	"github.com/feysal07/reeve/internal/scan"
 	"io"
 	"os"
 	"os/exec"
@@ -96,6 +98,9 @@ func runDoctor(args []string) error {
 	}
 
 	rep.Policy = checkPolicy(policyPathFor(registered, opts))
+	if rep.Policy.OK {
+		markBelowMinimum(&rep, rep.Policy.Path)
+	}
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -125,6 +130,11 @@ type doctorReport struct {
 }
 
 type agentHealth struct {
+	// Version says this agent is below the minimum version policy requires, or that
+	// its version could not be read against one. Empty when it meets the minimum or
+	// policy sets none.
+	Version string `json:"versionProblem,omitempty"`
+
 	Agent      model.AgentID `json:"agent"`
 	Name       string        `json:"name"`
 	Registered bool          `json:"registered"`
@@ -595,6 +605,9 @@ func renderDoctor(r doctorReport) {
 			mode = "enforcing"
 		}
 		fmt.Printf("  %-20s registered, %s\n", a.Name, mode)
+		if a.Version != "" {
+			fmt.Printf("  %-20s %s\n", "", a.Version)
+		}
 		fmt.Printf("  %-20s %s\n", "", a.Path)
 
 		if a.Answered {
@@ -739,5 +752,48 @@ func displayName(a model.AgentID) string {
 		return "Cursor"
 	default:
 		return strings.ReplaceAll(string(a), "-", " ")
+	}
+}
+
+// markBelowMinimum notes, on each registered agent, an install below the minimum version
+// the policy requires, or one whose version could not be read against it. The guard
+// working is no use on a release the organisation has ruled out, and doctor is where
+// somebody looks to see whether this machine is in order.
+//
+// It does not change doctor's exit code, on purpose: doctor's code says whether the guard
+// is deciding actions on this machine, and gating on releases is reeve scan --fail-on's
+// job, where version.below-minimum is high. A check that could not run is said on each
+// registered agent rather than left out, which would read as every one meeting it.
+func markBelowMinimum(rep *doctorReport, policyPath string) {
+	mins, err := minVersions(policyPath)
+	if err == nil && len(mins) == 0 {
+		return
+	}
+	problem := map[model.AgentID]string{}
+	if err == nil {
+		var report model.Report
+		report, err = scan.Run(context.Background(), adapter.NewRegistry(supportedAdapters()...),
+			scan.Options{Version: version, MinVersions: mins})
+		if err == nil {
+			for _, f := range report.Findings {
+				switch f.ID {
+				case "version.below-minimum", "version.minimum-unknown":
+					problem[f.Agent] = f.Detail
+				}
+			}
+		}
+	}
+	if err != nil {
+		for i := range rep.Agents {
+			if rep.Agents[i].Registered {
+				rep.Agents[i].Version = "minimum versions could not be checked: " + err.Error()
+			}
+		}
+		return
+	}
+	for i := range rep.Agents {
+		if p, ok := problem[rep.Agents[i].Agent]; ok && rep.Agents[i].Registered {
+			rep.Agents[i].Version = p
+		}
 	}
 }

@@ -60,6 +60,9 @@ func runPolicyCompile(args []string) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.DisplayName(), err)
 		}
+		if w := compile.MinVersionWarning(p, c.Agent()); w != "" {
+			res.Warnings = append(res.Warnings, w)
+		}
 
 		fmt.Printf("\n%s\n%s\n", c.DisplayName(), strings.Repeat("=", len(c.DisplayName())))
 

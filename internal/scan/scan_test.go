@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/feysal07/reeve/internal/adapter/claudecode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -259,4 +260,60 @@ func TestAHistoryThatCouldNotBeReadInFullIsSaid(t *testing.T) {
 	if h := readGuardHistory(log3, now); h == nil || len(h.Problems) == 0 {
 		t.Fatalf("an over-long line was passed over in silence: %+v", h)
 	}
+}
+
+// TestAScanNamesAnInstallBelowThePolicyMinimum. Through Run, with a real adapter against
+// a sandboxed home: the minimum the caller passes reaches the findings.
+func TestAScanNamesAnInstallBelowThePolicyMinimum(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte("{}\n"), 0o600)
+	os.WriteFile(filepath.Join(home, ".claude", ".last-update-result.json"),
+		[]byte(`{"version_from":"2.1.90","version_to":"2.1.100","outcome":"success"}`+"\n"), 0o600)
+
+	rep, err := Run(context.Background(), adapter.NewRegistry(claudecode.New()), Options{WorkDir: home,
+		MinVersions: map[model.AgentID]string{model.AgentClaudeCode: "2.1.110"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.ID == "version.below-minimum" {
+			return
+		}
+	}
+	t.Fatalf("no below-minimum finding for Claude Code 2.1.100 against 2.1.110: %+v", rep.Findings)
+}
+
+type brokenAdapter struct{}
+
+func (brokenAdapter) ID() model.AgentID   { return model.AgentCodexCLI }
+func (brokenAdapter) DisplayName() string { return "Codex CLI" }
+func (brokenAdapter) Detect(context.Context, adapter.Env) (bool, error) {
+	return true, nil
+}
+func (brokenAdapter) Inspect(context.Context, adapter.Env) (model.Installation, error) {
+	return model.Installation{}, errors.New("config.toml: invalid TOML")
+}
+
+// TestAnAgentThatCouldNotBeInspectedIsUnknownAgainstItsMinimum. Found in review: an agent
+// whose configuration could not be inspected had no installation to compare, and its
+// minimum said nothing: the agent where something is wrong read as meeting the floor.
+func TestAnAgentThatCouldNotBeInspectedIsUnknownAgainstItsMinimum(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rep, err := Run(context.Background(), adapter.NewRegistry(brokenAdapter{}), Options{WorkDir: home,
+		MinVersions: map[model.AgentID]string{model.AgentCodexCLI: "0.40.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.ID == "version.minimum-unknown" && f.Agent == model.AgentCodexCLI {
+			return
+		}
+	}
+	t.Fatalf("no minimum-unknown finding for an agent that could not be inspected: %+v", rep.Findings)
 }

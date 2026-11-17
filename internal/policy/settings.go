@@ -1,5 +1,12 @@
 package policy
 
+import (
+	"fmt"
+
+	"github.com/feysal07/reeve/internal/model"
+	"github.com/feysal07/reeve/internal/semver"
+)
+
 // Settings is the posture an operator wants every agent to be in, as distinct from
 // the per-action rules.
 //
@@ -24,6 +31,42 @@ type Settings struct {
 	MCP       *MCPSettings       `yaml:"mcp,omitempty"`
 	Models    *ModelSettings     `yaml:"models,omitempty"`
 	Guard     *GuardSettings     `yaml:"guard,omitempty"`
+
+	// Agents carries settings per agent, keyed by agent id.
+	Agents map[model.AgentID]AgentSettings `yaml:"agents,omitempty"`
+}
+
+// AgentSettings is what an organisation requires of one agent.
+type AgentSettings struct {
+	// MinVersion is the oldest release the organisation accepts. Scan, posture and
+	// doctor report an install below it, and one whose version cannot be read as
+	// unknown rather than as passing. Today only Claude Code's version is read, so a
+	// minimum for any other agent reports every install as unknown. No agent is known to enforce a minimum from its
+	// own managed configuration, so nothing is compiled for it: a key nobody has seen
+	// the vendor honour would look enforced and be ignored.
+	MinVersion string `yaml:"minVersion"`
+}
+
+// validateAgents refuses a minimum version that cannot mean anything. One nobody can
+// compare against would pass every install in silence, and the floor an organisation
+// wrote would not exist.
+func (s *Settings) validateAgents() error {
+	if s == nil {
+		return nil
+	}
+	known := map[model.AgentID]bool{}
+	for _, a := range model.AllAgents() {
+		known[a] = true
+	}
+	for id, a := range s.Agents {
+		if !known[id] {
+			return fmt.Errorf("settings.agents: %q is not an agent this build knows", id)
+		}
+		if _, ok := semver.ParseExact(a.MinVersion); !ok {
+			return fmt.Errorf("settings.agents.%s.minVersion: %q is not a version, such as 2.1.110", id, a.MinVersion)
+		}
+	}
+	return nil
 }
 
 // TelemetrySettings pins where an agent reports to, so usage and cost cannot be
