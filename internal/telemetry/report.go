@@ -146,6 +146,11 @@ type Report struct {
 	// an ask counted as not seen to run may have run.
 	OutcomeGaps []string `json:"outcomeLogGaps,omitempty"`
 
+	// Identities says how much of what this report attributes to people rests on an
+	// identity the operator's identity provider proved, and how much on the agent's
+	// own claim. Nil when no event named anybody.
+	Identities *IdentityShare `json:"identities,omitempty"`
+
 	ByTeam  []Group `json:"byTeam"`
 	ByAgent []Group `json:"byAgent"`
 	ByUser  []Group `json:"byUser"`
@@ -221,7 +226,9 @@ func AggregateWith(events []Event, from, to time.Time, billing BillingTable) Rep
 		t.add(e)
 	}
 
+	var share IdentityShare
 	for _, e := range events {
+		share.add(e)
 		r.Overall.add(e)
 		bump(team, orUnknown(e.Identity.Team), e)
 		bump(agent, string(e.Agent), e)
@@ -240,6 +247,9 @@ func AggregateWith(events []Event, from, to time.Time, billing BillingTable) Rep
 	r.ByRepo = sortGroups(repo, byCost)
 	r.ByModel = sortGroups(mdl, byCost)
 	r.ByRule = sortGroups(rule, byDecisions)
+	if share.Verified+share.Asserted+share.None > 0 {
+		r.Identities = &share
+	}
 	return r
 }
 
@@ -502,4 +512,46 @@ func withBilling(events []Event, billing BillingTable) []Event {
 		out[i].MarginalUSD, out[i].BillingKnown = b.Marginal(out[i].CostUSD)
 	}
 	return out
+}
+
+// IdentityShare is how much of a report's usage carries a person, and how that person
+// was established.
+//
+// Found in the v0.7.0 audit: the collector stamps an identity verified when a token from
+// the operator's identity provider proved it, and the report mixed those with the ones
+// the agent merely asserted, so a cost per person read the same whether every name in
+// it was proven or every one was the agent's own claim. It describes the evidence, not
+// a charge: nothing here is billing-grade, and it is in the free tier for that reason.
+type IdentityShare struct {
+	// Verified, Asserted and None count usage events by how their person was known.
+	Verified int `json:"verified"`
+	Asserted int `json:"asserted"`
+	None     int `json:"none"`
+	// The equivalent cost of each, so a figure per person can be read for what it is.
+	VerifiedCostUSD float64 `json:"verifiedEquivalentCostUSD"`
+	AssertedCostUSD float64 `json:"assertedEquivalentCostUSD"`
+}
+
+func (s *IdentityShare) add(e Event) {
+	// The guard's decisions are not usage; they carry the identity the guard had
+	// and are counted where decisions are.
+	if e.Kind == KindDecision {
+		return
+	}
+	// The vendor's own figure for a request arrives as a second event beside the one
+	// priced from tokens. Found in review: counted here, it put list price into a
+	// share labelled equivalent cost and counted one request twice.
+	if e.VendorReportedCost() {
+		return
+	}
+	switch {
+	case e.Identity.Email == "" && e.Identity.Subject == "":
+		s.None++
+	case e.Identity.Verified:
+		s.Verified++
+		s.VerifiedCostUSD += e.CostUSD
+	default:
+		s.Asserted++
+		s.AssertedCostUSD += e.CostUSD
+	}
 }

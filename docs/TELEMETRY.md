@@ -266,6 +266,11 @@ the decision log, prints nothing and exits 0. It never reads the tool's input or
 A separate file, because everything that reads the decision log reads each line as a
 decision, and a repetition rule would count each action twice.
 
+The report says how much of what it attributes to people rests on an identity your
+identity provider proved (`reeve collect --auth oidc`) and how much on the agent's own
+claim: `identities` in the JSON, and a line under Usage that says "all asserted" when
+nothing was verified. It describes the evidence, not a charge.
+
 `reeve report --decisions` reads every rotated segment of the decision log inside the
 `--since` window, then the live file. A segment inside the window whose records are
 missing or unreadable is named at the top of the report and in `decisionLogGaps`, because

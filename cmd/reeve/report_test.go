@@ -202,3 +202,19 @@ func TestRetentionIsReportedApartFromLoss(t *testing.T) {
 		t.Errorf("retention reads as loss in the text report:\n%s", out)
 	}
 }
+
+// TestTheReportSaysWhenEveryIdentityIsTheAgentsOwnClaim. A cost per person reads as
+// proven unless the page says it is not.
+func TestTheReportSaysWhenEveryIdentityIsTheAgentsOwnClaim(t *testing.T) {
+	asserted := telemetry.Report{Identities: &telemetry.IdentityShare{Asserted: 3}}
+	out, _ := captureStdout(t, func() error { renderReport(asserted, 5); return nil })
+	if !strings.Contains(out, "all asserted") {
+		t.Errorf("an all-asserted report does not say so:\n%s", out)
+	}
+	mixed := telemetry.Report{Identities: &telemetry.IdentityShare{Verified: 1, Asserted: 1,
+		VerifiedCostUSD: 3, AssertedCostUSD: 1}}
+	out, _ = captureStdout(t, func() error { renderReport(mixed, 5); return nil })
+	if !strings.Contains(out, "1 of 2 usage events") || !strings.Contains(out, "75%") {
+		t.Errorf("a mixed report does not give the share:\n%s", out)
+	}
+}
