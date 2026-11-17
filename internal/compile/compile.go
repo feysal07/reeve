@@ -339,6 +339,12 @@ func conditionalCoverage(r policy.Rule, agent model.AgentID) (Coverage, bool) {
 		return registryCoverage(r), true
 	case r.Match.Repository != nil:
 		return repositoryCoverage(r), true
+	case r.Match.CommitMessage != nil || len(r.Match.EditContains) > 0:
+		return Coverage{RuleID: r.ID, Decision: r.Decision, Status: StatusGuardOnly,
+			Reason: "This rule matches on a commit's message or on what an edit writes, which " +
+				"the guard reads from the request and which no agent's own configuration can " +
+				"see. Emitting the rest of the match would apply it to every commit or every " +
+				"edit, so nothing is emitted. It holds only while the guard is running."}, true
 	}
 	return Coverage{}, false
 }

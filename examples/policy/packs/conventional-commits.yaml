@@ -1,0 +1,32 @@
+# Conventional commits: a commit message the team's history tooling can read.
+#
+# The message is read from the command, -m in either quote, several -m, and the heredoc
+# forms agents write. One that is not in the command, -F with a file or the editor,
+# cannot be read, and so is a reused message, --no-edit, or a commit run through a shell
+# this does not follow; each is asked about rather than passed, because an input a rule
+# depends on and cannot read is not one that passed.
+version: 1
+name: conventional-commits
+default: allow
+
+rules:
+  - id: non-conventional-commit
+    description: A commit message that is not a conventional commit
+    decision: ask
+    reason: >-
+      This commit message does not follow the conventional commits format, such as
+      "fix(api): handle an empty body". Rewrite it before committing.
+    match:
+      kind: [shell]
+      commitMessage:
+        notMatching: '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+'
+
+  - id: unreadable-commit-message
+    description: A commit whose message could not be read from the command
+    decision: ask
+    reason: >-
+      The commit message is in a file, the editor, or reused from another commit, so it
+      could not be checked.
+    match:
+      kind: [shell]
+      commitMessage: {unreadable: true}

@@ -464,6 +464,8 @@ baseline does not cover, each with its cases file beside it:
 | `java` | Editing an applied Liquibase or Flyway changeset, dropping a schema, and building without the tests. |
 | `secrets` | The baseline's rules on reading credential files and printing secrets, on their own. A test keeps them identical to the baseline's. |
 | `destructive` | The baseline's rules on deleting files, rewriting history and discarding work, on their own. A test keeps them identical to the baseline's. |
+| `conventional-commits` | A commit message that is not a conventional commit, read from `-m`, several `-m`, or a heredoc; every commit in a chained command is read; one whose message is in a file, the editor or reused cannot be read and is asked about, not passed. The message is part of the command, which the decision log records. |
+| `test-integrity` | Adding `@MockBean` or `@MockitoBean` to a Java test, matched on what the edit writes, which is never logged. |
 | `git` | Pushes to a protected branch of a production repository (refused), force-pushes there with `-f`, `--force` or a `+refspec` (asked), and pushes to a repository no environment lists (asked), by the repository and branch the guard reads from `.git`. A push it cannot read plainly is refused, and so is a git command with quotes that mentions push. |
 
 Deploy one as it is, or copy its rules into your own policy together with its cases.

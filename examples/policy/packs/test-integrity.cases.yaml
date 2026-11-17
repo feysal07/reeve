@@ -1,0 +1,10 @@
+cases:
+  - name: adding @MockBean to a test asks
+    action: {kind: write, paths: ["/r/src/test/java/acme/OrderServiceIT.java"], editContent: "@MockBean\nprivate PaymentClient payments;"}
+    expect: {effect: ask, rule: mockbean-in-tests}
+  - name: a test without a mock bean goes ahead
+    action: {kind: write, paths: ["/r/src/test/java/acme/OrderServiceIT.java"], editContent: "@Autowired\nprivate PaymentClient payments;"}
+    expect: {effect: allow}
+  - name: '@MockBean in production code is not this pack''s concern'
+    action: {kind: write, paths: ["/r/src/main/java/acme/Config.java"], editContent: "@MockBean"}
+    expect: {effect: allow}
