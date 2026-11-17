@@ -1,0 +1,37 @@
+cases:
+  - name: a push to main of a production repository is refused
+    action: {kind: shell, command: "git push origin HEAD:main", repositoryEnvironment: production, branch: main}
+    expect: {effect: deny, rule: push-to-protected-production-branch}
+  - name: a push to a release branch of a production repository is refused
+    action: {kind: shell, command: "git push origin release/2.4", repositoryEnvironment: production, branch: release/2.4}
+    expect: {effect: deny, rule: push-to-protected-production-branch}
+  - name: a force-push to a feature branch of a production repository asks
+    action: {kind: shell, command: "git push --force origin feature", repositoryEnvironment: production, branch: feature}
+    expect: {effect: ask, rule: force-push-production}
+  - name: a push to a feature branch of a production repository goes ahead
+    action: {kind: shell, command: "git push origin feature", repositoryEnvironment: production, branch: feature}
+    expect: {effect: allow}
+  - name: a push to main of a staging repository goes ahead
+    action: {kind: shell, command: "git push origin main", repositoryEnvironment: staging, branch: main}
+    expect: {effect: allow}
+  - name: a push to a repository on no list asks
+    action: {kind: shell, command: "git push origin main", repositoryEnvironment: unknown, branch: main}
+    expect: {effect: ask, rule: push-to-unlisted-repository}
+  - name: a push the reader could not place is refused
+    action: {kind: shell, command: "git commit -m x && git push origin main", repositoryState: unknown}
+    expect: {effect: deny, rule: push-to-protected-production-branch}
+  - name: a repository that cannot be read refuses
+    action: {kind: shell, command: "git push origin main", repositoryState: unreadable}
+    expect: {effect: deny}
+  - name: a force-push to main of a production repository is refused, not asked
+    action: {kind: shell, command: "git push --force origin main", repositoryEnvironment: production, branch: main}
+    expect: {effect: deny, rule: push-to-protected-production-branch}
+  - name: a +refspec force-push to a production repository asks
+    action: {kind: shell, command: "git push origin +feature", repositoryEnvironment: production, branch: feature}
+    expect: {effect: ask, rule: force-push-production}
+  - name: a push through git -C, which the reader does not follow, is refused
+    action: {kind: shell, command: "git -C . push origin main", repositoryState: unknown}
+    expect: {effect: deny, rule: push-to-protected-production-branch}
+  - name: a command that does not push goes ahead even where the repository is unknown
+    action: {kind: shell, command: "git status", repositoryState: unknown}
+    expect: {effect: allow}

@@ -462,6 +462,9 @@ baseline does not cover, each with its cases file beside it:
 | `agent-self-defence` | The agent editing its own controls: Reeve's policy and binary, administrator-owned settings, and the per-user settings files that register its hooks. |
 | `supply-chain` | New dependencies, a package manager pointed at another registry, the repository's shared MCP servers, and CI workflows. |
 | `java` | Editing an applied Liquibase or Flyway changeset, dropping a schema, and building without the tests. |
+| `secrets` | The baseline's rules on reading credential files and printing secrets, on their own. A test keeps them identical to the baseline's. |
+| `destructive` | The baseline's rules on deleting files, rewriting history and discarding work, on their own. A test keeps them identical to the baseline's. |
+| `git` | Pushes to a protected branch of a production repository (refused), force-pushes there with `-f`, `--force` or a `+refspec` (asked), and pushes to a repository no environment lists (asked), by the repository and branch the guard reads from `.git`. A push it cannot read plainly is refused, and so is a git command with quotes that mentions push. |
 
 Deploy one as it is, or copy its rules into your own policy together with its cases.
 
