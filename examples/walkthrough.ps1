@@ -418,6 +418,15 @@ try {
     Check "an agent below a published fix is named, with the advisory to read" `
         ($vulnOut -match '"version\.known-vulnerability"' -and $vulnOut -match 'CVE-2026-54316' -and $vulnOut -match '"https://advisories\.gitlab\.com/') `
         "no known-vulnerability finding for Claude Code 2.1.100"
+    # And below the organisation's own floor, which no advisory names: a policy's
+    # settings.agents.<id>.minVersion. Found in the v0.7.0 audit that an organisation
+    # could not state one at all.
+    $minPolicy = Join-Path $Sandbox "min-version.yaml"
+    Write-Text $minPolicy ("version: 1`nsettings:`n  agents:`n    claude-code: {minVersion: `"2.1.110`"}`n")
+    $minOut = (& $reeve scan --dir $vulnHome --policy $minPolicy --json 2>$null | Out-String)
+    Check "an agent below the policy's minimum version is named" `
+        ($minOut -match '"version\.below-minimum"' -and $minOut -match '2\.1\.110') `
+        "no below-minimum finding for Claude Code 2.1.100"
     Check "an MCP server the agent calls and no file configures is named" `
         ($vulnOut -match '"mcp\.called-not-configured"' -and $vulnOut -match 'claude\.ai connector' -and $vulnOut -match 'createJiraIssue') `
         "no finding for the connector in the decision log"

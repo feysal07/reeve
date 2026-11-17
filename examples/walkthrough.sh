@@ -464,6 +464,15 @@ case "$VULN_OUT" in
         check "an agent below a published fix is named, with the advisory to read" 1 ;;
     *) check "an agent below a published fix is named, with the advisory to read" 0 "no known-vulnerability finding for Claude Code 2.1.100" ;;
 esac
+# And below the organisation's own floor, which no advisory names: a policy's
+# settings.agents.<id>.minVersion. Found in the v0.7.0 audit that an organisation
+# could not state one at all.
+printf 'version: 1\nsettings:\n  agents:\n    claude-code: {minVersion: "2.1.110"}\n' > "$SANDBOX/min-version.yaml"
+MIN_OUT=$(env HOME="$VULN_HOME" USERPROFILE="$VULN_HOME" "$REEVE" scan --dir "$VULN_HOME" --policy "$SANDBOX/min-version.yaml" --json 2>/dev/null)
+case "$MIN_OUT" in
+    *'"version.below-minimum"'*'2.1.110'*) check "an agent below the policy's minimum version is named" 1 ;;
+    *) check "an agent below the policy's minimum version is named" 0 "no below-minimum finding for Claude Code 2.1.100" ;;
+esac
 case "$VULN_OUT" in
     *'"mcp.called-not-configured"'*'claude.ai connector'*'createJiraIssue'*)
         check "an MCP server the agent calls and no file configures is named" 1 ;;

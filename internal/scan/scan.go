@@ -45,6 +45,9 @@ type Options struct {
 	IncludeHostname bool
 	// Version is the build running the scan, recorded in the report.
 	Version string
+	// MinVersions are the oldest releases policy accepts, per agent, from
+	// settings.agents.<id>.minVersion. An install below one is a finding.
+	MinVersions map[model.AgentID]string
 }
 
 // Run inspects every agent the registry knows about and evaluates the finding rules.
@@ -123,6 +126,19 @@ func Run(ctx context.Context, reg *adapter.Registry, opts Options) (model.Report
 		})
 	}
 	report.Findings = append(report.Findings, findings.EvaluateWith(report.Installations, history)...)
+	report.Findings = append(report.Findings, findings.BelowMinimum(report.Installations, opts.MinVersions)...)
+	// An agent whose configuration could not be inspected has no installation to
+	// compare, and found in review its minimum was then checked against nothing and
+	// said nothing: the agent where something is wrong read as meeting the floor.
+	for _, f := range report.Findings {
+		if f.ID != "scan.detect-failed" && f.ID != "scan.inspect-failed" {
+			continue
+		}
+		if min, ok := opts.MinVersions[f.Agent]; ok {
+			report.Findings = append(report.Findings, findings.MinimumUnknown(f.Agent, min,
+				"its configuration could not be inspected"))
+		}
+	}
 	return report, nil
 }
 

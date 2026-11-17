@@ -289,6 +289,10 @@ func Parse(b []byte) (*Policy, error) {
 		return nil, fmt.Errorf("default: %q is not allow, ask or deny", p.Default)
 	}
 
+	if err := p.Settings.validateAgents(); err != nil {
+		return nil, err
+	}
+
 	seen := map[string]bool{}
 	for i, r := range p.Rules {
 		if r.ID == "" {

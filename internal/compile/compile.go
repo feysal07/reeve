@@ -449,3 +449,28 @@ func repeatCoverage(r policy.Rule) Coverage {
 			"guard has a decision log to count from.",
 	}
 }
+
+// MinVersionWarning says that a minimum version policy sets for an agent is not carried
+// into that agent's configuration, or "" when policy sets none for it.
+//
+// No agent is known to enforce a minimum release from its own managed configuration. A
+// key nobody has seen a vendor honour would sit in the deployed file looking enforced
+// and be ignored, so nothing is emitted, and the coverage says where the minimum is
+// checked instead.
+func MinVersionWarning(p *policy.Policy, agent model.AgentID) string {
+	if p.Settings == nil {
+		return ""
+	}
+	a, ok := p.Settings.Agents[agent]
+	if !ok {
+		return ""
+	}
+	w := "settings.agents." + string(agent) + ".minVersion (" + a.MinVersion + ") is not carried " +
+		"natively: no vendor key for a minimum version has been verified, so nothing is emitted. " +
+		"reeve scan, reeve posture and reeve doctor report installs below it."
+	if !model.ReadsVersion(agent) {
+		w += " This build does not read " + string(agent) + "'s installed version, so every " +
+			"install will be reported as unknown against it."
+	}
+	return w
+}

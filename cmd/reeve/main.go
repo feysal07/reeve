@@ -221,6 +221,7 @@ func runScan(args []string) error {
 	includeHostname := fs.Bool("include-hostname", false, "record the machine name")
 	failOn := fs.String("fail-on", "", "exit non-zero at or above this severity")
 	capture := fs.String("capture", "", "write the shape of this machine's agent configuration here, with every value removed")
+	policyPath := fs.String("policy", "", "policy whose minimum agent versions to check against (default: the one the guard would find)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -241,14 +242,31 @@ func runScan(args []string) error {
 		decisionLog = logs[0]
 	}
 
+	// A policy named with --policy that cannot be read is an error. One the scan only
+	// went looking for is reported and the scan goes on: describing the machine is the
+	// scan's job, and a broken policy is part of what there is to describe.
+	mins, minErr := minVersions(*policyPath)
+	if minErr != nil && *policyPath != "" {
+		return minErr
+	}
 	report, err := scan.Run(ctx, registry, scan.Options{
 		WorkDir:         *dir,
 		IncludeHostname: *includeHostname,
 		DecisionLog:     decisionLog,
 		Version:         version,
+		MinVersions:     mins,
 	})
 	if err != nil {
 		return err
+	}
+	if minErr != nil {
+		report.Findings = append(report.Findings, model.Finding{
+			ID:       "scan.policy-unreadable",
+			Severity: model.SeverityMedium,
+			Title:    "Minimum agent versions were not checked",
+			Detail:   minErr.Error(),
+			Remedy:   "Fix the policy, or name one with --policy.",
+		})
 	}
 
 	if *capture != "" {

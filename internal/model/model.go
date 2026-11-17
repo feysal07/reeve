@@ -358,3 +358,9 @@ type HostInfo struct {
 	Arch     string `json:"arch"`
 	Hostname string `json:"hostname,omitempty"`
 }
+
+// ReadsVersion reports whether this build reads the installed version of an agent. Only
+// Claude Code records its version anywhere scan can read; for the others a minimum
+// version cannot be checked, and saying "could not be read" about every machine would
+// suggest something was wrong with each of them.
+func ReadsVersion(a AgentID) bool { return a == AgentClaudeCode }
