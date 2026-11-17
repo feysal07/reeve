@@ -43,6 +43,7 @@ func runGuard(args []string) error {
 	policyPath := fs.String("policy", "", "path to the policy file (default: the first policy found)")
 	logPath := fs.String("log", "", "append decisions to this file as JSON lines")
 	resourcesPath := fs.String("resources", "", "resource registry, to resolve which environment an action targets")
+	mcpRegistryPath := fs.String("mcp-registry", "", "approved MCP server list, for rules on a server's standing (default: REEVE_MCP_REGISTRY, then the administrator's, then Reeve's state directory)")
 	storePath := fs.String("store", "", "event store written by reeve collect, for budget rules")
 	pricesPath := fs.String("prices", "", "price table, for rules measured against a declared allowance")
 	identityFlag := fs.String("identity", "", "who this machine belongs to, for rules totalled per person")
@@ -110,6 +111,11 @@ func runGuard(args []string) error {
 	// than aborting: a registry that cannot be read must not stop work, because the
 	// policy still applies without it.
 	resolveEnvironment(&act, *resourcesPath)
+	// Where the server stands against the approved list, only when a rule asks: it
+	// reads the list and the agent's configuration on every MCP call.
+	if pol.NeedsMCPStanding() {
+		resolveMCPStanding(&act, *mcpRegistryPath)
+	}
 
 	// Read what came before, but only when a rule asks. Most policies never do, and
 	// every tool call would otherwise pay to open and parse a file that grows all
@@ -222,10 +228,17 @@ func resolveMCPEnvironment(act *policy.Action, explicit string) {
 	reg := loadRegistry(explicit, home)
 	var found []resource.ConfiguredServer
 	if reg != nil && len(reg.MCP) > 0 {
-		found = configuredMCPServers(act.Agent, act.MCPServer, adapter.Env{
+		var err error
+		found, err = configuredMCPServers(act.Agent, act.MCPServer, adapter.Env{
 			Home: home, WorkDir: workDir, GOOS: runtime.GOOS,
 			Getenv: os.Getenv, ProgramData: os.Getenv("ProgramData"),
 		})
+		if err != nil {
+			act.Environment = resource.EnvUnknown
+			act.EnvironmentDetail = "the agent's configuration could not be read, so what this server " +
+				"runs is not known: " + err.Error()
+			return
+		}
 	}
 	t := reg.ClassifyMCP(act.MCPServer, found, act.MCPArguments,
 		resource.Env{Home: home, WorkDir: workDir, Getenv: os.Getenv})
@@ -239,21 +252,34 @@ func resolveMCPEnvironment(act *policy.Action, explicit string) {
 // The name in a tool call is the agent's rendering of the configured name, which may
 // have replaced characters a tool identifier cannot carry, so both sides are compared in
 // that rendering.
-func configuredMCPServers(agent model.AgentID, name string, env adapter.Env) []resource.ConfiguredServer {
+//
+// An error says the agent's configuration exists and could not be read. Found in the
+// v0.7.0 audit: it returned nil, which reads as a server configured nowhere, so a
+// registry rule would have treated an unreadable configuration as an unlisted server.
+func configuredMCPServers(agent model.AgentID, name string, env adapter.Env) ([]resource.ConfiguredServer, error) {
 	var out []resource.ConfiguredServer
 	for _, a := range supportedAdapters() {
 		if a.ID() != agent {
 			continue
 		}
 		var servers []model.MCPServer
+		// The strict reading first: a file the agent would read and this cannot is
+		// an error, not a server configured nowhere.
+		if st, ok := a.(adapter.StrictMCP); ok {
+			strict, err := st.StrictMCPServers(env)
+			if err != nil {
+				return nil, err
+			}
+			servers = append(servers, strict...)
+		}
 		if l, ok := a.(adapter.MCPLister); ok {
-			servers = l.MCPServers(context.Background(), env)
+			servers = append(servers, l.MCPServers(context.Background(), env)...)
 		} else {
 			inst, err := a.Inspect(context.Background(), env)
 			if err != nil {
-				return nil
+				return nil, err
 			}
-			servers = inst.MCPServers
+			servers = append(servers, inst.MCPServers...)
 		}
 		for _, s := range servers {
 			if toolSafe(s.Name) != toolSafe(name) {
@@ -264,7 +290,7 @@ func configuredMCPServers(agent model.AgentID, name string, env adapter.Env) []r
 			})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // toolSafe renders a server name the way agents do when they build a tool identifier
@@ -398,13 +424,17 @@ type decisionRecord struct {
 	CWD string `json:"cwd,omitempty"`
 	// MCPConfigured is whether that project defined a server of the called name at
 	// the moment of the call: yes, no or unknown. See mcpConfiguredAt.
-	MCPConfigured string        `json:"mcpConfigured,omitempty"`
-	Environment   string        `json:"environment,omitempty"`
-	EnvDetail     string        `json:"environmentDetail,omitempty"`
-	Effect        policy.Effect `json:"effect"`
-	RuleID        string        `json:"ruleId,omitempty"`
-	Reason        string        `json:"reason,omitempty"`
-	PolicyFile    string        `json:"policyFile,omitempty"`
+	MCPConfigured string `json:"mcpConfigured,omitempty"`
+	// MCPStanding is where the server stood against the approved list, when a rule
+	// asked, so a replay decides on what the guard knew rather than refusing an MCP
+	// call it cannot resolve after the fact.
+	MCPStanding string        `json:"mcpStanding,omitempty"`
+	Environment string        `json:"environment,omitempty"`
+	EnvDetail   string        `json:"environmentDetail,omitempty"`
+	Effect      policy.Effect `json:"effect"`
+	RuleID      string        `json:"ruleId,omitempty"`
+	Reason      string        `json:"reason,omitempty"`
+	PolicyFile  string        `json:"policyFile,omitempty"`
 	// ReeveVersion is the build that made the decision. A log shared from somebody
 	// else's machine carried nothing to say it came from the very first build, so
 	// its gaps were read as defects in the current one.
@@ -517,6 +547,7 @@ func newDecisionRecord(a policy.Action, d policy.Decision, source string, elapse
 	if a.MCPServer != "" {
 		rec.CWD = a.CWD
 		rec.MCPConfigured = mcpConfiguredAt(a)
+		rec.MCPStanding = a.MCPStanding
 	}
 	if id := a.Identity; id != nil && id.Key() != "" {
 		rec.Who, rec.Team = id.Key(), id.Team

@@ -70,6 +70,13 @@ type ProjectMCP interface {
 	ProjectMCPServers(env Env) ([]string, error)
 }
 
+// StrictMCP is an adapter that can list the MCP servers it would start for a call made
+// in a directory, reporting a file it could not read as an error rather than leaving
+// the servers in it out. The guard uses it to identify a called server by what it runs.
+type StrictMCP interface {
+	StrictMCPServers(env Env) ([]model.MCPServer, error)
+}
+
 // Registry holds the adapters a build supports.
 type Registry struct {
 	adapters []Adapter

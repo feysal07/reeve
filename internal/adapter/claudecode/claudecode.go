@@ -828,6 +828,49 @@ func pluginServers(plugin, root string) []mcpSource {
 // Files are read only if they are regular files, opened without blocking, because the
 // guard reads them in front of a waiting agent and a FIFO would hold it there.
 func (a *Adapter) ProjectMCPServers(env adapter.Env) ([]string, error) {
+	defs, err := projectMCPDefinitions(env, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, d.name)
+	}
+	sort.Strings(out)
+	return dedupe(out), nil
+}
+
+// StrictMCPServers returns the MCP servers this agent would start for a call made in
+// env.WorkDir, from the files a project or the user can write: every .mcp.json from that
+// directory up to the root, and ~/.claude.json at user scope and at local scope under
+// any of those directories. Unlike MCPServers, a file that exists and cannot be read or
+// parsed is an error.
+//
+// Found in review of the guard's registry enforcement: MCPServers passes over a file it
+// cannot parse, which is right for an inventory and wrong for a decision. A server
+// defined in a broken file read as one configured nowhere, and was identified by its
+// name instead of its command, so a server the approved list refuses by command came
+// out unregistered and was asked about instead of refused.
+func (a *Adapter) StrictMCPServers(env adapter.Env) ([]model.MCPServer, error) {
+	defs, err := projectMCPDefinitions(env, true)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.MCPServer, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, model.MCPServer{Name: d.name, Command: d.cfg.Command, Args: d.cfg.Args,
+			URL: d.cfg.URL, Scope: d.scope})
+	}
+	return out, nil
+}
+
+type mcpDefinition struct {
+	name  string
+	cfg   mcpServerConfig
+	scope model.Scope
+}
+
+func projectMCPDefinitions(env adapter.Env, userScope bool) ([]mcpDefinition, error) {
 	dir, err := filepath.EvalSymlinks(filepath.Clean(env.WorkDir))
 	if err != nil {
 		return nil, fmt.Errorf("%q cannot be read here: %w", env.WorkDir, err)
@@ -845,34 +888,41 @@ func (a *Adapter) ProjectMCPServers(env adapter.Env) ([]string, error) {
 	if doc := config.ReadRegularJSON(path, &cj); doc.Err != nil {
 		return nil, fmt.Errorf("%s: %w", path, doc.Err)
 	}
+	var out []mcpDefinition
+	if userScope {
+		for name, c := range cj.MCPServers {
+			out = append(out, mcpDefinition{name, c, model.ScopeUser})
+		}
+	}
 	// Each key resolved once, as it would be found on disk; a key that no longer
 	// resolves is compared as written.
-	keys := make(map[string][]string, len(cj.Projects))
+	type local struct {
+		key     string
+		servers map[string]mcpServerConfig
+	}
+	var locals []local
 	for key, p := range cj.Projects {
 		k := filepath.Clean(key)
 		if r, err := filepath.EvalSymlinks(k); err == nil {
 			k = r
 		}
-		for name := range p.MCPServers {
-			keys[filepath.ToSlash(k)] = append(keys[filepath.ToSlash(k)], name)
-		}
+		locals = append(locals, local{filepath.ToSlash(k), p.MCPServers})
 	}
 
-	seen := map[string]bool{}
 	for d := dir; ; {
 		var proj mcpFile
 		file := filepath.Join(d, ".mcp.json")
 		if doc := config.ReadRegularJSON(file, &proj); doc.Err != nil {
 			return nil, fmt.Errorf("%s: %w", file, doc.Err)
 		}
-		for name := range proj.MCPServers {
-			seen[name] = true
+		for name, c := range proj.MCPServers {
+			out = append(out, mcpDefinition{name, c, model.ScopeProject})
 		}
 		want := filepath.ToSlash(d)
-		for key, names := range keys {
-			if sameDir(key, want, env.GOOS) {
-				for _, name := range names {
-					seen[name] = true
+		for _, l := range locals {
+			if sameDir(l.key, want, env.GOOS) {
+				for name, c := range l.servers {
+					out = append(out, mcpDefinition{name, c, model.ScopeUser})
 				}
 			}
 		}
@@ -882,11 +932,15 @@ func (a *Adapter) ProjectMCPServers(env adapter.Env) ([]string, error) {
 		}
 		d = parent
 	}
-
-	out := make([]string, 0, len(seen))
-	for n := range seen {
-		out = append(out, n)
-	}
-	sort.Strings(out)
 	return out, nil
+}
+
+func dedupe(sorted []string) []string {
+	out := sorted[:0]
+	for i, s := range sorted {
+		if i == 0 || s != sorted[i-1] {
+			out = append(out, s)
+		}
+	}
+	return out
 }

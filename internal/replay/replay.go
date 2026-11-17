@@ -59,6 +59,7 @@ type Record struct {
 	MCPServer   string        `json:"mcpServer,omitempty"`
 	MCPTool     string        `json:"mcpTool,omitempty"`
 	Environment string        `json:"environment,omitempty"`
+	MCPStanding string        `json:"mcpStanding,omitempty"`
 	Effect      policy.Effect `json:"effect"`
 	RuleID      string        `json:"ruleId,omitempty"`
 	// Reason is what the developer was shown. Replay does not use it; a timeline
@@ -115,7 +116,23 @@ func (r Record) Action() policy.Action {
 		MCPTool:     r.MCPTool,
 		Environment: r.Environment,
 		Identity:    r.identity(),
+		MCPStanding: r.mcpStanding(),
 	}
+}
+
+// mcpStanding is where the server stood against the approved list when the guard
+// decided. A record written before the guard recorded it predates enforcing the list,
+// when every server was in effect unregistered; replayed as unresolved instead, every
+// MCP call in an old log would read as refused by a policy that would not have refused
+// it.
+func (r Record) mcpStanding() string {
+	if r.Kind != policy.KindMCP {
+		return ""
+	}
+	if r.MCPStanding != "" {
+		return r.MCPStanding
+	}
+	return policy.StandingUnregistered
 }
 
 // identity rebuilds the identity the guard had, as it had it. An asserted one stays

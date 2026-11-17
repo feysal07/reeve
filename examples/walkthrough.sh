@@ -859,6 +859,25 @@ MCP_DEV=$(mcp_call dev)
     check "a production rule sees an MCP call that reaches production" 1 ||
     check "a production rule sees an MCP call that reaches production" 0 "exits were production $MCP_PROD, development $MCP_DEV; want 2 and 0"
 
+# The approved list is enforced, not advisory. Found in the v0.7.0 audit: a server the
+# list refused ran, because nothing but reeve mcp check ever read it. The same server,
+# identified by its command, refused by one list and approved by another; the name it
+# is called by plays no part.
+printf 'version: 1\nrules:\n  - id: refused-mcp-server\n    decision: deny\n    match:\n      mcp: {registry: [denied, mismatch]}\n' > "$SANDBOX/mcp-registry-policy.yaml"
+printf 'version: 1\nservers:\n  - name: k8s\n    status: %s\n    command: [npx, -y, kubernetes-mcp-server@latest]\n' denied > "$SANDBOX/mcp-registry-denied.yaml"
+printf 'version: 1\nservers:\n  - name: k8s\n    status: %s\n    command: [npx, -y, kubernetes-mcp-server@latest]\n' approved > "$SANDBOX/mcp-registry-approved.yaml"
+registry_call() {
+    printf '{"session_id":"r","hook_event_name":"PreToolUse","tool_name":"mcp__kubernetes__pods_list","tool_input":{},"cwd":"%s"}' "$MCP_HOME" |
+        env HOME="$MCP_HOME" USERPROFILE="$MCP_HOME" APPDATA="$MCP_HOME" LOCALAPPDATA="$MCP_HOME" REEVE_MCP_REGISTRY= \
+            "$REEVE" guard --agent claude-code --policy "$SANDBOX/mcp-registry-policy.yaml" --mcp-registry "$1" >/dev/null 2>&1
+    echo $?
+}
+REG_DENIED=$(registry_call "$SANDBOX/mcp-registry-denied.yaml")
+REG_APPROVED=$(registry_call "$SANDBOX/mcp-registry-approved.yaml")
+[ "$REG_DENIED:$REG_APPROVED" = "2:0" ] &&
+    check "the guard refuses an MCP server the approved list refuses, by what it runs" 1 ||
+    check "the guard refuses an MCP server the approved list refuses, by what it runs" 0 "exits were refused $REG_DENIED, approved $REG_APPROVED; want 2 and 0"
+
 # A policy is code, and a cases file is its tests: named actions and the decision each
 # must get. The baseline and every pack ship with one, so a change to them is checked
 # before anybody's agent finds out. A run that printed FAIL and exited zero would pass

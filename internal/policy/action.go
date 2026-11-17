@@ -71,6 +71,10 @@ type Action struct {
 	// MCP call's arguments are whatever the server accepts, which includes queries,
 	// file contents and tokens, and the decision log must not become where they end up.
 	MCPArguments map[string]string `json:"-"`
+	// MCPStanding is where an MCP call's server stands against the approved list, one
+	// of the Standing values, resolved by the guard before Evaluate. Empty when no rule
+	// asked, which a registry rule refuses rather than reads as approved.
+	MCPStanding string `json:"-"`
 
 	// Environment is what the action is about to touch, resolved from the command
 	// and from the tool's own current state rather than guessed from the text. It is

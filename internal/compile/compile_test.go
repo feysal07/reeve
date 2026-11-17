@@ -651,6 +651,7 @@ func TestNoConditionalRuleIsEmittedWithoutItsCondition(t *testing.T) {
 		{"allowance", `allowance: {usedAtLeast: 80, of: seat, within: "168h"}`, spendCoverage},
 		{"spend", `spend: {within: 24h, moreThan: 10}`, spendCoverage},
 		{"repeated", `repeated: {same: tool, within: 5m, moreThan: 10}`, func(r policy.Rule, _ model.AgentID) Coverage { return repeatCoverage(r) }},
+		{"registry", `mcp: {registry: [denied]}`, func(r policy.Rule, _ model.AgentID) Coverage { return registryCoverage(r) }},
 	}
 	for _, tc := range cases {
 		for _, decision := range []string{"deny", "ask", "allow"} {
@@ -797,7 +798,7 @@ func TestEveryMatchFieldIsClassifiedForCompilation(t *testing.T) {
 		// Conditions no native syntax can see.
 		"Environment": "conditionalCoverage", "Repeated": "conditionalCoverage",
 		"Spend": "conditionalCoverage", "TokenBudget": "conditionalCoverage",
-		"Allowance": "conditionalCoverage",
+		"Allowance": "conditionalCoverage", "MCP": "conditionalCoverage",
 	}
 	mt := reflect.TypeOf(policy.Match{})
 	for i := 0; i < mt.NumField(); i++ {

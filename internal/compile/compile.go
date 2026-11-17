@@ -335,6 +335,8 @@ func conditionalCoverage(r policy.Rule, agent model.AgentID) (Coverage, bool) {
 		return spendCoverage(r, agent), true
 	case len(r.Match.Environment) > 0:
 		return environmentCoverage(r), true
+	case r.Match.MCP != nil:
+		return registryCoverage(r), true
 	}
 	return Coverage{}, false
 }
@@ -350,6 +352,28 @@ func environmentCoverage(r policy.Rule) Coverage {
 			"the tool's own ambient state at the moment it runs, and which no agent's " +
 			"own configuration can see. Emitting the rest of the match without the " +
 			"environment would apply it in every environment, a different rule, so " +
+			"nothing is emitted. It holds only while the guard is running.",
+	}
+}
+
+// registryCoverage is the entry every compiler returns for a rule on an MCP server's
+// standing against the approved list.
+//
+// Some agents take an MCP allow-list in their own configuration, and settings.mcp writes
+// one. A rule on standing is different: it says what to do with a server that is
+// unregistered, refused, or named after an approved one and running something else, and
+// telling those apart needs the server's definition and the list together, which only
+// the guard has. Emitting the rule by server name would be the name match the list
+// exists to replace.
+func registryCoverage(r policy.Rule) Coverage {
+	return Coverage{
+		RuleID:   r.ID,
+		Decision: r.Decision,
+		Status:   StatusGuardOnly,
+		Reason: "This rule matches on where an MCP server stands against the approved list, " +
+			"which the guard works out from the server's command, URL, connector id or " +
+			"built-in name at the moment of the call. No agent's own configuration can, and " +
+			"emitting it by server name would be the name match the list replaces, so " +
 			"nothing is emitted. It holds only while the guard is running.",
 	}
 }

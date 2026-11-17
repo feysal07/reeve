@@ -280,6 +280,15 @@ rules:
 
   # -------------------------------------------------------------------- mcp ----
 
+  - id: refused-mcp-server
+    description: Calling an MCP server the approved list refuses, or one using an approved name
+    decision: deny
+    reason: >-
+      This server was reviewed and refused, or it uses the name of an approved
+      server while running something else.
+    match:
+      mcp: {registry: [denied, mismatch]}
+
   - id: unknown-mcp-server
     description: Calling an MCP server that is not on the approved list
     decision: ask
@@ -287,12 +296,15 @@ rules:
       This server is not one the organisation has approved. Anything it can reach,
       the agent can now reach.
     match:
-      kind: [mcp]
-    # Every MCP call matches, because an approved list does not exist until you
-    # write one. Build the first one from what is already running:
+      mcp: {registry: [unregistered, unverified, name-only]}
+    # Matched on where the server stands against the approved list, which the guard
+    # works out from its command, URL, connector id or built-in name; never from the
+    # name the developer gave it. With no list, every server is unregistered and every
+    # MCP call asks. Build the first list from what is already running:
     #
-    #   reeve mcp list ./reports --as-registry > registry.yaml
-    #   reeve mcp check ./reports --registry registry.yaml
+    #   reeve mcp list ./reports --as-registry > mcp-registry.yaml
+    #   reeve mcp check ./reports --registry mcp-registry.yaml
     #
-    # then replace this rule with explicit allow rules per approved server. Left
-    # as ask so the policy is usable before that work is done.
+    # and put it at /etc/reeve/mcp-registry.yaml (%ProgramData%\Reeve on Windows),
+    # or pass --mcp-registry to the guard. Approved and trial servers then go
+    # through without a prompt.
