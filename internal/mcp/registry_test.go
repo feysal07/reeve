@@ -483,3 +483,38 @@ func TestAProjectServerNamedAfterAnApprovedBuiltinIsAMismatch(t *testing.T) {
 		}
 	}
 }
+
+// TestAPartlyReadHistoryRaisesTheWorstSeverityToMedium. A floor of servers that all
+// reconcile as approved is not a clean result, so --fail-on medium must be able to
+// refuse it, the way it refuses an unregistered server.
+func TestAPartlyReadHistoryRaisesTheWorstSeverityToMedium(t *testing.T) {
+	r := Report{}
+	if r.Worst() != "" {
+		t.Fatalf("an empty report has worst %q", r.Worst())
+	}
+	r.HistoryPartial = []HistoryGap{{Machine: "m", Cause: "line 4"}}
+	if r.Worst() != model.SeverityMedium {
+		t.Errorf("worst = %q, want medium", r.Worst())
+	}
+}
+
+func TestAPartlyReadHistoryNeverLowersAHigherWorstSeverity(t *testing.T) {
+	gap := []HistoryGap{{Machine: "m", Cause: "c"}}
+	for verdict, want := range map[Verdict]model.Severity{
+		VerdictDenied:       model.SeverityHigh,
+		VerdictUnregistered: model.SeverityMedium,
+		VerdictNameOnly:     model.SeverityMedium, // raised to medium by the floor
+		VerdictApproved:     model.SeverityMedium,
+	} {
+		r := Report{Results: []Result{{Verdict: verdict}}, HistoryPartial: gap}
+		if r.Worst() != want {
+			t.Errorf("%s with a floor: worst = %q, want %q", verdict, r.Worst(), want)
+		}
+	}
+	if (Report{Results: []Result{{Verdict: VerdictUnregistered}}}).Worst() != model.SeverityMedium {
+		t.Error("an unregistered server alone is not medium")
+	}
+	if (Report{Results: []Result{{Verdict: VerdictNameOnly}}}).Worst() != model.SeverityLow {
+		t.Error("a name-only server alone is not low")
+	}
+}

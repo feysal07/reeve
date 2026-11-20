@@ -248,6 +248,18 @@ type Report struct {
 	// can be told apart from a report that looked at nothing.
 	Machines int `json:"machines"`
 	Servers  int `json:"servers"`
+	// HistoryPartial names each machine whose decision log could only be partly read.
+	// The servers known only from being called come from that log, so for these
+	// machines they are a floor: a list built from a partly read log reconciled as if
+	// it were complete, and a floor read as a total is how a server goes unseen.
+	HistoryPartial []HistoryGap `json:"historyPartial,omitempty"`
+}
+
+// HistoryGap is one machine whose decision log could not be fully read.
+type HistoryGap struct {
+	Machine string `json:"machine"`
+	// Cause is what scan said stopped the read, so the reader can act on it.
+	Cause string `json:"cause"`
 }
 
 // Worst returns the highest severity in the report.
@@ -261,6 +273,13 @@ func (r Report) Worst() model.Severity {
 		if rank[res.Verdict.Severity()] > rank[worst] {
 			worst = res.Verdict.Severity()
 		}
+	}
+	// A partly read log is a medium finding in scan, and it stays one here. Without
+	// this a floor of servers that all reconcile as approved reads as a clean result
+	// to --fail-on, which is the invisible failure that looks like success: the same
+	// reasoning that makes a partial spend total deny when the visible part is low.
+	if len(r.HistoryPartial) > 0 && rank[model.SeverityMedium] > rank[worst] {
+		worst = model.SeverityMedium
 	}
 	return worst
 }

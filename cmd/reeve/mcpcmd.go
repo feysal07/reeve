@@ -1,16 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/feysal07/reeve/internal/mcp"
 	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/posture"
+	"github.com/feysal07/reeve/internal/scan"
 )
 
 // runMCP reconciles configured MCP servers against an approved list.
@@ -44,21 +48,22 @@ shape reeve posture reads`)
 	}
 }
 
-// observe reads scan reports and flattens every configured MCP server out of them.
-func observe(target string) ([]mcp.Observed, error) {
+// observe reads scan reports and flattens every configured MCP server out of them,
+// with the machines whose decision log could only be partly read.
+func observe(target string) ([]mcp.Observed, []mcp.HistoryGap, error) {
 	var loaded []posture.Loaded
 
 	info, err := os.Stat(target)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if info.IsDir() {
 		l, bad, err := posture.Load(target)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(l) == 0 {
-			return nil, fmt.Errorf("no scan reports in %s (%d file(s) could not be read)",
+			return nil, nil, fmt.Errorf("no scan reports in %s (%d file(s) could not be read)",
 				target, len(bad))
 		}
 		// Unreadable reports are named rather than passed over, for the same
@@ -71,23 +76,82 @@ func observe(target string) ([]mcp.Observed, error) {
 	} else {
 		one, bad, err := posture.LoadFile(target)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if bad != nil {
-			return nil, fmt.Errorf("%s: %s", bad.Path, bad.Reason)
+			return nil, nil, fmt.Errorf("%s: %s", bad.Path, bad.Reason)
 		}
 		loaded = []posture.Loaded{*one}
 	}
 
 	var out []mcp.Observed
+	var gaps []mcp.HistoryGap
 	for _, l := range loaded {
 		machine := l.Report.Host.Hostname
 		if machine == "" {
 			machine = l.Path
 		}
 		out = append(out, observedIn(l.Report, machine)...)
+		gaps = append(gaps, historyGaps(l.Report, machine)...)
 	}
-	return out, nil
+	return out, gaps, nil
+}
+
+// historyGaps reads the finding scan raises when the decision log could only be partly
+// read. observedIn flattens the servers and used to stop there, so a list built from a
+// partly read log reconciled as if it were complete: a floor looking like a total.
+func historyGaps(r model.Report, machine string) []mcp.HistoryGap {
+	var out []mcp.HistoryGap
+	for _, f := range r.Findings {
+		if f.ID == scan.HistoryPartialID {
+			// The cause alone: the header says the rest once, and repeating it per
+			// machine buried the one part that differs.
+			out = append(out, mcp.HistoryGap{Machine: machine, Cause: scan.HistoryPartialCause(f.Detail)})
+		}
+	}
+	return out
+}
+
+// historyFloorNotice is the sentence that says a list of servers seen in use is a floor.
+const historyFloorNotice = "The MCP servers seen in use are a floor, not a total: the guard's " +
+	"decision log could only be partly read, so a server called only in the part that " +
+	"was lost is not listed."
+
+// safeText replaces every control character, newlines included, with a space. Machine
+// names and causes come from scan reports that may have been collected from anywhere,
+// and written raw into a terminal they can redraw the screen, and written raw into a
+// YAML comment a newline ends the comment and starts a live entry.
+func safeText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// yamlQuote writes s as a double-quoted scalar. JSON strings are valid YAML, and a
+// quoted scalar cannot run past its own line however hostile the value, which an
+// unquoted "- name: <value>" could: a value holding a newline and a second entry
+// became a live approved entry in a file whose whole promise is that nothing is.
+func yamlQuote(s string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s) // a string always encodes
+	return strings.TrimSpace(b.String())
+}
+
+// renderHistoryGaps says plainly that the servers seen in use are a floor.
+func renderHistoryGaps(w io.Writer, gaps []mcp.HistoryGap) {
+	if len(gaps) == 0 {
+		return
+	}
+	fmt.Fprintln(w, wrap(historyFloorNotice, 74, "  "))
+	for _, g := range gaps {
+		fmt.Fprintf(w, "  %s: %s\n", safeText(g.Machine), wrap(safeText(g.Cause), 68, "      "))
+	}
+	fmt.Fprintln(w)
 }
 
 // observedIn flattens one scan report's MCP servers: the configured ones, and the ones
@@ -133,12 +197,13 @@ func runMCPCheck(args []string) error {
 	if err != nil {
 		return err
 	}
-	observed, err := observe(target)
+	observed, gaps, err := observe(target)
 	if err != nil {
 		return err
 	}
 
 	rep := mcp.Reconcile(reg, observed)
+	rep.HistoryPartial = gaps
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -153,14 +218,34 @@ func runMCPCheck(args []string) error {
 	if *failOn == "" {
 		return nil
 	}
-	threshold, ok := severityRank[model.Severity(strings.ToLower(*failOn))]
-	if !ok {
-		return fmt.Errorf("unknown severity %q", *failOn)
+	exceeded, err := failOnExceeded(rep, *failOn)
+	if err != nil {
+		return err
 	}
-	if severityRank[rep.Worst()] >= threshold {
+	if exceeded {
 		os.Exit(2)
 	}
 	return nil
+}
+
+// failOnExceeded says whether the report is at or above the --fail-on severity.
+func failOnExceeded(rep mcp.Report, failOn string) (bool, error) {
+	threshold, ok := severityRank[model.Severity(strings.ToLower(failOn))]
+	if !ok {
+		return false, fmt.Errorf("unknown severity %q", failOn)
+	}
+	// Worst counts a partly read log as medium, the severity scan gives it, so
+	// --fail-on medium (or lower) refuses a floor the way it refuses an unregistered
+	// server, and --fail-on high does not: nothing found is wrong, only possibly
+	// incomplete. Denied and unverified already exit through this same comparison.
+	return severityRank[rep.Worst()] >= threshold, nil
+}
+
+// mcpList is the document reeve mcp list --json emits.
+type mcpList struct {
+	SchemaVersion  string           `json:"schemaVersion"`
+	Servers        []mcp.Observed   `json:"servers"`
+	HistoryPartial []mcp.HistoryGap `json:"historyPartial,omitempty"`
 }
 
 func runMCPList(args []string) error {
@@ -175,7 +260,7 @@ func runMCPList(args []string) error {
 		return fmt.Errorf("give a scan report or a directory of them")
 	}
 
-	observed, err := observe(target)
+	observed, gaps, err := observe(target)
 	if err != nil {
 		return err
 	}
@@ -183,17 +268,28 @@ func runMCPList(args []string) error {
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(observed)
+		if observed == nil {
+			observed = []mcp.Observed{} // "servers": null reads as "unknown", not "none"
+		}
+		// An object rather than the bare array it was, because an array has nowhere
+		// to say the list is a floor.
+		return enc.Encode(mcpList{SchemaVersion: mcp.SchemaVersion, Servers: observed, HistoryPartial: gaps})
 	}
 	if *asRegistry {
-		return writeRegistrySkeleton(observed)
+		// Stdout is usually redirected into registry.yaml, where a notice printed
+		// there would be read by nobody, so it goes to stderr as well as into the file.
+		renderHistoryGaps(os.Stderr, gaps)
+		return writeRegistrySkeleton(observed, gaps)
 	}
 
 	if len(observed) == 0 {
 		fmt.Println("\nNo MCP servers are configured on anything here.")
+		fmt.Println()
+		renderHistoryGaps(os.Stdout, gaps)
 		return nil
 	}
 	fmt.Printf("\nMCP servers found (%d)\n\n", len(observed))
+	renderHistoryGaps(os.Stdout, gaps)
 	for _, o := range observed {
 		fmt.Printf("  %-24s %-14s %-10s %s\n", o.Server.Name, o.Agent, o.Server.Scope, o.Machine)
 		if cmd := strings.TrimSpace(o.Server.Command + " " + strings.Join(o.Server.Args, " ")); cmd != "" {
@@ -217,17 +313,36 @@ func runMCPList(args []string) error {
 // happened to be installed is a description of the current state, not a decision about
 // it, and emitting it as approved would turn "this is what we found" into "this is
 // what we allow" with nobody having looked.
-func writeRegistrySkeleton(observed []mcp.Observed) error {
-	seen := map[string]mcp.Observed{}
+func writeRegistrySkeleton(observed []mcp.Observed, gaps []mcp.HistoryGap) error {
+	// One entry per identity, but with what every observation of it said. Keeping
+	// only the first meant a server verified on one machine and unverified on another
+	// was written as verified, or the other way round depending on file order.
+	type merged struct {
+		mcp.Observed
+		machines []string
+		defined  []string
+	}
+	seen := map[string]*merged{}
 	var order []string
 	for _, o := range observed {
 		key := strings.TrimSpace(o.Server.Command + " " + strings.Join(o.Server.Args, " ") + o.Server.URL)
 		if key == "" {
 			key = "name:" + o.Server.Name
 		}
-		if _, ok := seen[key]; !ok {
-			seen[key] = o
+		m, ok := seen[key]
+		if !ok {
+			m = &merged{Observed: o}
+			seen[key] = m
 			order = append(order, key)
+		}
+		if m.Unverified == "" {
+			m.Unverified = o.Unverified
+		}
+		if !contains(m.machines, o.Machine) {
+			m.machines = append(m.machines, o.Machine)
+		}
+		if o.DefinedIn != "" && !contains(m.defined, o.DefinedIn) {
+			m.defined = append(m.defined, o.DefinedIn)
 		}
 	}
 
@@ -236,11 +351,39 @@ func writeRegistrySkeleton(observed []mcp.Observed) error {
 	fmt.Println("# Every entry is marked trial, because a list built from whatever happened to be")
 	fmt.Println("# installed describes the current state rather than recording a decision about it.")
 	fmt.Println("# Review each one, set it to approved or denied, and fill in an owner.")
+	if len(gaps) > 0 {
+		fmt.Println("#")
+		fmt.Println("# floor: " + historyFloorNotice)
+		for _, g := range gaps {
+			fmt.Printf("# floor: %s: %s\n", safeText(g.Machine), safeText(g.Cause))
+		}
+	}
 	fmt.Println("version: 1")
 	fmt.Println("servers:")
 	for _, key := range order {
-		o := seen[key]
-		fmt.Printf("  - name: %s\n", o.Server.Name)
+		m := seen[key]
+		o := m.Observed
+		// Said above the entry, where the person flipping its status will be looking.
+		// An unverified connector or built-in was written exactly like a configured
+		// server, and approving it approved an identity whose use was never verified.
+		// The status stays trial: reconcile reports an unverified match as unverified
+		// whether it is trial or approved, so the status cannot launder it either way,
+		// and denied would refuse something nobody has ruled on.
+		//
+		// Every value below comes from a scan report that may be a stranger's, so
+		// comments are stripped of control characters and fields are quoted scalars:
+		// a newline in either could otherwise start a live, approved entry.
+		if m.Unverified != "" {
+			fmt.Printf("  # unverified: %s\n", safeText(m.Unverified))
+		}
+		if len(m.defined) > 0 {
+			fmt.Printf("  # defined in: %s (that configuration runs a server of this name)\n",
+				safeText(strings.Join(m.defined, ", ")))
+		}
+		if o.Server.Scope == model.ScopeObserved {
+			fmt.Printf("  # seen in: the guard's decision log, on %s\n", safeText(strings.Join(m.machines, ", ")))
+		}
+		fmt.Printf("  - name: %s\n", yamlQuote(o.Server.Name))
 		fmt.Printf("    owner: \"\"   # who answers for this\n")
 		fmt.Printf("    status: trial\n")
 		if o.Server.Command != "" || len(o.Server.Args) > 0 {
@@ -248,17 +391,17 @@ func writeRegistrySkeleton(observed []mcp.Observed) error {
 			fmt.Printf("    command: [%s]\n", quoteAll(parts))
 		}
 		if o.Server.URL != "" {
-			fmt.Printf("    url: %q\n", o.Server.URL)
+			fmt.Printf("    url: %s\n", yamlQuote(o.Server.URL))
 		}
 		// Known only from being called. Connector ids and the desktop app's names are
 		// identities a registry can match; anything else stays a name.
 		if o.Server.Scope == model.ScopeObserved {
 			switch o.Server.Transport {
 			case mcp.OriginConnector:
-				fmt.Printf("    connector: %q   # a claude.ai connector, seen in the guard's log\n", o.Server.Name)
+				fmt.Printf("    connector: %s   # a claude.ai connector, seen in the guard's log\n", yamlQuote(o.Server.Name))
 				continue
 			case mcp.OriginBuiltin:
-				fmt.Printf("    builtin: %q   # built into the desktop app, seen in the guard's log\n", o.Server.Name)
+				fmt.Printf("    builtin: %s   # built into the desktop app, seen in the guard's log\n", yamlQuote(o.Server.Name))
 				continue
 			}
 		}
@@ -270,10 +413,19 @@ func writeRegistrySkeleton(observed []mcp.Observed) error {
 	return nil
 }
 
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 func quoteAll(parts []string) string {
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		out = append(out, fmt.Sprintf("%q", p))
+		out = append(out, yamlQuote(p))
 	}
 	return strings.Join(out, ", ")
 }
@@ -282,6 +434,7 @@ func renderMCP(r mcp.Report) {
 	fmt.Printf("\nMCP servers against the registry\n\n")
 	fmt.Printf("  machines : %d\n", r.Machines)
 	fmt.Printf("  servers  : %d\n\n", r.Servers)
+	renderHistoryGaps(os.Stdout, r.HistoryPartial)
 
 	if r.Servers == 0 {
 		fmt.Println("No MCP servers are configured on anything here, so there was nothing to check.")

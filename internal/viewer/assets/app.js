@@ -165,6 +165,10 @@ async function showMCP() {
     const notes = $("mcp-notes");
     notes.replaceChildren();
     (v.notes || []).forEach((n) => notes.appendChild(el("li", n)));
+    // A partly read decision log makes the servers seen in use a floor, not a total.
+    (v.report.historyPartial || []).forEach((g) => notes.appendChild(el("li",
+      "The servers seen in use are a floor, not a total: the decision log on " + g.machine +
+      " could only be partly read. " + g.cause)));
     const tbody = $("mcp-servers").querySelector("tbody");
     tbody.replaceChildren();
     (v.report.results || []).forEach((r) => {

@@ -1910,6 +1910,26 @@ Check "a generated registry never marks anything approved" `
     (($skel -match "status: trial") -and -not ($skel -match "status: approved")) `
     "whatever was installed would become policy with nobody having looked"
 
+# A server list built from a decision log that could only be partly read is a floor,
+# and used to reconcile as if it were a total, because the finding that says so was
+# dropped on the way in. The finding is put into a copy of the sandbox scan, the way
+# scan raises it, since provoking a real half-readable log is not the point here.
+$partialScan = Join-Path $Sandbox "partial-history-scan.json"
+$scanText = [System.IO.File]::ReadAllText($scanFile)
+$partialText = $scanText -replace '"findings": \[', '"findings": [{"id":"scan.history-partial","severity":"medium","title":"Part of the guard decision log could not be read","detail":"are a floor: decisions-1.jsonl: the segment is missing"},'
+if ($partialText -eq $scanText) {
+    Check "a partly read decision log is called a floor by mcp check" $false "the fixture was not modified, so this would prove nothing"
+    Check "a partly read decision log is called a floor by mcp list" $false "the fixture was not modified, so this would prove nothing"
+} else {
+    Write-Text $partialScan $partialText
+    $partialCheck = ((& $reeve mcp check $partialScan --registry $mcpRegistry 2>&1 | Out-String) -replace '\s+', ' ')
+    Check "a partly read decision log is called a floor by mcp check" `
+        ($partialCheck -match "a floor, not a total" -and $partialCheck -match "the segment is missing") $partialCheck
+    $partialList = ((& $reeve mcp list $partialScan 2>&1 | Out-String) -replace '\s+', ' ')
+    Check "a partly read decision log is called a floor by mcp list" `
+        ($partialList -match "a floor, not a total" -and $partialList -match "the segment is missing") $partialList
+}
+
 # ------------------------------------------------------------- posture ----
 
 Step 12 "Fleet posture: the same question asked about every machine at once"

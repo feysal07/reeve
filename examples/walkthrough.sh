@@ -2078,6 +2078,28 @@ case "$SKEL" in
     *) check "a generated registry never marks anything approved" 0 "$SKEL" ;;
 esac
 
+# A server list built from a decision log that could only be partly read is a floor,
+# and used to reconcile as if it were a total, because the finding that says so was
+# dropped on the way in. The finding is put into a copy of the sandbox scan, the way
+# scan raises it, since provoking a real half-readable log is not the point here.
+PARTIAL_SCAN="$SANDBOX/partial-history-scan.json"
+sed 's#"findings": \[#"findings": [{"id":"scan.history-partial","severity":"medium","title":"Part of the guard decision log could not be read","detail":"are a floor: decisions-1.jsonl: the segment is missing"},#' "$SCAN_JSON" > "$PARTIAL_SCAN"
+if cmp -s "$SCAN_JSON" "$PARTIAL_SCAN"; then
+    check "a partly read decision log is called a floor by mcp check" 0 "the fixture was not modified, so this would prove nothing"
+    check "a partly read decision log is called a floor by mcp list" 0 "the fixture was not modified, so this would prove nothing"
+else
+    PARTIAL_CHECK=$("$REEVE" mcp check "$PARTIAL_SCAN" --registry "$MCP_REGISTRY" 2>&1 | tr -s ' \n' '  ')
+    case "$PARTIAL_CHECK" in
+        *"a floor, not a total"*"the segment is missing"*) check "a partly read decision log is called a floor by mcp check" 1 ;;
+        *) check "a partly read decision log is called a floor by mcp check" 0 "$PARTIAL_CHECK" ;;
+    esac
+    PARTIAL_LIST=$("$REEVE" mcp list "$PARTIAL_SCAN" 2>&1 | tr -s ' \n' '  ')
+    case "$PARTIAL_LIST" in
+        *"a floor, not a total"*"the segment is missing"*) check "a partly read decision log is called a floor by mcp list" 1 ;;
+        *) check "a partly read decision log is called a floor by mcp list" 0 "$PARTIAL_LIST" ;;
+    esac
+fi
+
 # ------------------------------------------------------------- posture ----
 
 step 12 "Fleet posture: the same question asked about every machine at once"
