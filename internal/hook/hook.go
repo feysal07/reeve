@@ -169,6 +169,14 @@ func Decode(raw []byte, agent model.AgentID) (policy.Action, error) {
 	}
 	populate(&a, input)
 	populateTopLevel(&a, r)
+	if isPatchTool(a.ToolName) && a.Kind == policy.KindWrite {
+		// A write action's command is not a shell command, and Command is logged where
+		// EditContent is not. A patch arriving under a command key, or at the top level,
+		// would otherwise put its whole text in the decision log, including when it could
+		// not be parsed and nothing else about the call was recorded. Done here, after
+		// populateTopLevel, which refills an empty Command and would undo it any earlier.
+		a.Command = ""
+	}
 	return a, nil
 }
 
@@ -299,6 +307,9 @@ var toolKinds = map[string]policy.Kind{
 	"exec":        policy.KindShell,
 	"local_shell": policy.KindShell,
 	"apply_patch": policy.KindWrite,
+	// Codex accepts this spelling too. The "patch" heuristic below would class it a write
+	// anyway, so this entry is redundant today; it keeps the answer from resting on a heuristic.
+	"applypatch":  policy.KindWrite,
 	"read_file":   policy.KindRead,
 	"update_plan": policy.KindOther,
 	"web_search":  policy.KindFetch,
@@ -363,6 +374,9 @@ func populate(a *policy.Action, input map[string]any) {
 		a.MCPServer, a.MCPTool = splitMCPName(a.ToolName)
 	}
 	if input == nil {
+		// Still a patch call, and one with nothing to read: refused by any rule that
+		// depends on what it writes, not allowed because there was nothing to match.
+		populatePatch(a, nil)
 		return
 	}
 
@@ -404,6 +418,7 @@ func populate(a *policy.Action, input map[string]any) {
 	if a.Kind == policy.KindWrite {
 		a.EditContent = strings.Join(written, "\n")
 	}
+	populatePatch(a, input)
 
 	// Gemini's web_fetch takes no url field at all: it is handed a prompt that
 	// contains up to twenty addresses and told what to do with them. A fetch rule

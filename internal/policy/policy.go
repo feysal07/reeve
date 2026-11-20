@@ -631,6 +631,25 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 			continue
 		}
 		if !r.Match.matches(a) {
+			// A write whose targets could not be read matches nothing by path or by
+			// content, which would read as "this rule was never about it". A rule that
+			// depends on those inputs and cannot see them applies, where everything
+			// else in it matches. An allow rule is left alone: an unreadable write is
+			// not a reason to wave it through.
+			if a.TargetsUnreadable != "" && r.Decision != EffectAllow &&
+				r.Match.matchesBesidesTargets(a) &&
+				(d.RuleID == "" || (stricter(r.Decision, d.Effect) && r.Decision != d.Effect)) {
+				d.Effect = r.Decision
+				d.RuleID = r.ID
+				d.Reason = "This rule matches on which files a write touches or what it " +
+					"writes, and this write could not be read: " + a.TargetsUnreadable +
+					". Treating it as matching rather than as touching nothing."
+				if r.Reason != "" {
+					d.Reason += " " + r.Reason
+				} else if r.Description != "" {
+					d.Reason += " " + r.Description
+				}
+			}
 			continue
 		}
 		if d.RuleID != "" && !stricter(r.Decision, d.Effect) {
@@ -649,6 +668,16 @@ func (p *Policy) evaluate(a Action, withObserved bool) Decision {
 		}
 	}
 	return d
+}
+
+// matchesBesidesTargets reports whether every condition but path and editContains matches.
+//
+// A rule with neither condition is not guarded against here, and does not need to be: it
+// would already have matched, so it never reaches this call.
+func (m Match) matchesBesidesTargets(a Action) bool {
+	m.Path = nil
+	m.EditContains = nil
+	return m.matches(a)
 }
 
 // matchesBesidesRepository reports whether every condition but the repository matches.
@@ -673,7 +702,7 @@ func (m Match) matches(a Action) bool {
 	if len(m.Agents) > 0 && !containsAgent(m.Agents, a.Agent) {
 		return false
 	}
-	if len(m.Kinds) > 0 && !containsKind(m.Kinds, a.Kind) {
+	if len(m.Kinds) > 0 && !containsKind(m.Kinds, a.Kind) && !anyKindIn(m.Kinds, a.AlsoKinds) {
 		return false
 	}
 	if len(m.Tools) > 0 && !anyEqualFold(m.Tools, a.ToolName) {
@@ -733,6 +762,15 @@ func (m Match) matches(a Action) bool {
 func containsAgent(list []model.AgentID, v model.AgentID) bool {
 	for _, x := range list {
 		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func anyKindIn(list []Kind, vs []Kind) bool {
+	for _, v := range vs {
+		if containsKind(list, v) {
 			return true
 		}
 	}
