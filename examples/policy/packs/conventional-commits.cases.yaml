@@ -1,0 +1,19 @@
+cases:
+  - name: a conventional commit goes ahead
+    action: {kind: shell, command: 'git commit -m "fix(api): handle an empty body"'}
+    expect: {effect: allow}
+  - name: a message that is not a conventional commit asks
+    action: {kind: shell, command: 'git commit -m "fixed the thing"'}
+    expect: {effect: ask, rule: non-conventional-commit}
+  - name: a heredoc message is read
+    action: {kind: shell, command: "git commit -F - <<'EOF'\nfeat: add the thing\nEOF"}
+    expect: {effect: allow}
+  - name: a message in a file is a stated decision, not passed in silence
+    action: {kind: shell, command: "git commit -F notes.txt"}
+    expect: {effect: ask, rule: unreadable-commit-message}
+  - name: a command that is not a commit is not judged
+    action: {kind: shell, command: "git log --oneline"}
+    expect: {effect: allow}
+  - name: a bad message after another command is caught
+    action: {kind: shell, command: 'git add -A && git commit -m "wip"'}
+    expect: {effect: ask, rule: non-conventional-commit}

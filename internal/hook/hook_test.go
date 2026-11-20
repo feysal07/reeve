@@ -730,3 +730,22 @@ func TestAToolThatSendsSomethingOffTheMachineIsAFetch(t *testing.T) {
 		}
 	}
 }
+
+// TestAnEditCarriesWhatItWritesForRulesAndNothingElse. The content reaches the action for
+// rules that match on it, and only for writes.
+func TestAnEditCarriesWhatItWritesForRulesAndNothingElse(t *testing.T) {
+	a, err := Decode([]byte(`{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/r/src/test/AT.java","old_string":"x","new_string":"@MockBean Repo r;"}}`), "claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.EditContent != "@MockBean Repo r;" {
+		t.Errorf("edit content = %q", a.EditContent)
+	}
+	b, err := Decode([]byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls","content":"x"}}`), "claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.EditContent != "" {
+		t.Errorf("a shell action carries edit content: %q", b.EditContent)
+	}
+}

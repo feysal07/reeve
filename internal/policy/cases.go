@@ -48,6 +48,8 @@ type CaseAction struct {
 	RepositoryEnvironment string `yaml:"repositoryEnvironment,omitempty"`
 	Branch                string `yaml:"branch,omitempty"`
 	RepositoryState       string `yaml:"repositoryState,omitempty"`
+	// EditContent is what a write or edit puts in place.
+	EditContent string `yaml:"editContent,omitempty"`
 }
 
 // repository is the repository a case places its action in, or nil when it states none.
@@ -149,6 +151,7 @@ func (c *Cases) Run(p *Policy) []CaseResult {
 			Environment: tc.Action.Environment,
 			MCPStanding: tc.Action.MCPRegistry,
 			Repository:  tc.Action.repository(),
+			EditContent: tc.Action.EditContent,
 			History:     &History{},
 			Spend:       &Spend{},
 		}

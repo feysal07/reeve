@@ -1,0 +1,21 @@
+# Test integrity: Spring tests that replace a real collaborator with a mock.
+#
+# @MockBean swaps a bean in the application context for a Mockito mock, so a test that
+# was meant to exercise the wiring passes against a fake. An agent reaches for it when an
+# integration test is hard to make pass. Matched on what the edit writes, which the guard
+# reads from the request and never logs.
+version: 1
+name: test-integrity
+default: allow
+
+rules:
+  - id: mockbean-in-tests
+    description: Adding @MockBean to a Java test
+    decision: ask
+    reason: >-
+      @MockBean replaces a real bean with a mock across the test's application context.
+      Check that the test still exercises what it was written for.
+    match:
+      kind: [write]
+      path: ["**/src/test/**/*.java", "**/*Test.java", "**/*IT.java"]
+      editContains: ["@MockBean", "@MockitoBean"]

@@ -73,3 +73,15 @@ func TestAnUnreadableRepositoryRefusesARuleOnIt(t *testing.T) {
 		t.Fatalf("decision = %+v, want a refusal", d)
 	}
 }
+
+// TestWhatAnEditWritesNeverReachesTheLog. A rule can match on edit content, and the log
+// is kept for thirty days and read by more people than the code is.
+func TestWhatAnEditWritesNeverReachesTheLog(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "decisions.jsonl")
+	logDecision(log, policy.Action{Agent: "claude-code", Kind: policy.KindWrite, Paths: []string{"/r/A.java"},
+		EditContent: "SECRET_EDIT_BODY"}, policy.Decision{Effect: policy.EffectAsk}, "", 0, false)
+	b, _ := os.ReadFile(log)
+	if strings.Contains(string(b), "SECRET_EDIT_BODY") {
+		t.Fatalf("edit content reached the log: %s", b)
+	}
+}

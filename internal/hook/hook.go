@@ -377,6 +377,15 @@ func populate(a *policy.Action, input map[string]any) {
 			a.Paths = append(a.Paths, v)
 		}
 	}
+	// What a write or edit puts in place, for rules that match on it. Carried in a
+	// field that is never serialised, so it cannot reach the decision log.
+	var written []string
+	for _, k := range []string{"content", "contents", "new_string", "new_str", "newText", "newString",
+		"file_text", "new_source", "replacement"} {
+		if v, ok := input[k].(string); ok && v != "" {
+			written = append(written, v)
+		}
+	}
 	// Some agents pass several edits in one call.
 	if edits, ok := input["edits"].([]any); ok {
 		for _, e := range edits {
@@ -384,8 +393,16 @@ func populate(a *policy.Action, input map[string]any) {
 				if v := firstString(m, pathKeys); v != "" {
 					a.Paths = append(a.Paths, v)
 				}
+				for _, k := range []string{"new_string", "new_str", "newText", "newString", "content", "replacement"} {
+					if v, ok := m[k].(string); ok && v != "" {
+						written = append(written, v)
+					}
+				}
 			}
 		}
+	}
+	if a.Kind == policy.KindWrite {
+		a.EditContent = strings.Join(written, "\n")
 	}
 
 	// Gemini's web_fetch takes no url field at all: it is handed a prompt that

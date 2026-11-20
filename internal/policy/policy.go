@@ -150,6 +150,14 @@ type Match struct {
 
 	// Repository matches the repository an action works in, and the branch.
 	Repository *RepositoryMatch `yaml:"repository,omitempty"`
+
+	// CommitMessage matches a git commit on its message, read from the command.
+	CommitMessage *CommitMatch `yaml:"commitMessage,omitempty"`
+
+	// EditContains matches a write or edit on what it writes. The content is matched
+	// and never kept: the action carries it in a field that is not serialised, so it
+	// cannot reach the decision log.
+	EditContains []string `yaml:"editContains,omitempty"`
 }
 
 // personScoped reports whether any counting match on this rule is totalled per person.
@@ -333,6 +341,11 @@ func Parse(b []byte) (*Policy, error) {
 		}
 		if r.Match.Repository != nil {
 			if err := r.Match.Repository.validate(r.ID); err != nil {
+				return nil, err
+			}
+		}
+		if r.Match.CommitMessage != nil {
+			if err := r.Match.CommitMessage.validate(r.ID); err != nil {
 				return nil, err
 			}
 		}
@@ -703,6 +716,12 @@ func (m Match) matches(a Action) bool {
 		return false
 	}
 	if m.Repository != nil && !m.Repository.matches(a) {
+		return false
+	}
+	if m.CommitMessage != nil && !m.CommitMessage.matches(a) {
+		return false
+	}
+	if len(m.EditContains) > 0 && !editContains(m.EditContains, a.EditContent) {
 		return false
 	}
 	if len(m.Environment) > 0 && !anyEqualFold(m.Environment, a.Environment) {

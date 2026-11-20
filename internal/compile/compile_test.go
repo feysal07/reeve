@@ -800,7 +800,8 @@ func TestEveryMatchFieldIsClassifiedForCompilation(t *testing.T) {
 		"Environment": "conditionalCoverage", "Repeated": "conditionalCoverage",
 		"Spend": "conditionalCoverage", "TokenBudget": "conditionalCoverage",
 		"Allowance": "conditionalCoverage", "MCP": "conditionalCoverage",
-		"Repository": "conditionalCoverage",
+		"Repository": "conditionalCoverage", "CommitMessage": "conditionalCoverage",
+		"EditContains": "conditionalCoverage",
 	}
 	mt := reflect.TypeOf(policy.Match{})
 	for i := 0; i < mt.NumField(); i++ {

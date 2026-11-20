@@ -78,6 +78,10 @@ type Action struct {
 	// Repository is the repository the action works in, resolved by the guard before
 	// Evaluate when a rule asks. Nil when none did, which a repository rule refuses.
 	Repository *RepositoryContext `json:"-"`
+	// EditContent is the text a write or edit puts in place, for rules that match on
+	// it. Never serialised: an edit can hold anything, and the decision log is kept for
+	// thirty days and read by more people than the code is.
+	EditContent string `json:"-"`
 
 	// Environment is what the action is about to touch, resolved from the command
 	// and from the tool's own current state rather than guessed from the text. It is
