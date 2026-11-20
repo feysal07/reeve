@@ -56,18 +56,49 @@ type settings struct {
 	// machine using one is not told its report is unverified for a key Claude Code
 	// documents; the shape is declared too, so a key inside it nobody has documented is
 	// still reported rather than waved through with the rest.
-	ExtraKnownMarketplaces map[string]struct {
-		Source struct {
-			Source string `json:"source"`
-			Repo   string `json:"repo"`
-			URL    string `json:"url"`
-			Path   string `json:"path"`
-			Ref    string `json:"ref"`
-		} `json:"source"`
-	} `json:"extraKnownMarketplaces"`
-	Sandbox *struct {
+	ExtraKnownMarketplaces marketplaces `json:"extraKnownMarketplaces"`
+	Sandbox                *struct {
 		Enabled *bool `json:"enabled"`
 	} `json:"sandbox"`
+}
+
+// marketplaces is extraKnownMarketplaces, and it never fails to decode. Found in review:
+// declared as plain typed fields, one marketplace written in a shape this build does not
+// expect - a string where an object goes - failed the decode of the whole settings file,
+// and every deny rule in it vanished from the report behind a parse error. Undeclared,
+// the key had been ignored; declaring it must not let it hide the rest of the file. A
+// value of the wrong type is left empty: nothing in it is read.
+type marketplaces map[string]marketplace
+
+func (m *marketplaces) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		return nil
+	}
+	out := marketplaces{}
+	for k, v := range raw {
+		var e marketplace
+		_ = json.Unmarshal(v, &e) // a partial entry is fine: nothing in it is read
+		out[k] = e
+	}
+	*m = out
+	return nil
+}
+
+// marketplace is one entry of extraKnownMarketplaces. Nothing in it is read: it exists
+// so the unknown-key check knows its shape.
+type marketplace struct {
+	Source     marketplaceSource `json:"source"`
+	AutoUpdate bool              `json:"autoUpdate"`
+}
+
+type marketplaceSource struct {
+	Source  string `json:"source"`
+	Repo    string `json:"repo"`
+	URL     string `json:"url"`
+	Path    string `json:"path"`
+	Ref     string `json:"ref"`
+	Package string `json:"package"`
 }
 
 type hookMatcher struct {
