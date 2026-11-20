@@ -110,6 +110,8 @@ new agent's request must fill where it can:
 | `Command`, `Paths`, `URLs` | What the action runs, touches or reaches. |
 | `MCPServer`, `MCPTool`, `MCPArguments` | An MCP call; arguments are matched, never logged. |
 | `EditContent` | What a write puts in place; matched, never logged. |
+| `TargetsUnreadable` | Why the files a write touches, or what it writes, could not be read; a rule on path or `editContains` then treats the write as matching, and the reason says so. An adapter sets it instead of leaving `Paths` empty. |
+| `AlsoKinds` | Further kinds the action is besides `Kind`, such as a shell command that runs the agent's patch tool and is also a write. |
 | `Prompt` | The prompt, where the event carries one; never stored. |
 | `MCPStanding` | Where the MCP server stands against the approved list; resolved by the guard. |
 | `Repository` | The repository and branch an action reaches; resolved by the guard from `.git`. |

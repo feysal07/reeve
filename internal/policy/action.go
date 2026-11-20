@@ -54,6 +54,12 @@ type Action struct {
 	// after it can be joined to the decision made before it.
 	ToolUseID string `json:"toolUseId,omitempty"`
 	Kind      Kind   `json:"kind"`
+	// AlsoKinds are further things this action does besides its Kind. A shell command
+	// that runs the agent's own patch tool is a shell command, and a rule written
+	// against shell commands must keep matching it; it is also a write, and a rule
+	// written against writes must reach it. One Kind cannot be both, and choosing
+	// either would silently exempt the action from the other family of rules.
+	AlsoKinds []Kind `json:"alsoKinds,omitempty"`
 
 	// Command is the full command line, for shell actions.
 	Command string `json:"command,omitempty"`
@@ -82,6 +88,13 @@ type Action struct {
 	// it. Never serialised: an edit can hold anything, and the decision log is kept for
 	// thirty days and read by more people than the code is.
 	EditContent string `json:"-"`
+	// TargetsUnreadable says why the files this write touches, or what it writes, could
+	// not be worked out: empty when they were. A write whose targets are unknown is not
+	// a write to nothing. A rule that matches on path or editContains cannot say whether
+	// it applies, so Evaluate treats it as applying, and an operator who wrote a rule
+	// about a file is not bypassed by a request that merely arrived in a shape the
+	// guard could not read. It holds a fixed description, never any of the content.
+	TargetsUnreadable string `json:"targetsUnreadable,omitempty"`
 
 	// Environment is what the action is about to touch, resolved from the command
 	// and from the tool's own current state rather than guessed from the text. It is
