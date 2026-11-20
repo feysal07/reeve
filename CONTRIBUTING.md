@@ -41,3 +41,9 @@ as a vulnerability in a tool whose job is to decide whether an action is permitt
 - Enforcement fails closed. If policy cannot be evaluated, the answer is deny.
 - No telemetry leaves the machine unless the operator configured a destination.
 - Prompt and response content is never captured by default.
+
+## Adding an agent
+
+[`docs/ADAPTERS.md`](docs/ADAPTERS.md) maps the four surfaces a new agent touches, scan,
+hook, compile and install, with an example adapter that is compiled and tested, and the
+conformance kit, `hook.CheckEncoder`, that fails a refusal the agent would not read as one.
