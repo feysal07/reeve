@@ -494,3 +494,27 @@ func TestADirectoryThatIsNotHereCannotBeVouchedFor(t *testing.T) {
 		t.Fatal("a directory that does not exist read as one that defines nothing")
 	}
 }
+
+// TestAMarketplaceDeclarationIsNotReportedAsAnUnknownSetting. Found on the first scan of
+// a Mac with plugins installed: extraKnownMarketplaces, which Claude Code documents for
+// adding a plugin marketplace, raised "settings this version of Reeve does not
+// understand" on every machine that used one, telling the reader to treat the report as
+// unverified for a key that changes nothing it checks. A key inside a marketplace's
+// source that Reeve has not seen is still reported.
+func TestAMarketplaceDeclarationIsNotReportedAsAnUnknownSetting(t *testing.T) {
+	env := pluginHome(t, `{"enabledPlugins": {"tracker@mkt": true},
+		"extraKnownMarketplaces": {"mkt": {"source": {"source": "git", "url": "https://example.test/mkt.git"}},
+			"team": {"source": {"source": "github", "repo": "org/plugins", "ref": "main", "path": "p"}},
+			"odd": {"source": {"source": "github", "repo": "org/x", "pinnedSha": "abc"}}}}`)
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unknown []string
+	for _, f := range inst.ConfigFiles {
+		unknown = append(unknown, f.UnknownKeys...)
+	}
+	if len(unknown) != 1 || unknown[0] != "extraKnownMarketplaces.odd.source.pinnedSha" {
+		t.Errorf("unknown keys = %v, want only the marketplace key nobody has documented", unknown)
+	}
+}

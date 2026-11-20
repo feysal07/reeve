@@ -52,7 +52,20 @@ type settings struct {
 	// EnabledPlugins says which installed plugins are switched on. A plugin can
 	// bring MCP servers of its own; see loadPluginSources.
 	EnabledPlugins map[string]bool `json:"enabledPlugins"`
-	Sandbox        *struct {
+	// ExtraKnownMarketplaces is where plugins may be installed from. Declared so that a
+	// machine using one is not told its report is unverified for a key Claude Code
+	// documents; the shape is declared too, so a key inside it nobody has documented is
+	// still reported rather than waved through with the rest.
+	ExtraKnownMarketplaces map[string]struct {
+		Source struct {
+			Source string `json:"source"`
+			Repo   string `json:"repo"`
+			URL    string `json:"url"`
+			Path   string `json:"path"`
+			Ref    string `json:"ref"`
+		} `json:"source"`
+	} `json:"extraKnownMarketplaces"`
+	Sandbox *struct {
 		Enabled *bool `json:"enabled"`
 	} `json:"sandbox"`
 }
