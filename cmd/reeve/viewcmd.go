@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/feysal07/reeve/internal/telemetry"
 	"net"
 	"os"
 	"os/signal"
@@ -36,6 +37,9 @@ func runView(args []string) error {
 		return err
 	}
 	logPath, storePath := sessionSources(*logFlag, *storeFlag, false)
+	if err := telemetry.CheckDecisionLogName(logPath); err != nil {
+		return err
+	}
 	if logPath == "" && storePath == "" {
 		return fmt.Errorf("give a decision log (--log) or an event store (--store), or both")
 	}

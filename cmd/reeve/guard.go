@@ -49,7 +49,7 @@ func runGuard(args []string) error {
 	identityFlag := fs.String("identity", "", "who this machine belongs to, for rules totalled per person")
 	teamsPath := fs.String("teams", "", "team mapping, for rules totalled per team")
 	dryRun := fs.Bool("dry-run", false, "evaluate and log, but always allow")
-	outcomesPath := fs.String("outcomes", "", "where post-tool events are recorded (default: outcomes.jsonl beside the decision log)")
+	outcomesPath := fs.String("outcomes", "", "where post-tool events are recorded (default: <log>.outcomes.jsonl beside the decision log)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -77,6 +77,16 @@ func runGuard(args []string) error {
 	// A shell on Windows can prepend a byte order mark when piping, which would
 	// make a perfectly good request unparseable and turn every action into a denial.
 	raw = config.StripBOM(raw)
+
+	// A decision log named like an outcome log would share its file with one. Refused
+	// before anything is decided or written; a post-tool event cannot be refused, so
+	// it is only said.
+	if err := telemetry.CheckDecisionLogName(decisionLogPath(*logPath)); err != nil {
+		if _, ok := hook.DecodeOutcome(raw); ok {
+			return err
+		}
+		return blockWith(agent, "", err.Error())
+	}
 
 	// After the action, not before it: record that it ran and say nothing. Exit 0 with
 	// no output, whatever happens, because nothing can be refused after the fact and a

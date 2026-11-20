@@ -169,7 +169,7 @@ func TestAnOutcomeIsRecordedBesideTheDecisionLogAndNotInIt(t *testing.T) {
 	log := filepath.Join(dir, "decisions.jsonl")
 	o := hook.Outcome{Event: "PostToolUse", SessionID: "s", ToolUseID: "toolu_1", ToolName: "Bash"}
 	recordOutcome("", log, model.AgentClaudeCode, o, time.Now())
-	out, exists, err := telemetry.ReadOutcomes(filepath.Join(dir, telemetry.OutcomesFile))
+	out, exists, err := telemetry.ReadOutcomes(filepath.Join(dir, "decisions.outcomes.jsonl"))
 	if err != nil || !exists || len(out) != 1 || out[0].ToolUseID != "toolu_1" || out[0].Result != telemetry.OutcomeRan {
 		t.Fatalf("outcomes = %+v (exists %v, err %v)", out, exists, err)
 	}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/scan"
+	"github.com/feysal07/reeve/internal/telemetry"
 	"io"
 	"os"
 	"os/exec"
@@ -67,6 +68,7 @@ func runDoctor(args []string) error {
 	logPath := installedLogPath(opts)
 	rep.LogPath = logPath
 	rep.Decisions = readDecisionSummary(logPath)
+	noteDecisionLog(&rep, logPath)
 	if rep.Decisions.Exists {
 		rep.Seal = checkSeal(logPath, time.Now())
 	}
@@ -124,9 +126,11 @@ type doctorReport struct {
 	Decisions     decisionStats `json:"decisions"`
 	// Seal is the state of the decision log's tamper-evidence. Nil when there is no
 	// log to seal.
-	Seal   *sealHealth   `json:"seal,omitempty"`
-	Policy policyHealth  `json:"policy"`
-	Agents []agentHealth `json:"agents"`
+	Seal *sealHealth `json:"seal,omitempty"`
+	// LegacyOutcomes is a shared outcomes.jsonl beside a log it is not attributed to.
+	LegacyOutcomes string        `json:"legacyOutcomeLog,omitempty"`
+	Policy         policyHealth  `json:"policy"`
+	Agents         []agentHealth `json:"agents"`
 }
 
 type agentHealth struct {
@@ -562,6 +566,11 @@ func renderDoctor(r doctorReport) {
 		}
 	}
 
+	if r.LegacyOutcomes != "" {
+		fmt.Printf("  outcome log  : outcomes written before v0.8.0 are in %s and are not attributed\n", r.LegacyOutcomes)
+		fmt.Printf("                 to this decision log\n")
+	}
+
 	switch {
 	case r.Decisions.Problem != "":
 		fmt.Printf("  decision log : CANNOT BE READ, so what the guard decided is not known\n")
@@ -796,4 +805,13 @@ func markBelowMinimum(rep *doctorReport, policyPath string) {
 			rep.Agents[i].Version = p
 		}
 	}
+}
+
+// noteDecisionLog adds what doctor says about the log's name and its outcomes: a name an
+// outcome log takes is a problem, and a shared outcomes.jsonl it cannot own is said.
+func noteDecisionLog(rep *doctorReport, logPath string) {
+	if err := telemetry.CheckDecisionLogName(logPath); err != nil {
+		rep.Decisions.Problem = err.Error()
+	}
+	rep.LegacyOutcomes = telemetry.UnattributedLegacyOutcomes(logPath)
 }

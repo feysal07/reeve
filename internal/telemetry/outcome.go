@@ -49,20 +49,108 @@ const (
 	OutcomeFailed = "failed"
 )
 
-// OutcomesFile is the name of the outcome log, beside the decision log.
+// OutcomesSuffix is what an outcome log's name takes in place of its decision log's
+// extension: decisions.jsonl is paired with decisions.outcomes.jsonl.
 //
 // A separate file rather than lines in the decision log, because everything that reads
 // the decision log - the counting rules, replay, the report, an older build - reads
 // each line as a decision. An outcome line there would count every action twice in a
 // repetition rule, which refuses at the wrong count and says nothing about why.
-const OutcomesFile = "outcomes.jsonl"
+//
+// Named for its decision log rather than shared. Found in review: every log in a
+// directory wrote one outcomes.jsonl, so the trial's trial-decisions.jsonl, which sits
+// beside a real decisions.jsonl, joined the real log's asks to its outcomes, and
+// rotating either moved the other's outcomes into a segment named after the wrong log.
+//
+// The name cannot be mistaken for a segment of any log. A segment is
+// <name>-<UTC stamp>.jsonl and is only recognised when what follows the dash parses as a
+// stamp; an outcome log has a dot where that dash is, and its own segments are
+// decisions.outcomes-<stamp>.jsonl, which a glob for decisions-<stamp>.jsonl cannot match.
+const OutcomesSuffix = ".outcomes"
+
+// LegacyOutcomesFile is the one outcome log every decision log in a directory used to
+// share, and which installs made before the fix still hold.
+const LegacyOutcomesFile = "outcomes.jsonl"
+
+// DefaultDecisionLogName is the decision log an install made before outcome logs were
+// named for their decision log wrote beside, and so the only one the legacy file is
+// attributed to.
+const DefaultDecisionLogName = "decisions.jsonl"
+
+// CheckDecisionLogName refuses a decision log whose name is one an outcome log takes.
+//
+// Found in review: a decision log named x.outcomes.jsonl is the outcome log of x.jsonl,
+// the same live file and the same segments, so pruning the one deleted the other's sealed
+// records with no tombstone; and one named outcomes.jsonl beside decisions.jsonl was the
+// legacy outcome log. Compared without regard to case, because on the file systems of
+// macOS and Windows Outcomes.jsonl is that file.
+func CheckDecisionLogName(decisionLog string) error {
+	if decisionLog == "" {
+		return nil
+	}
+	base := strings.ToLower(filepath.Base(decisionLog))
+	for _, name := range []string{base, strings.TrimSuffix(base, filepath.Ext(base))} {
+		if name == "outcomes" || strings.HasSuffix(name, OutcomesSuffix) {
+			return fmt.Errorf("%s cannot be a decision log: a name ending in %s, or named outcomes, "+
+				"is where an outcome log is kept, so the two would share a file and rotating or "+
+				"pruning one would remove the other's records. Name it something else, such as decisions.jsonl",
+				decisionLog, OutcomesSuffix)
+		}
+	}
+	return nil
+}
 
 // OutcomesPathFor is the outcome log that goes with a decision log.
+//
+// The extension is kept as written, as a rotated segment's is, so a.JSONL goes with
+// a.outcomes.JSONL. Logs that differ only in extension, x.jsonl and x.log, therefore have
+// different outcome logs and different segments; none of them collide. A log with no
+// extension gets .jsonl.
 func OutcomesPathFor(decisionLog string) string {
 	if decisionLog == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(decisionLog), OutcomesFile)
+	ext := filepath.Ext(decisionLog)
+	if ext == "" {
+		ext = ".jsonl"
+	}
+	return strings.TrimSuffix(decisionLog, filepath.Ext(decisionLog)) + OutcomesSuffix + ext
+}
+
+// LegacyOutcomesPathFor is the old shared outcome log, for the decision log it can
+// honestly be attributed to and for no other, or "" for any other.
+//
+// Read for every log in the directory, a legacy outcome would be joined to the trial
+// log's asks as well. Read for none, an upgrade would drop every outcome already
+// recorded, and an ask with its outcome lost reads as not seen to run, which looks like
+// somebody declining it.
+//
+// The name is compared without regard to case on every platform, not only where the file
+// system folds it: the answer then does not depend on the machine reading the log, and
+// the cost of folding where it need not is a legacy file read for Decisions.jsonl, which
+// no older install ever wrote.
+func LegacyOutcomesPathFor(decisionLog string) string {
+	if decisionLog == "" || !strings.EqualFold(filepath.Base(decisionLog), DefaultDecisionLogName) {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(decisionLog), LegacyOutcomesFile)
+}
+
+// UnattributedLegacyOutcomes is the legacy outcome log in a non-default decision log's
+// directory, or "" when there is none or the log is the default one that reads it.
+//
+// Not guessed at: the file was shared, so there is no knowing which log's asks its lines
+// answer, and joining it to the wrong log is the bug this naming fixed. It is said
+// instead, because outcomes that are not read make the asks they answered look declined.
+func UnattributedLegacyOutcomes(decisionLog string) string {
+	if decisionLog == "" || LegacyOutcomesPathFor(decisionLog) != "" {
+		return ""
+	}
+	p := filepath.Join(filepath.Dir(decisionLog), LegacyOutcomesFile)
+	if info, err := os.Stat(p); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return p
 }
 
 // ReadOutcomes reads an outcome log. A file that does not exist is not an error and
