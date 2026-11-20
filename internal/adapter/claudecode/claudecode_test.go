@@ -494,3 +494,51 @@ func TestADirectoryThatIsNotHereCannotBeVouchedFor(t *testing.T) {
 		t.Fatal("a directory that does not exist read as one that defines nothing")
 	}
 }
+
+// TestAMarketplaceDeclarationIsNotReportedAsAnUnknownSetting. Found on the first scan of
+// a Mac with plugins installed: extraKnownMarketplaces, which Claude Code documents for
+// adding a plugin marketplace, raised "settings this version of Reeve does not
+// understand" on every machine that used one, telling the reader to treat the report as
+// unverified for a key that changes nothing it checks. A key inside a marketplace's
+// source that Reeve has not seen is still reported.
+func TestAMarketplaceDeclarationIsNotReportedAsAnUnknownSetting(t *testing.T) {
+	env := pluginHome(t, `{"enabledPlugins": {"tracker@mkt": true},
+		"extraKnownMarketplaces": {"mkt": {"source": {"source": "git", "url": "https://example.test/mkt.git"}},
+			"team": {"source": {"source": "github", "repo": "org/plugins", "ref": "main", "path": "p"}},
+			"npm": {"source": {"source": "npm", "package": "@org/plugins"}, "autoUpdate": true},
+			"odd": {"source": {"source": "github", "repo": "org/x", "pinnedSha": "abc"}}}}`)
+	inst, err := New().Inspect(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unknown []string
+	for _, f := range inst.ConfigFiles {
+		unknown = append(unknown, f.UnknownKeys...)
+	}
+	if len(unknown) != 1 || unknown[0] != "extraKnownMarketplaces.odd.source.pinnedSha" {
+		t.Errorf("unknown keys = %v, want only the marketplace key nobody has documented", unknown)
+	}
+}
+
+// TestAMarketplaceInAnUnexpectedShapeDoesNotHideTheRestOfTheFile. Found in review: with
+// the marketplace fields typed, a string where an object goes failed the decode of the
+// whole settings file, and its deny rules disappeared behind a parse error.
+func TestAMarketplaceInAnUnexpectedShapeDoesNotHideTheRestOfTheFile(t *testing.T) {
+	for _, odd := range []string{`"x"`, `{"a": "x"}`, `{"a": {"source": "github"}}`, `{"a": {"source": {"ref": 1}}}`} {
+		env := testEnv(t)
+		writeFile(t, filepath.Join(env.Home, ".claude", "settings.json"),
+			`{"permissions": {"deny": ["Bash(rm:*)"]}, "extraKnownMarketplaces": `+odd+`}`)
+		inst, err := New().Inspect(context.Background(), env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range inst.ConfigFiles {
+			if f.ParseError != "" {
+				t.Errorf("%s: the file failed to parse: %s", odd, f.ParseError)
+			}
+		}
+		if len(inst.Permissions.Deny) != 1 {
+			t.Errorf("%s: deny rules = %v, want the one in the file", odd, inst.Permissions.Deny)
+		}
+	}
+}
