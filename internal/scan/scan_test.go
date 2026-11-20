@@ -317,3 +317,50 @@ func TestAnAgentThatCouldNotBeInspectedIsUnknownAgainstItsMinimum(t *testing.T) 
 	}
 	t.Fatalf("no minimum-unknown finding for an agent that could not be inspected: %+v", rep.Findings)
 }
+
+// TestACorruptLineInTheHistoryIsCountedNotDroppedInSilence. A line that is not JSON used
+// to vanish, and when it was the only call to a server that server went unreported with
+// no sign anything was missing.
+func TestACorruptLineInTheHistoryIsCountedNotDroppedInSilence(t *testing.T) {
+	now := time.Now().UTC()
+	good := mcpLine(now, "claude-code", "a", "/w")
+
+	log := filepath.Join(t.TempDir(), "decisions.jsonl")
+	os.WriteFile(log, []byte("{not json\n"+good), 0o600)
+	h := readGuardHistory(log, now)
+	if h == nil || len(h.Problems) != 1 || !strings.Contains(h.Problems[0], "1 line(s) could not be read") {
+		t.Fatalf("a corrupt line in the middle of the live log: %+v", h)
+	}
+
+	// Blank lines are not damage.
+	log2 := filepath.Join(t.TempDir(), "decisions.jsonl")
+	os.WriteFile(log2, []byte("\n"+good+"\n\n"), 0o600)
+	if h := readGuardHistory(log2, now); h == nil || len(h.Problems) != 0 {
+		t.Errorf("blank lines were reported as damage: %+v", h)
+	}
+}
+
+// TestATornLastLineOfTheLiveLogIsNotDamageButOneInASealedSegmentIs. The guard appends to
+// the live file while a scan reads it, so a half-written final line is expected there.
+func TestATornLastLineOfTheLiveLogIsNotDamageButOneInASealedSegmentIs(t *testing.T) {
+	now := time.Now().UTC()
+	good := mcpLine(now.Add(-time.Hour), "claude-code", "a", "/w")
+
+	log := filepath.Join(t.TempDir(), "decisions.jsonl")
+	os.WriteFile(log, []byte(good+`{"time":"2026-01-0`), 0o600)
+	if h := readGuardHistory(log, now); h == nil || len(h.Problems) != 0 {
+		t.Errorf("a torn last line of the live log was reported as damage: %+v", h)
+	}
+
+	log2 := filepath.Join(t.TempDir(), "decisions.jsonl")
+	os.WriteFile(log2, []byte(good+`{"time":"2026-01-0`), 0o600)
+	rot, err := audit.Rotate(log2, now.Add(-30*time.Minute), 0, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(log2, []byte(mcpLine(now, "claude-code", "b", "/w")), 0o600)
+	h := readGuardHistory(log2, now)
+	if h == nil || len(h.Problems) != 1 || !strings.Contains(h.Problems[0], filepath.Base(rot.Segment)) {
+		t.Errorf("a torn last line in a sealed segment: %+v", h)
+	}
+}

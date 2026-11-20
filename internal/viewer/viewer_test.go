@@ -262,3 +262,24 @@ func TestTheMCPPageHasNoWayToChangeAnything(t *testing.T) {
 		t.Errorf("POST /api/mcp: %d", w.Code)
 	}
 }
+
+// TestTheMCPPageCarriesAPartlyReadDecisionLogToTheBrowserAndShowsIt. A floor of servers
+// shown as the whole list is the invisible failure; the API must carry the gap and the
+// page script must render it.
+func TestTheMCPPageCarriesAPartlyReadDecisionLogToTheBrowserAndShowsIt(t *testing.T) {
+	load := func() (MCPView, error) {
+		return MCPView{Report: mcp.Report{HistoryPartial: []mcp.HistoryGap{{Machine: "this machine", Cause: "line 4"}}}}, nil
+	}
+	r := get(t, Handler(fixture(), load, token), "127.0.0.1:1", "/api/mcp", token)
+	body, _ := io.ReadAll(r.Body)
+	if !strings.Contains(string(body), `"historyPartial"`) || !strings.Contains(string(body), "line 4") {
+		t.Errorf("the gap did not reach the API: %s", body)
+	}
+	js, err := os.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "historyPartial") {
+		t.Error("app.js never reads historyPartial, so the browser would show a floor as a total")
+	}
+}

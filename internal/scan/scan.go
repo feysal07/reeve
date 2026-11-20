@@ -7,6 +7,7 @@ package scan
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -117,12 +118,10 @@ func Run(ctx context.Context, reg *adapter.Registry, opts Options) (model.Report
 	attachSeenServers(report.Installations, history, projectCheckerFor(reg, env))
 	if history != nil && len(history.Problems) > 0 {
 		report.Findings = append(report.Findings, model.Finding{
-			ID:       "scan.history-partial",
+			ID:       HistoryPartialID,
 			Severity: model.SeverityMedium,
 			Title:    "Part of the guard's decision log could not be read",
-			Detail: "What this scan says the guard has seen, and the MCP servers called " +
-				"that no configuration lists, are a floor: " + strings.Join(history.Problems, "; ") +
-				". Run reeve audit verify on the log.",
+			Detail:   HistoryPartialDetail(history.Problems),
 		})
 	}
 	report.Findings = append(report.Findings, findings.EvaluateWith(report.Installations, history)...)
@@ -211,9 +210,9 @@ func buildEnv(opts Options) (adapter.Env, error) {
 // readGuardHistory summarises the decision log: which agents it has decided for, how
 // often, and how recently.
 //
-// Read-only, like the rest of a scan. A line that does not parse yields less evidence
-// rather than an error, but a part of the log that could not be read at all is named in
-// Problems: found in review, the reader dropped a listing error, skipped a segment it
+// Read-only, like the rest of a scan. A line that does not parse is no reason to stop,
+// but it is counted and named in Problems, as is any part of the log that could not be
+// read at all (the last line of the live file excepted, see below): found in review, the reader dropped a listing error, skipped a segment it
 // could not open and stopped at a line too long for its buffer, each time reporting
 // fewer MCP servers as though that were all of them.
 //
@@ -236,8 +235,25 @@ func readGuardHistory(path string, now time.Time) *findings.GuardHistory {
 	w, err := audit.ReadWindow(path, cutoff, func(p audit.Part, r io.Reader) error {
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		unreadable, lastUnreadable := 0, false
 		for sc.Scan() {
-			readHistoryLine(sc.Bytes(), cutoff, h)
+			ok := readHistoryLine(sc.Bytes(), cutoff, h)
+			lastUnreadable = !ok
+			if !ok {
+				unreadable++
+			}
+		}
+		// A line that is not JSON was dropped in silence, and when it was the only
+		// call to a server that server went unreported with no sign anything was
+		// missing. The one exemption is the last line of the live file: the guard
+		// appends to it while this reads, so a half-written final line is expected
+		// and not damage. In a rotated segment, which is sealed, it would be.
+		if p.Live && lastUnreadable {
+			unreadable--
+		}
+		if unreadable > 0 {
+			h.Problems = append(h.Problems, fmt.Sprintf("%s: %d line(s) could not be read",
+				filepath.Base(p.Path), unreadable))
 		}
 		if err := sc.Err(); err != nil {
 			// Said, and the rest of the window still read: one damaged segment is
@@ -260,10 +276,39 @@ func readGuardHistory(path string, now time.Time) *findings.GuardHistory {
 	return h
 }
 
+// HistoryPartialID is the id of the finding raised when the decision log could only be
+// partly read. One constant, because reeve mcp matches on it to say that the servers
+// seen in use are a floor, and a copy of the string that drifted would silently turn
+// that warning off.
+const HistoryPartialID = "scan.history-partial"
+
+const (
+	historyPartialLead = "What this scan says the guard has seen, and the MCP servers called " +
+		"that no configuration lists, are a floor: "
+	historyPartialTail = ". Run reeve audit verify on the log."
+)
+
+// HistoryPartialDetail is the finding's text for these problems.
+func HistoryPartialDetail(problems []string) string {
+	return historyPartialLead + strings.Join(problems, "; ") + historyPartialTail
+}
+
+// HistoryPartialCause is HistoryPartialDetail's problems alone, for a caller that says
+// the surrounding sentence once itself. A detail it does not recognise, such as one
+// from another build, comes back whole rather than empty.
+func HistoryPartialCause(detail string) string {
+	if c, ok := strings.CutPrefix(detail, historyPartialLead); ok {
+		return strings.TrimSuffix(c, historyPartialTail)
+	}
+	return detail
+}
+
 // historyWindow is how far back the scan looks for what the guard has seen.
 const historyWindow = 30 * 24 * time.Hour
 
-func readHistoryLine(line []byte, cutoff time.Time, h *findings.GuardHistory) {
+// readHistoryLine folds one log line into h, and reports false when the line was not
+// a decision record at all, so the caller can say so rather than count it as nothing.
+func readHistoryLine(line []byte, cutoff time.Time, h *findings.GuardHistory) bool {
 	var rec struct {
 		Time      time.Time     `json:"time"`
 		Agent     model.AgentID `json:"agent"`
@@ -273,8 +318,14 @@ func readHistoryLine(line []byte, cutoff time.Time, h *findings.GuardHistory) {
 		// Configured is the guard's evidence from the moment of the call.
 		Configured string `json:"mcpConfigured"`
 	}
-	if json.Unmarshal(line, &rec) != nil || rec.Agent == "" || rec.Time.Before(cutoff) {
-		return
+	if len(bytes.TrimSpace(line)) == 0 {
+		return true
+	}
+	if json.Unmarshal(line, &rec) != nil {
+		return false
+	}
+	if rec.Agent == "" || rec.Time.Before(cutoff) {
+		return true
 	}
 	h.Total[rec.Agent]++
 	if rec.Time.After(h.LastSeen[rec.Agent]) {
@@ -282,7 +333,7 @@ func readHistoryLine(line []byte, cutoff time.Time, h *findings.GuardHistory) {
 	}
 	// Only an MCP call has a server: the guard records mcpServer for nothing else.
 	if rec.MCPServer == "" {
-		return
+		return true
 	}
 	byServer := h.MCP[rec.Agent]
 	if byServer == nil {
@@ -311,6 +362,7 @@ func readHistoryLine(line []byte, cutoff time.Time, h *findings.GuardHistory) {
 	default:
 		u.Unchecked++
 	}
+	return true
 }
 
 // projectChecker reports whether the project at dir configures an MCP server of this

@@ -12,6 +12,7 @@ import (
 
 	"github.com/feysal07/reeve/internal/adapter"
 	"github.com/feysal07/reeve/internal/mcp"
+	"github.com/feysal07/reeve/internal/model"
 	"github.com/feysal07/reeve/internal/scan"
 	"github.com/feysal07/reeve/internal/session"
 	"github.com/feysal07/reeve/internal/viewer"
@@ -104,6 +105,15 @@ func mcpInventory(explicit string) (viewer.MCPView, error) {
 	if err != nil {
 		return v, err
 	}
-	v.Report = mcp.Reconcile(reg, observedIn(report, "this machine"))
+	v.Report = reconcileForView(reg, report)
 	return v, nil
+}
+
+// reconcileForView is the MCP page's reconciliation of one machine's scan. It carries
+// the partly read decision log with it: without that the page listed a floor of
+// servers as though it were the whole.
+func reconcileForView(reg *mcp.Registry, report model.Report) mcp.Report {
+	rep := mcp.Reconcile(reg, observedIn(report, "this machine"))
+	rep.HistoryPartial = historyGaps(report, "this machine")
+	return rep
 }
