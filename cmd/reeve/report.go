@@ -106,8 +106,11 @@ See docs/TELEMETRY.md`)
 	}
 	var outcomes []telemetry.Outcome
 	outcomesRecorded := false
-	var gaps, pruned, outcomeGaps []string
+	var gaps, pruned, outcomeGaps, legacyOutcomes []string
 	for _, path := range logs {
+		if err := telemetry.CheckDecisionLogName(path); err != nil {
+			return err
+		}
 		d, err := readDecisionWindow(path, from)
 		if err != nil {
 			return err
@@ -124,6 +127,9 @@ See docs/TELEMETRY.md`)
 			return err
 		}
 		outcomes = append(outcomes, o...)
+		if p := telemetry.UnattributedLegacyOutcomes(path); p != "" {
+			legacyOutcomes = append(legacyOutcomes, p)
+		}
 		outcomesRecorded = outcomesRecorded || exists
 	}
 
@@ -146,6 +152,7 @@ See docs/TELEMETRY.md`)
 	rep := telemetry.AggregateWith(events, from, time.Time{}, billing)
 	rep.DecisionGaps, rep.DecisionPruned = gaps, pruned
 	rep.OutcomeGaps = outcomeGaps
+	rep.LegacyOutcomes = legacyOutcomes
 	if len(logs) > 0 {
 		rep.Asks = telemetry.MeasureAsks(events, outcomes, outcomesRecorded)
 	}
@@ -222,6 +229,10 @@ func renderReport(r telemetry.Report, top int) {
 		for _, g := range r.OutcomeGaps {
 			fmt.Printf("                 %s\n", g)
 		}
+	}
+	for _, p := range r.LegacyOutcomes {
+		fmt.Printf("  outcome log  : outcomes written before v0.8.0 are in %s and are not attributed\n", p)
+		fmt.Printf("                 to this log, so asks they answered may be counted as not seen to run\n")
 	}
 	if n := len(r.DecisionPruned); n > 0 {
 		fmt.Printf("  retention    : %d %s inside this window removed on schedule, so the\n", n, plural(n, "segments", "segment"))

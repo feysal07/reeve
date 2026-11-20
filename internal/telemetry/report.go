@@ -145,6 +145,9 @@ type Report struct {
 	// OutcomeGaps names outcome segments inside the window that could not be read, so
 	// an ask counted as not seen to run may have run.
 	OutcomeGaps []string `json:"outcomeLogGaps,omitempty"`
+	// LegacyOutcomes names a shared outcomes.jsonl beside a decision log it cannot be
+	// attributed to. Its outcomes are not read for this log.
+	LegacyOutcomes []string `json:"legacyOutcomeLogs,omitempty"`
 
 	// Identities says how much of what this report attributes to people rests on an
 	// identity the operator's identity provider proved, and how much on the agent's

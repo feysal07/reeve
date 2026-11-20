@@ -165,6 +165,9 @@ func runAuditSeal(args []string) error {
 	if path == "" {
 		return fmt.Errorf("give the decision log to seal, or set REEVE_DECISION_LOG")
 	}
+	if err := telemetry.CheckDecisionLogName(path); err != nil {
+		return err
+	}
 
 	s, sealed, err := audit.AddIfChanged(path, time.Now(), version)
 	if err != nil {
@@ -218,6 +221,9 @@ func runAuditRotate(args []string) error {
 	if path == "" {
 		return fmt.Errorf("give the decision log to rotate, or set REEVE_DECISION_LOG")
 	}
+	if err := telemetry.CheckDecisionLogName(path); err != nil {
+		return err
+	}
 	if *keep < 0 {
 		return fmt.Errorf("--keep cannot be negative")
 	}
@@ -230,9 +236,26 @@ func runAuditRotate(args []string) error {
 	// Checked before anything moves, so a clash refuses with nothing changed. Found in
 	// review: checked after, the decision log had already rotated, and the failure hid
 	// what had happened to it.
-	outcomes := telemetry.OutcomesPathFor(path)
-	if dest := audit.CompanionSegmentPath(outcomes, now); pathTaken(dest) {
-		return fmt.Errorf("not rotated: %s already exists", dest)
+	// The legacy shared outcome log goes too, for the default decision log, so one
+	// left by an older install is moved under the same stamp and pruned as it always
+	// was rather than stranded beside a log it no longer matches.
+	type companion struct {
+		path   string
+		legacy bool
+	}
+	var companions []companion
+	for _, c := range []companion{{telemetry.OutcomesPathFor(path), false}, {telemetry.LegacyOutcomesPathFor(path), true}} {
+		if c.path != "" {
+			companions = append(companions, c)
+		}
+	}
+	for _, c := range companions {
+		if err := refuseCompanionIsLog(path, []string{c.path}); err != nil {
+			return err
+		}
+		if dest := audit.CompanionSegmentPath(c.path, now); pathTaken(dest) {
+			return fmt.Errorf("not rotated: %s already exists", dest)
+		}
 	}
 	rot, err := audit.Rotate(path, now, *keep, version)
 	if err != nil {
@@ -242,13 +265,23 @@ func runAuditRotate(args []string) error {
 	// in review: an outcome log that once failed to move stayed in place, and nothing
 	// moved it again until the decision log next had lines to rotate.
 	var outErrs []error
-	outSeg, err := audit.RotateCompanionAt(outcomes, now)
-	if err != nil {
-		outErrs = append(outErrs, err)
-	}
-	outPruned, err := audit.PruneCompanion(outcomes, now, *keep)
-	if err != nil {
-		outErrs = append(outErrs, fmt.Errorf("old outcome segments could not all be pruned: %w", err))
+	var outSeg, legacySeg string
+	var outPruned []string
+	for _, c := range companions {
+		seg, err := audit.RotateCompanionAt(c.path, now)
+		if err != nil {
+			outErrs = append(outErrs, err)
+		}
+		if c.legacy {
+			legacySeg = seg
+		} else {
+			outSeg = seg
+		}
+		pruned, err := audit.PruneCompanion(c.path, now, *keep)
+		if err != nil {
+			outErrs = append(outErrs, fmt.Errorf("old outcome segments could not all be pruned: %w", err))
+		}
+		outPruned = append(outPruned, pruned...)
 	}
 	outErr := errors.Join(outErrs...)
 	if *asJSON {
@@ -261,10 +294,11 @@ func runAuditRotate(args []string) error {
 		if err := enc.Encode(struct {
 			SchemaVersion string `json:"schemaVersion"`
 			audit.Rotation
-			OutcomesSegment string   `json:"outcomesSegment,omitempty"`
-			OutcomesPruned  []string `json:"outcomesPruned,omitempty"`
-			OutcomesProblem string   `json:"outcomesProblem,omitempty"`
-		}{audit.SchemaVersion, rot, outSeg, outPruned, outProblem}); err != nil {
+			OutcomesSegment       string   `json:"outcomesSegment,omitempty"`
+			OutcomesPruned        []string `json:"outcomesPruned,omitempty"`
+			LegacyOutcomesSegment string   `json:"legacyOutcomesSegment,omitempty"`
+			OutcomesProblem       string   `json:"outcomesProblem,omitempty"`
+		}{audit.SchemaVersion, rot, outSeg, outPruned, legacySeg, outProblem}); err != nil {
 			return err
 		}
 		return outErr
@@ -279,6 +313,9 @@ func runAuditRotate(args []string) error {
 	}
 	if outSeg != "" {
 		fmt.Printf("  outcomes moved   : to %s\n", outSeg)
+	}
+	if legacySeg != "" {
+		fmt.Printf("  outcomes moved   : to %s (the log older installs shared)\n", legacySeg)
 	}
 	for _, p := range outPruned {
 		fmt.Printf("  pruned outcomes  : %s\n", p)
@@ -327,6 +364,9 @@ func runAuditVerify(args []string) error {
 	path := auditPath(fs.Args())
 	if path == "" {
 		return fmt.Errorf("give the decision log to verify, or set REEVE_DECISION_LOG")
+	}
+	if err := telemetry.CheckDecisionLogName(path); err != nil {
+		return err
 	}
 
 	rep, err := audit.Verify(path)
@@ -423,4 +463,15 @@ func auditPath(args []string) string {
 		return args[0]
 	}
 	return os.Getenv("REEVE_DECISION_LOG")
+}
+
+// refuseCompanionIsLog is defence in depth behind telemetry.CheckDecisionLogName: pruning
+// a companion that is the decision log would delete its sealed records with no tombstone.
+func refuseCompanionIsLog(decisionLog string, companions []string) error {
+	for _, c := range companions {
+		if strings.EqualFold(filepath.Clean(c), filepath.Clean(decisionLog)) {
+			return fmt.Errorf("not rotated: the outcome log %s is the decision log itself", c)
+		}
+	}
+	return nil
 }

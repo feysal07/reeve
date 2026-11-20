@@ -1072,12 +1072,30 @@ segments:
 Pruning records itself: it appends a tombstone to the segment's chain, chained to its
 last seal, naming when it ran and the retention period it ran under.
 
-The outcome log beside the decision log, `outcomes.jsonl`, goes with it: moved aside as
-`outcomes-<UTC time>.jsonl` under the same stamp, so a report over a window reads the
+The outcome log beside the decision log, named for it (`decisions.jsonl` has
+`decisions.outcomes.jsonl`, `trial-decisions.jsonl` has `trial-decisions.outcomes.jsonl`),
+goes with it: moved aside as `decisions.outcomes-<UTC time>.jsonl` under the same stamp, so a report over a window reads the
 two together and still joins an ask made before rotation to the outcome seen after it,
 and removed by `--keep` on the same schedule. It is not sealed, so it has no chain and
 no tombstone. Until v0.7.0 it was never rotated or pruned, and kept the outcomes of
 decisions retention had removed.
+
+Until the outcome log was named for its decision log, every log in a directory shared one
+`outcomes.jsonl`, so the trial's log joined a real log's outcomes. An install that still
+holds that file keeps it: it is read, rotated and pruned as the outcome log of the default
+`decisions.jsonl` in that directory, and of no other log. New outcomes are written only
+under the new name.
+
+The limit of that: a decision log with any other name, given by `--log` or
+`REEVE_DECISION_LOG`, also had its outcomes in the shared file, and which of them were its
+own cannot be told. Reeve does not guess. Such outcomes are not read for that log, and
+`reeve report` and `reeve doctor` say "outcomes written before v0.8.0 are in <path> and
+are not attributed to this log", because asks whose outcomes are not read count as not
+seen to run. Move the file to `<log>.outcomes.jsonl` if it was all that log's.
+
+A decision log cannot be named `<x>.outcomes.<ext>` or `outcomes.<ext>` (compared without
+regard to case): that is where an outcome log lives, and the two would share a file. The
+guard, `audit`, `report`, `sessions` and `view` refuse it and say why.
 
 `reeve audit verify` walks back through every segment and reports each as:
 

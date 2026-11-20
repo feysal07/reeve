@@ -73,17 +73,24 @@ func readDecisionWindow(path string, from time.Time) (decisionWindow, error) {
 // hide an ask nobody ever refuses. Retention removes outcome segments whole, so a pruned
 // one leaves no gap; every gap here is one that should not be.
 func readOutcomeWindow(decisionLog string, from time.Time) (out []telemetry.Outcome, exists bool, gaps []string, err error) {
-	path := telemetry.OutcomesPathFor(decisionLog)
-	w, err := audit.ReadWindow(path, from, func(_ audit.Part, r io.Reader) error {
-		o, err := telemetry.DecodeOutcomes(r)
-		out = append(out, o...)
-		return err
-	})
-	if err != nil {
-		return nil, false, nil, fmt.Errorf("outcome log: %w", err)
+	// The legacy shared log is read too, for the default decision log only, so an
+	// upgrade does not turn every recorded outcome into an ask nobody is seen to run.
+	for _, path := range []string{telemetry.OutcomesPathFor(decisionLog), telemetry.LegacyOutcomesPathFor(decisionLog)} {
+		if path == "" {
+			continue
+		}
+		w, err := audit.ReadWindow(path, from, func(_ audit.Part, r io.Reader) error {
+			o, err := telemetry.DecodeOutcomes(r)
+			out = append(out, o...)
+			return err
+		})
+		if err != nil {
+			return nil, false, nil, fmt.Errorf("outcome log: %w", err)
+		}
+		for _, g := range w.Missing {
+			gaps = append(gaps, filepath.Base(g.Segment)+": "+g.Why)
+		}
+		exists = exists || w.LiveExists || w.Segments > 0
 	}
-	for _, g := range w.Missing {
-		gaps = append(gaps, filepath.Base(g.Segment)+": "+g.Why)
-	}
-	return out, w.LiveExists || w.Segments > 0, gaps, nil
+	return out, exists, gaps, nil
 }

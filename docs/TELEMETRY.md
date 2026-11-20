@@ -261,8 +261,8 @@ the one that lets through the time it mattered.
 
 `reeve install` therefore registers the same guard command on Claude Code's `PostToolUse`
 and `PostToolUseFailure` events. On those the guard decides nothing: it appends the
-session, the tool-use id and whether the tool ran or failed to `outcomes.jsonl` beside
-the decision log, prints nothing and exits 0. It never reads the tool's input or response.
+session, the tool-use id and whether the tool ran or failed to `<log>.outcomes.jsonl`
+(`decisions.outcomes.jsonl` for `decisions.jsonl`) beside the decision log, prints nothing and exits 0. It never reads the tool's input or response.
 A separate file, because everything that reads the decision log reads each line as a
 decision, and a repetition rule would count each action twice.
 

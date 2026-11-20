@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/feysal07/reeve/internal/telemetry"
 	"os"
 	"strings"
 	"time"
@@ -56,6 +57,9 @@ func runSessions(args []string) error {
 		return err
 	}
 	logPath, storePath := sessionSources(*logFlag, *storeFlag, *asJSON)
+	if err := telemetry.CheckDecisionLogName(logPath); err != nil {
+		return err
+	}
 	loaded, err := session.Load(logPath, storePath)
 	if err != nil {
 		return err
@@ -121,6 +125,9 @@ func runSession(args []string) error {
 		return fmt.Errorf("usage: reeve session <id> [--log <file>] [--store <file>]")
 	}
 	logPath, storePath := sessionSources(*logFlag, *storeFlag, *asJSON)
+	if err := telemetry.CheckDecisionLogName(logPath); err != nil {
+		return err
+	}
 	loaded, err := session.Load(logPath, storePath)
 	if err != nil {
 		return err

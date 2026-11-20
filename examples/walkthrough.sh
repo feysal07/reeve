@@ -743,7 +743,7 @@ OUTCOME_REPLY=$(printf '%s' '{"session_id":"a1","hook_event_name":"PostToolUse",
     "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$OUTCOME_DIR/decisions.jsonl" 2>&1)
 OUTCOME_CODE=$?
 if [ "$OUTCOME_CODE" = "0" ] && [ -z "$OUTCOME_REPLY" ] && [ ! -e "$OUTCOME_DIR/decisions.jsonl" ] &&
-    grep -q '"toolUseId":"toolu_w1"' "$OUTCOME_DIR/outcomes.jsonl" 2>/dev/null; then
+    grep -q '"toolUseId":"toolu_w1"' "$OUTCOME_DIR/decisions.outcomes.jsonl" 2>/dev/null; then
     check "a post-tool event is recorded as an outcome and decided by nothing" 1
 else
     check "a post-tool event is recorded as an outcome and decided by nothing" 0 "exit $OUTCOME_CODE, reply '$OUTCOME_REPLY'"
@@ -752,11 +752,11 @@ fi
 # Twenty asks, every one approved: the shape of an ask that is a delay and not a control.
 STAMP_DIR="$SANDBOX/stamp"
 mkdir -p "$STAMP_DIR"
-: > "$STAMP_DIR/decisions.jsonl"; : > "$STAMP_DIR/outcomes.jsonl"
+: > "$STAMP_DIR/decisions.jsonl"; : > "$STAMP_DIR/decisions.outcomes.jsonl"
 i=0
 while [ $i -lt 20 ]; do
     printf '{"time":"2026-09-30T10:%02d:00Z","agent":"claude-code","sessionId":"st","kind":"shell","toolUseId":"toolu_s%d","effect":"ask","ruleId":"dr-database"}\n' $i $i >> "$STAMP_DIR/decisions.jsonl"
-    printf '{"time":"2026-09-30T10:%02d:30Z","agent":"claude-code","sessionId":"st","toolUseId":"toolu_s%d","outcome":"ran"}\n' $i $i >> "$STAMP_DIR/outcomes.jsonl"
+    printf '{"time":"2026-09-30T10:%02d:30Z","agent":"claude-code","sessionId":"st","toolUseId":"toolu_s%d","outcome":"ran"}\n' $i $i >> "$STAMP_DIR/decisions.outcomes.jsonl"
     i=$((i + 1))
 done
 STAMP_OUT=$("$REEVE" report --decisions "$STAMP_DIR/decisions.jsonl" --fail-on ask.rubber-stamp 2>&1)
@@ -1960,15 +1960,35 @@ OUT_DIR="$SANDBOX/outcome-rotation"
 mkdir -p "$OUT_DIR"
 printf '%s' "$LOOP_PAYLOAD" | "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$OUT_DIR/decisions.jsonl" >/dev/null 2>&1
 printf '{"time":"%s","agent":"claude-code","sessionId":"loop","toolUseId":"t1","tool":"Bash","outcome":"ran"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT_DIR/outcomes.jsonl"
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT_DIR/decisions.outcomes.jsonl"
 OUT_ROT=$("$REEVE" audit rotate "$OUT_DIR/decisions.jsonl" --json 2>&1 | tr -s '[:space:]' ' ')
 case "$OUT_ROT" in
-    *'"outcomesSegment": "'*'outcomes-'*)
-        [ ! -e "$OUT_DIR/outcomes.jsonl" ] &&
+    *'"outcomesSegment": "'*'decisions.outcomes-'*)
+        [ ! -e "$OUT_DIR/decisions.outcomes.jsonl" ] &&
             check "rotation moves the outcome log aside with the decision log" 1 ||
-            check "rotation moves the outcome log aside with the decision log" 0 "outcomes.jsonl is still in place" ;;
+            check "rotation moves the outcome log aside with the decision log" 0 "decisions.outcomes.jsonl is still in place" ;;
     *) check "rotation moves the outcome log aside with the decision log" 0 "$OUT_ROT" ;;
 esac
+
+# Two decision logs in one directory, as `reeve trial` makes beside a real one, keep
+# separate outcome logs. Found in review: they shared one outcomes.jsonl, so each joined
+# the other's outcomes and rotating either moved the other's into the wrong segment.
+TWO_DIR="$SANDBOX/two-logs"
+mkdir -p "$TWO_DIR"
+for TWO_LOG in decisions trial-decisions; do
+    printf '%s' '{"session_id":"a1","hook_event_name":"PostToolUse","tool_use_id":"toolu_'$TWO_LOG'","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":"x"}}' |
+        "$REEVE" guard --agent claude-code --policy "$POLICY" --log "$TWO_DIR/$TWO_LOG.jsonl" >/dev/null 2>&1
+done
+"$REEVE" audit rotate "$TWO_DIR/trial-decisions.jsonl" >/dev/null 2>&1
+if [ ! -e "$TWO_DIR/outcomes.jsonl" ] &&
+    grep -q 'toolu_decisions' "$TWO_DIR/decisions.outcomes.jsonl" 2>/dev/null &&
+    ! grep -q 'toolu_trial' "$TWO_DIR/decisions.outcomes.jsonl" 2>/dev/null &&
+    [ ! -e "$TWO_DIR/trial-decisions.outcomes.jsonl" ] &&
+    grep -q 'toolu_trial' "$TWO_DIR"/trial-decisions.outcomes-*.jsonl 2>/dev/null; then
+    check "two decision logs in one directory keep separate outcome logs through rotation" 1
+else
+    check "two decision logs in one directory keep separate outcome logs through rotation" 0 "$(ls "$TWO_DIR")"
+fi
 
 # The report reads the rotated segments, not only the live log. Found on a live machine:
 # rotation empties the live log every day, and a seven-day report saw 105 of about 3,000

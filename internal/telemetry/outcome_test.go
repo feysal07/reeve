@@ -103,10 +103,10 @@ func TestAnAskNobodyDeclinesIsAConcernAndOneTheyDoIsNot(t *testing.T) {
 // TestAnOutcomeLogThatIsNotThereIsNotAnEmptyOne.
 func TestAnOutcomeLogThatIsNotThereIsNotAnEmptyOne(t *testing.T) {
 	dir := t.TempDir()
-	if _, exists, err := ReadOutcomes(filepath.Join(dir, OutcomesFile)); exists || err != nil {
+	p := filepath.Join(dir, "decisions.outcomes.jsonl")
+	if _, exists, err := ReadOutcomes(p); exists || err != nil {
 		t.Errorf("absent log: exists %v, err %v", exists, err)
 	}
-	p := filepath.Join(dir, OutcomesFile)
 	os.WriteFile(p, []byte(`{"sessionId":"s","toolUseId":"t1","outcome":"ran"}`+"\n"+`truncated{`+"\n"+`{"sessionId":"s","outcome":"ran"}`+"\n"), 0o600)
 	out, exists, err := ReadOutcomes(p)
 	if !exists || err != nil || len(out) != 1 {
@@ -125,5 +125,34 @@ func TestADecisionLineKeepsItsToolUseIDWhenRead(t *testing.T) {
 	events, err := ReadDecisions(p)
 	if err != nil || len(events) != 1 || events[0].ToolUseID != "toolu_7" {
 		t.Fatalf("events = %+v, err %v", events, err)
+	}
+}
+
+// TestEachDecisionLogHasItsOwnOutcomeLog. Found in review: every log in a directory
+// shared one outcomes.jsonl, so the trial's log joined the real log's outcomes.
+func TestEachDecisionLogHasItsOwnOutcomeLog(t *testing.T) {
+	dir := "d"
+	cases := map[string]string{
+		filepath.Join(dir, "decisions.jsonl"):       filepath.Join(dir, "decisions.outcomes.jsonl"),
+		filepath.Join(dir, "trial-decisions.jsonl"): filepath.Join(dir, "trial-decisions.outcomes.jsonl"),
+		filepath.Join(dir, "plain"):                 filepath.Join(dir, "plain.outcomes.jsonl"),
+	}
+	for log, want := range cases {
+		if got := OutcomesPathFor(log); got != want {
+			t.Errorf("OutcomesPathFor(%s) = %s, want %s", log, got, want)
+		}
+	}
+}
+
+// TestTheLegacyOutcomeLogBelongsToTheDefaultDecisionLogOnly. Attributed to every log in
+// the directory it would be joined to the trial log's asks too.
+func TestTheLegacyOutcomeLogBelongsToTheDefaultDecisionLogOnly(t *testing.T) {
+	if got, want := LegacyOutcomesPathFor(filepath.Join("d", "decisions.jsonl")), filepath.Join("d", "outcomes.jsonl"); got != want {
+		t.Errorf("default log: legacy = %q, want %q", got, want)
+	}
+	for _, other := range []string{"", filepath.Join("d", "trial-decisions.jsonl"), filepath.Join("d", "b.jsonl")} {
+		if got := LegacyOutcomesPathFor(other); got != "" {
+			t.Errorf("%q was given the legacy outcome log %q", other, got)
+		}
 	}
 }
